@@ -1,6 +1,12 @@
 """02Route 3D Core Analytical Engine."""
 from __future__ import annotations
 
+from .accessibility_equity import (
+    AccessibilityEquityEngine,
+    EquityScorecardResult,
+    SupplyFacility,
+    ZoneAccessibilityRecord,
+)
 from .ahp_engine import AHPEngine, AHPResult
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from .evacuation import EvacuationPlan, EvacuationRouter, HazardZone
@@ -20,6 +26,18 @@ from .kinematics import (
     universal_thermal_comfort_utci,
     vehicle_free_flow_speed,
 )
+from .map_matching_3d import (
+    GPXPoint,
+    HMMMapMatcher3D,
+    MapMatching3DResult,
+    MatchedTrackPoint3D,
+)
+from .micro_elevation import (
+    BicubicSurfaceInterpolator,
+    IDWSurfaceInterpolator,
+    MicroElevationEngine,
+    SurfaceGradient3D,
+)
 from .mobility_profiles import (
     PROFILES,
     MobilityProfile,
@@ -30,6 +48,12 @@ from .mobility_profiles import (
 )
 from .multimodal import MultiModalJourney, MultiModalLeg, MultiModalRouter
 from .network_source import NetworkSourceManager, RoadSegment
+from .pareto_router import (
+    ParetoCostVector,
+    ParetoFrontierResult,
+    ParetoMultiObjectiveRouter,
+    ParetoRouteSolution,
+)
 from .profile_dxf import export_route_to_dxf_3d
 from .profile_stats import (
     CueInstruction,
@@ -51,6 +75,10 @@ from .solar_shadow import (
 from .tsp_solver import solve_tsp_order
 
 __all__ = [
+    "AccessibilityEquityEngine",
+    "EquityScorecardResult",
+    "SupplyFacility",
+    "ZoneAccessibilityRecord",
     "AHPEngine",
     "AHPResult",
     "EnvironmentalSurfaceSampler",
@@ -62,9 +90,21 @@ __all__ = [
     "IsochroneBand",
     "IsochroneEngine3D",
     "IsochroneResult",
+    "GPXPoint",
+    "HMMMapMatcher3D",
+    "MapMatching3DResult",
+    "MatchedTrackPoint3D",
+    "BicubicSurfaceInterpolator",
+    "IDWSurfaceInterpolator",
+    "MicroElevationEngine",
+    "SurfaceGradient3D",
     "MultiModalJourney",
     "MultiModalLeg",
     "MultiModalRouter",
+    "ParetoCostVector",
+    "ParetoFrontierResult",
+    "ParetoMultiObjectiveRouter",
+    "ParetoRouteSolution",
     "export_route_to_dxf_3d",
     "generate_analytical_report_html",
     "generate_route_qml_style",

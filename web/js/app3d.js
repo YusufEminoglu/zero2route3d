@@ -1,5 +1,9 @@
 import * as THREE from './three.module.js';
 import { OrbitControls } from './OrbitControls.js';
+import { HeatStressRibbonManager } from './HeatStressRibbon.js';
+import { SolarNightSystem } from './SolarNightSystem.js';
+import { KinematicAvatarRig } from './KinematicAvatarRig.js';
+import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';
 
 class Studio3DApp {
   constructor() {
@@ -16,13 +20,19 @@ class Studio3DApp {
       antialias: true,
       alpha: false,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: true, // Required for snapshots and video capture
+      preserveDrawingBuffer: true,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(this.width, this.height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
+
+    // Instantiate Subsystems
+    this.heatRibbonMgr = new HeatStressRibbonManager(this.scene);
+    this.solarSystem = new SolarNightSystem(this.scene, this.renderer);
+    this.avatarRig = new KinematicAvatarRig(this.scene);
+    this.slicerSystem = new TerrainSlicerSystem(this.scene, this.renderer);
 
     // Camera & Controls
     this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.5, 60000);
@@ -201,7 +211,34 @@ class Studio3DApp {
         if (this.lblRibbonMode) {
           this.lblRibbonMode.textContent = this.colorMode.charAt(0).toUpperCase() + this.colorMode.slice(1);
         }
-        if (this.routeData) this.buildRouteRibbon();
+        if (this.routeData && this.heatRibbonMgr) {
+          const mode = this.colorMode === 'thermal' ? 0 : (this.colorMode === 'slope' ? 1 : 2);
+          this.heatRibbonMgr.update(0.016, this.progress, mode);
+        }
+      });
+    }
+
+    // Slicer toggle
+    const btnSlicer = document.getElementById('btnSlicer');
+    if (btnSlicer) {
+      let slicerOn = false;
+      btnSlicer.addEventListener('click', () => {
+        slicerOn = !slicerOn;
+        if (this.slicerSystem) {
+          this.slicerSystem.toggle(slicerOn);
+        }
+      });
+    }
+
+    // Night Mode toggle
+    const btnNight = document.getElementById('btnNightMode');
+    if (btnNight) {
+      let isNight = false;
+      btnNight.addEventListener('click', () => {
+        isNight = !isNight;
+        if (this.solarSystem) {
+          this.solarSystem.setSolarHour(isNight ? 22.0 : 13.0, this.sunLight, this.ambientLight);
+        }
       });
     }
 
@@ -279,11 +316,14 @@ class Studio3DApp {
     while (this.pinsGroup.children.length) this.pinsGroup.remove(this.pinsGroup.children[0]);
 
     this.buildTerrain();
-    this.buildRouteRibbon();
+    this.ribbonMesh = this.heatRibbonMgr.buildRibbon(this.curve, this.scenePoints, this.routeData?.properties);
     this.buildPinMarkers();
     this.buildAvatar();
+    this.avatarRig.setProfile(this.routeData?.properties?.profile_key || 'adult');
     this.buildUrbanEnvironment();
     this.buildParticleFlow();
+    this.solarSystem.buildStreetlampsAlongRoute(this.curve, this.scenePoints, 35.0);
+    this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup);
 
     this.progress = 0.0;
     this.updateAvatarPosition();
@@ -513,12 +553,21 @@ class Studio3DApp {
   }
 
   updateAvatarPosition() {
-    if (!this.curve || !this.avatarMesh) return;
+    if (!this.curve) return;
     const pt = this.curve.getPointAt(this.progress);
-    this.avatarMesh.position.copy(pt);
+    if (this.avatarMesh) {
+      this.avatarMesh.position.copy(pt);
+      const tangent = this.curve.getTangentAt(this.progress).normalize();
+      this.avatarMesh.lookAt(pt.clone().add(tangent));
+    }
 
-    const tangent = this.curve.getTangentAt(this.progress).normalize();
-    this.avatarMesh.lookAt(pt.clone().add(tangent));
+    if (this.avatarRig && this.avatarRig.root) {
+      this.avatarRig.root.position.copy(pt);
+      const tangent = this.curve.getTangentAt(this.progress).normalize();
+      this.avatarRig.root.lookAt(pt.clone().add(tangent));
+      const spd = this.routeData?.properties?.base_speed_kmh || 12.0;
+      this.avatarRig.updateKinematics(0.016, spd, tangent, 0, this.solarSystem ? this.solarSystem.isNight : false);
+    }
 
     if (this.elScrubber) {
       this.elScrubber.value = (this.progress * 1000.0).toFixed(0);
@@ -691,6 +740,11 @@ class Studio3DApp {
         this.progress = 0.0;
       }
       this.updateAvatarPosition();
+    }
+
+    if (this.heatRibbonMgr) {
+      const mode = this.colorMode === 'thermal' ? 0 : (this.colorMode === 'slope' ? 1 : 2);
+      this.heatRibbonMgr.update(delta, this.progress, mode);
     }
 
     if (this.cameraMode === 'orbit') {

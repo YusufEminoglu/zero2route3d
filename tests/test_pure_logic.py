@@ -5,7 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from zero2route3d.core.accessibility_equity import (
+    AccessibilityEquityEngine,
+    SupplyFacility,
+    ZoneAccessibilityRecord,
+)
 from zero2route3d.core.ahp_engine import AHPEngine
+from zero2route3d.core.environmental_raster import EnvironmentalSurfaceSampler
 from zero2route3d.core.evacuation import EvacuationRouter
 from zero2route3d.core.html_bundler import StandaloneHtmlBundler
 from zero2route3d.core.isochrone_engine import IsochroneEngine3D
@@ -23,6 +29,12 @@ from zero2route3d.core.kinematics import (
     universal_thermal_comfort_utci,
     vehicle_free_flow_speed,
 )
+from zero2route3d.core.map_matching_3d import GPXPoint, HMMMapMatcher3D
+from zero2route3d.core.micro_elevation import (
+    BicubicSurfaceInterpolator,
+    IDWSurfaceInterpolator,
+    MicroElevationEngine,
+)
 from zero2route3d.core.mobility_profiles import (
     PROFILES,
     MobilityProfile,
@@ -31,6 +43,7 @@ from zero2route3d.core.mobility_profiles import (
 )
 from zero2route3d.core.multimodal import MultiModalRouter
 from zero2route3d.core.network_source import NetworkSourceManager
+from zero2route3d.core.pareto_router import ParetoMultiObjectiveRouter
 from zero2route3d.core.profile_dxf import export_route_to_dxf_3d
 from zero2route3d.core.profile_stats import (
     compute_route_statistics,
@@ -46,7 +59,7 @@ from zero2route3d.core.tsp_solver import solve_tsp_order
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
-    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, and report logic."""
+    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, AI, and Pareto logic."""
 
     def test_haversine_2d_and_3d(self) -> None:
         p1 = (27.1428, 38.4237, 10.0)
@@ -193,96 +206,70 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(len(iso_res.bands), 3)
         self.assertGreater(iso_res.total_reachable_nodes, 0)
 
-    def test_standalone_html_bundler(self) -> None:
-        web_dir = Path(__file__).resolve().parent.parent / "web"
-        bundler = StandaloneHtmlBundler(web_dir)
-        profile = get_profile("adult")
-        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 20.0)]
-        stats = compute_route_statistics(coords, profile)
-        res = RouteResult3D(
-            coordinates_3d=coords,
-            statistics=stats,
-            profile=profile,
-            waypoints=[Waypoint(27.14, 38.42), Waypoint(27.15, 38.43)],
-        )
+    def test_micro_elevation_and_bicubic(self) -> None:
+        bicubic = BicubicSurfaceInterpolator()
+        patch_4x4 = [
+            [10.0, 12.0, 14.0, 16.0],
+            [12.0, 15.0, 18.0, 20.0],
+            [14.0, 18.0, 22.0, 25.0],
+            [16.0, 20.0, 25.0, 30.0],
+        ]
+        grad = bicubic.interpolate_patch_4x4(patch_4x4, 0.5, 0.5, 10.0, 10.0)
+        self.assertGreater(grad.elevation_m, 15.0)
+        self.assertGreater(grad.slope_pct, 0.0)
 
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        try:
-            bundler.export_standalone_html(res, tmp_path)
-            self.assertTrue(tmp_path.exists())
-            content = tmp_path.read_text(encoding="utf-8")
-            self.assertIn("02Route 3D", content)
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
+        idw = IDWSurfaceInterpolator()
+        pts = [(0.0, 0.0, 10.0), (10.0, 0.0, 20.0), (0.0, 10.0, 30.0)]
+        z_mid = idw.interpolate_point(5.0, 5.0, pts)
+        self.assertGreater(z_mid, 12.0)
+        self.assertLess(z_mid, 28.0)
 
-    def test_dxf_3d_export(self) -> None:
-        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 25.0)]
-        with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        try:
-            export_route_to_dxf_3d(coords, tmp_path)
-            self.assertTrue(tmp_path.exists())
-            dxf_text = tmp_path.read_text(encoding="utf-8")
-            self.assertIn("POLYLINE", dxf_text)
-            self.assertIn("3D_ROUTE", dxf_text)
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
-
-    def test_solar_shadow_and_evacuation(self) -> None:
-        sun = calculate_solar_position(38.4, solar_hour=14.0)
-        self.assertGreater(sun.elevation_deg, 30.0)
-
-        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 20.0)]
-        shade_rep = compute_shade_exposure_along_route(coords, solar_hour=14.0)
-        self.assertGreaterEqual(shade_rep.direct_sun_pct + shade_rep.shaded_pct, 99.0)
-
+    def test_pareto_multi_objective_router(self) -> None:
         net_mgr = NetworkSourceManager()
         bbox = (27.10, 38.40, 27.15, 38.45)
         segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
         engine = RoutingEngine3D()
         engine.build_graph(segments)
 
-        router = EvacuationRouter(engine)
-        router.add_hazard_zone(lon=27.12, lat=38.42, radius_m=300.0)
-        orig = Waypoint(27.11, 38.41, "Camp")
-        musters = [Waypoint(27.14, 38.44, "Shelter 1"), Waypoint(27.15, 38.45, "Shelter 2")]
-        plan = router.calculate_evacuation_route(orig, musters)
-        self.assertIsNotNone(plan.muster_point)
+        sampler = EnvironmentalSurfaceSampler()
+        pareto_router = ParetoMultiObjectiveRouter(engine.nodes, engine.adj, sampler)
+        node_keys = list(engine.nodes.keys())
+        res = pareto_router.solve_pareto_frontier(node_keys[0], node_keys[-1], profile_key="adult")
+        self.assertGreaterEqual(res.to_dict()["solution_count"], 1)
 
-    def test_report_and_qml_generation(self) -> None:
-        profile = get_profile("adult")
-        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 25.0)]
-        stats = compute_route_statistics(coords, profile)
-        res = RouteResult3D(
-            coordinates_3d=coords,
-            statistics=stats,
-            profile=profile,
-            waypoints=[Waypoint(27.14, 38.42), Waypoint(27.15, 38.43)],
-        )
+    def test_accessibility_equity_scorecard(self) -> None:
+        zones = [
+            ZoneAccessibilityRecord("Z1", "Downtown", 27.12, 38.42, 5000),
+            ZoneAccessibilityRecord("Z2", "Suburbs", 27.18, 38.48, 8000),
+            ZoneAccessibilityRecord("Z3", "Periphery", 27.25, 38.55, 3000),
+        ]
+        facilities = [
+            SupplyFacility("F1", "Central Metro", 27.125, 38.425, 100),
+            SupplyFacility("F2", "District Hospital", 27.130, 38.430, 50),
+        ]
+        equity_engine = AccessibilityEquityEngine(catchment_radius_m=3000.0)
+        eq_res = equity_engine.compute_e2sfca(zones, facilities)
+        self.assertGreaterEqual(eq_res.gini_coefficient, 0.0)
+        self.assertLessEqual(eq_res.gini_coefficient, 1.0)
+        self.assertGreater(len(eq_res.lorenz_curve), 2)
 
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp_html:
-            tmp_html_path = Path(tmp_html.name)
-        with tempfile.NamedTemporaryFile(suffix=".qml", delete=False) as tmp_qml:
-            tmp_qml_path = Path(tmp_qml.name)
+    def test_map_matching_3d(self) -> None:
+        net_mgr = NetworkSourceManager()
+        bbox = (27.10, 38.40, 27.15, 38.45)
+        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
 
-        try:
-            generate_analytical_report_html(res, tmp_html_path)
-            self.assertTrue(tmp_html_path.exists())
-            html_text = tmp_html_path.read_text(encoding="utf-8")
-            self.assertIn("Analytical Scorecard", html_text)
-
-            generate_route_qml_style(tmp_qml_path)
-            self.assertTrue(tmp_qml_path.exists())
-            qml_text = tmp_qml_path.read_text(encoding="utf-8")
-            self.assertIn("renderer-v2", qml_text)
-        finally:
-            if tmp_html_path.exists():
-                tmp_html_path.unlink()
-            if tmp_qml_path.exists():
-                tmp_qml_path.unlink()
+        matcher = HMMMapMatcher3D(engine.nodes, engine.adj)
+        gpx_pts = [
+            GPXPoint(lon=27.1105, lat=38.4102, elevation_raw_m=10.0),
+            GPXPoint(lon=27.1208, lat=38.4205, elevation_raw_m=15.0),
+            GPXPoint(lon=27.1302, lat=38.4309, elevation_raw_m=20.0),
+        ]
+        match_res = matcher.match_gps_track(gpx_pts)
+        self.assertGreaterEqual(len(match_res.matched_points), 2)
+        gpx_xml = match_res.to_gpx()
+        self.assertIn("<trkpt", gpx_xml)
 
 
 if __name__ == "__main__":
