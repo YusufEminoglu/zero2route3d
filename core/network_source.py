@@ -1,8 +1,8 @@
-"""Road network data acquisition and vector layer ingestion engine.
+"""Road network data acquisition, vector layer ingestion, and geocoding engine.
 
 Supports fetching OpenStreetMap networks via Overpass API with local bounding
-box caching, extracting topology from active QGIS vector layers, and generating
-topological test graphs.
+box caching, reverse geocoding via Photon API, extracting topology from active
+QGIS vector layers, and generating topological test graphs.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import tempfile
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .kinematics import haversine_distance_2d
 
@@ -35,7 +35,7 @@ class RoadSegment:
 
 
 class NetworkSourceManager:
-    """Acquires, caches, and parses topological road networks."""
+    """Acquires, caches, geocodes, and parses topological road networks."""
 
     CACHE_DIR = Path(tempfile.gettempdir()) / "zero2route3d_cache"
 
@@ -54,22 +54,47 @@ class NetworkSourceManager:
             return 3
         if h in {"residential", "living_street", "unclassified"}:
             return 4
-        return 5  # pedestrian, footway, path, steps, cycleway, track, service
+        return 5
+
+    def search_place_photon(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Geocode place name using Photon API (HTTPS) with offline fallback."""
+        if not query or len(query.strip()) < 2:
+            return []
+
+        results = []
+        with contextlib.suppress(Exception):
+            encoded = urllib.parse.quote(query.strip())
+            conn = http.client.HTTPSConnection("photon.komoot.io", timeout=8)
+            conn.request("GET", f"/api/?q={encoded}&limit={limit}", headers={"User-Agent": "02Route3D-Plugin/0.1.0"})
+            resp = conn.getresponse()
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                for feat in data.get("features", []):
+                    geom = feat.get("geometry", {})
+                    props = feat.get("properties", {})
+                    coords = geom.get("coordinates", [])
+                    if len(coords) >= 2:
+                        name = props.get("name") or props.get("street") or query
+                        city = props.get("city") or props.get("state") or props.get("country") or ""
+                        label = f"{name} ({city})" if city else name
+                        results.append({
+                            "label": label,
+                            "lon": float(coords[0]),
+                            "lat": float(coords[1]),
+                        })
+            conn.close()
+        return results
 
     def fetch_osm_network_bbox(
         self,
-        bbox: Tuple[float, float, float, float],  # (min_lon, min_lat, max_lon, max_lat)
+        bbox: Tuple[float, float, float, float],
         buffer_ratio: float = 0.15,
     ) -> List[RoadSegment]:
-        """Fetch OSM highway ways within bbox (with buffer margin) using Overpass API.
-        
-        Uses SHA-256 hashed disk cache for instant reuse.
-        """
+        """Fetch OSM highway ways within bbox using Overpass API with SHA-256 disk caching."""
         min_lon, min_lat, max_lon, max_lat = bbox
         d_lon = max_lon - min_lon
         d_lat = max_lat - min_lat
 
-        # Ensure minimum extent of ~500m
         d_lon = max(0.005, d_lon)
         d_lat = max(0.005, d_lat)
 
@@ -98,7 +123,6 @@ class NetworkSourceManager:
                         json.dump(data, f)
 
         if not data or "elements" not in data:
-            # Fallback to synthetic grid for offline resilience
             return self.generate_synthetic_grid(bbox)
 
         return self._parse_osm_json(data)
@@ -198,13 +222,12 @@ class NetworkSourceManager:
                 if needs_transform:
                     geom.transform(transform)
 
-                # Extract line coordinates
+                lines = []
                 if geom.isMultipart():
                     lines = geom.asMultiPolyline()
                 else:
                     lines = [geom.asPolyline()]
 
-                # Attributes inspection
                 fields = feat.fields().names()
                 highway = "residential"
                 for h_field in ["highway", "type", "road_type", "class", "KIND"]:

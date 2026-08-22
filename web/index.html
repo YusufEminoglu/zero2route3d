@@ -46,8 +46,15 @@
     </div>
   </div>
 
+  <!-- Left Mini-Radar Overview Map -->
+  <div class="hud-panel minimap-radar">
+    <canvas id="radarCanvas" width="120" height="120"></canvas>
+    <div class="compass-indicator" id="compassRose" title="Snap to North">N</div>
+  </div>
+
   <!-- Right Toolbar: Camera & View Modes -->
   <div class="hud-panel right-tools">
+    <div class="tool-group-title">Camera Mode</div>
     <button class="tool-btn cam-btn active" data-cam="orbit" title="Free 360 Orbit Camera">
       <span>🌐</span> Orbit
     </button>
@@ -57,11 +64,38 @@
     <button class="tool-btn cam-btn" data-cam="pov" title="First-Person Driver/Walker View">
       <span>👁️</span> POV
     </button>
+    <button class="tool-btn cam-btn" data-cam="tour" title="Cinematic Fly-Through Tour">
+      <span>🎬</span> Tour
+    </button>
+
+    <div class="tool-group-title">3D Terrain & Shaders</div>
+    <button class="tool-btn" id="btnExaggeration" title="Cycle Terrain Vertical Exaggeration (1x/2x/3x/5x)">
+      <span>⛰️</span> Exag: <b id="lblExag">2.0x</b>
+    </button>
+    <button class="tool-btn" id="btnBuildings" title="Toggle 3D Extruded Buildings">
+      <span>🏢</span> Buildings: <b>ON</b>
+    </button>
+    <button class="tool-btn" id="btnTrees" title="Toggle Volumetric 3D Trees">
+      <span>🌳</span> Trees: <b>ON</b>
+    </button>
+    <button class="tool-btn" id="btnRibbonMode" title="Switch Ribbon Color Mode (Slope / Thermal / Cyan)">
+      <span>🎨</span> Mode: <b id="lblRibbonMode">Slope</b>
+    </button>
+
+    <div class="tool-group-title">Capture & Tools</div>
+    <button class="tool-btn" id="btnTapeMeasure" title="3D Distance & Altitude Measurement Tape">
+      <span>📏</span> Tape
+    </button>
+    <button class="tool-btn" id="btnSnapshot" title="High-Res Canvas Snapshot">
+      <span>📸</span> Snapshot
+    </button>
+    <button class="tool-btn" id="btnRecord" title="Record WebM 3D Video">
+      <span>🔴</span> Record
+    </button>
   </div>
 
   <!-- Bottom HUD: Player & Elevation Profile Chart -->
   <div class="hud-panel bottom-player">
-    <!-- Player Bar -->
     <div class="player-controls">
       <div class="play-btn-group">
         <button id="btnPlay" class="btn-icon" title="Play/Pause 3D Traversal">

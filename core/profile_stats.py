@@ -1,4 +1,4 @@
-"""Route diagnostics, elevation profiles, and kinematic statistics calculator."""
+"""Route diagnostics, elevation profiles, kinematic statistics, and turn-by-turn cue sheets."""
 from __future__ import annotations
 
 import math
@@ -6,28 +6,43 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .kinematics import (
+    cyclist_speed,
     haversine_distance_2d,
     haversine_distance_3d,
     minetti_energy_cost,
-    tobler_walking_speed,
-    vehicle_free_flow_speed,
-    cyclist_speed,
     scooter_speed,
+    senior_fatigue_decay,
+    tobler_walking_speed,
+    universal_thermal_comfort_utci,
+    vehicle_free_flow_speed,
 )
 from .mobility_profiles import MobilityProfile
 
 
 @dataclass
-class ElevationPoint:
-    """Sample point along route with distance, elevation, and gradient."""
+class CueInstruction:
+    """Single step in a turn-by-turn navigation sheet."""
 
+    step_number: int
+    instruction: str
+    direction: str  # 'depart', 'left', 'right', 'slight_left', 'slight_right', 'straight', 'arrive'
     distance_m: float
-    elevation_m: float
+    elevation_delta_m: float
     slope_pct: float
-    lon: float
-    lat: float
-    speed_kmh: float = 5.0
-    lst_normalized: float = 0.5
+    street_name: str
+    warning: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "step_number": self.step_number,
+            "instruction": self.instruction,
+            "direction": self.direction,
+            "distance_m": round(self.distance_m, 1),
+            "elevation_delta_m": round(self.elevation_delta_m, 1),
+            "slope_pct": round(self.slope_pct, 1),
+            "street_name": self.street_name,
+            "warning": self.warning,
+        }
 
 
 @dataclass
@@ -44,8 +59,11 @@ class RouteStatistics:
     avg_slope_pct: float
     total_calories_kcal: float
     thermal_comfort_score: float  # 0.0 (extreme heat) to 1.0 (ideal cool shade)
+    ada_compliant: bool = True
+    ada_violations_count: int = 0
     slope_distribution: Dict[str, float] = field(default_factory=dict)
     elevation_profile: List[Dict[str, Any]] = field(default_factory=list)
+    cue_sheet: List[CueInstruction] = field(default_factory=list)
 
     @property
     def total_distance_km(self) -> float:
@@ -69,21 +87,21 @@ class RouteStatistics:
             "avg_slope_pct": round(self.avg_slope_pct, 1),
             "total_calories_kcal": round(self.total_calories_kcal, 1),
             "thermal_comfort_score": round(self.thermal_comfort_score, 2),
+            "ada_compliant": self.ada_compliant,
+            "ada_violations_count": self.ada_violations_count,
             "slope_distribution": self.slope_distribution,
             "elevation_profile": self.elevation_profile,
+            "cue_sheet": [c.to_dict() for c in self.cue_sheet],
         }
 
 
 def densify_3d_linestring(
     coords: Sequence[Sequence[float]],
-    sample_interval_m: float = 8.0
+    sample_interval_m: float = 8.0,
 ) -> List[Tuple[float, float, float]]:
     """Densify a 3D coordinate sequence by interpolating points every N meters."""
     if len(coords) < 2:
-        return [
-            (c[0], c[1], c[2] if len(c) > 2 else 0.0)
-            for c in coords
-        ]
+        return [(c[0], c[1], c[2] if len(c) > 2 else 0.0) for c in coords]
 
     densified: List[Tuple[float, float, float]] = []
 
@@ -108,6 +126,136 @@ def densify_3d_linestring(
     return densified
 
 
+def smooth_elevation_series(elevations: Sequence[float], window_size: int = 5) -> List[float]:
+    """Apply moving Gaussian-weighted smoothing to filter DEM quantization noise."""
+    n = len(elevations)
+    if n < window_size:
+        return list(elevations)
+
+    smoothed = []
+    half = window_size // 2
+    for i in range(n):
+        sub = elevations[max(0, i - half) : min(n, i + half + 1)]
+        smoothed.append(sum(sub) / len(sub))
+    return smoothed
+
+
+def compute_turn_angle_and_direction(
+    p_prev: Sequence[float],
+    p_curr: Sequence[float],
+    p_next: Sequence[float],
+) -> Tuple[float, str]:
+    """Compute turn angle in degrees and turn direction string."""
+    dx1 = p_curr[0] - p_prev[0]
+    dy1 = p_curr[1] - p_prev[1]
+    dx2 = p_next[0] - p_curr[0]
+    dy2 = p_next[1] - p_curr[1]
+
+    b1 = (math.degrees(math.atan2(dx1, dy1)) + 360.0) % 360.0
+    b2 = (math.degrees(math.atan2(dx2, dy2)) + 360.0) % 360.0
+    diff = (b2 - b1 + 180.0) % 360.0 - 180.0
+
+    if abs(diff) < 15.0:
+        return diff, "straight"
+    if diff > 45.0:
+        return diff, "right"
+    if diff > 15.0:
+        return diff, "slight_right"
+    if diff < -45.0:
+        return diff, "left"
+    return diff, "slight_left"
+
+
+def generate_cue_sheet(
+    raw_coords_3d: Sequence[Sequence[float]],
+    profile: MobilityProfile,
+) -> List[CueInstruction]:
+    """Generate human-readable turn-by-turn navigation instructions."""
+    if len(raw_coords_3d) < 2:
+        return []
+
+    cues: List[CueInstruction] = []
+    step_num = 1
+
+    # Start Departure
+    p_first = raw_coords_3d[0]
+    cues.append(
+        CueInstruction(
+            step_number=step_num,
+            instruction="Depart from origin point heading forward.",
+            direction="depart",
+            distance_m=0.0,
+            elevation_delta_m=0.0,
+            slope_pct=0.0,
+            street_name="Starting Point",
+        )
+    )
+    step_num += 1
+
+    accum_dist = 0.0
+    accum_dz = 0.0
+
+    for i in range(1, len(raw_coords_3d) - 1):
+        p_prev = raw_coords_3d[i - 1]
+        p_curr = raw_coords_3d[i]
+        p_next = raw_coords_3d[i + 1]
+
+        d = haversine_distance_2d(p_prev, p_curr)
+        dz = p_curr[2] - p_prev[2]
+        accum_dist += d
+        accum_dz += dz
+
+        angle, direction = compute_turn_angle_and_direction(p_prev, p_curr, p_next)
+
+        if direction != "straight" or accum_dist > 400.0:
+            slope = (accum_dz / max(0.1, accum_dist)) * 100.0
+            warning = ""
+            if abs(slope) > profile.max_slope_pct:
+                warning = f"Warning: Steep gradient ({slope:.1f}%) exceeds profile recommendation!"
+
+            dir_text = {
+                "left": "Turn left",
+                "right": "Turn right",
+                "slight_left": "Bear slightly left",
+                "slight_right": "Bear slightly right",
+                "straight": "Continue straight",
+            }.get(direction, "Continue")
+
+            instr = f"{dir_text} along path for {accum_dist:.0f}m ({accum_dz:+.1f}m elevation)."
+            cues.append(
+                CueInstruction(
+                    step_number=step_num,
+                    instruction=instr,
+                    direction=direction,
+                    distance_m=accum_dist,
+                    elevation_delta_m=accum_dz,
+                    slope_pct=slope,
+                    street_name="Urban Path",
+                    warning=warning,
+                )
+            )
+            step_num += 1
+            accum_dist = 0.0
+            accum_dz = 0.0
+
+    # Arrival at Destination
+    last_d = haversine_distance_2d(raw_coords_3d[-2], raw_coords_3d[-1])
+    last_dz = raw_coords_3d[-1][2] - raw_coords_3d[-2][2]
+    cues.append(
+        CueInstruction(
+            step_number=step_num,
+            instruction="Arrive at destination.",
+            direction="arrive",
+            distance_m=accum_dist + last_d,
+            elevation_delta_m=accum_dz + last_dz,
+            slope_pct=0.0,
+            street_name="Destination Point",
+        )
+    )
+
+    return cues
+
+
 def compute_route_statistics(
     coords_3d: Sequence[Sequence[float]],
     profile: MobilityProfile,
@@ -128,7 +276,7 @@ def compute_route_statistics(
             thermal_comfort_score=1.0,
         )
 
-    # Densify coordinates for high-resolution sampling
+    # Densify coordinates
     dense_pts = densify_3d_linestring(coords_3d, sample_interval_m=6.0)
 
     cumulative_dist = 0.0
@@ -137,13 +285,13 @@ def compute_route_statistics(
     elevation_loss = 0.0
     total_calories = 0.0
     slope_sum = 0.0
+    ada_violations = 0
 
     elevations = [p[2] for p in dense_pts]
     min_elev = min(elevations)
     max_elev = max(elevations)
     max_slope = 0.0
 
-    # Categorized slope distances (in meters)
     slope_bins = {
         "flat_0_3": 0.0,
         "gentle_3_6": 0.0,
@@ -154,8 +302,6 @@ def compute_route_statistics(
 
     profile_list: List[Dict[str, Any]] = []
     thermal_sum = 0.0
-
-    # Base profile configuration
     category = profile.category
     base_spd = profile.base_speed_kmh
 
@@ -175,12 +321,15 @@ def compute_route_statistics(
         max_slope = max(max_slope, abs_slope)
         slope_sum += abs_slope * d_3d
 
+        if abs_slope > 8.33:
+            ada_violations += 1
+
         if dz > 0:
             elevation_gain += dz
         else:
             elevation_loss += abs(dz)
 
-        # Categorize slope
+        # Slope bins
         if abs_slope < 3.0:
             slope_bins["flat_0_3"] += d_3d
         elif abs_slope < 6.0:
@@ -192,18 +341,23 @@ def compute_route_statistics(
         else:
             slope_bins["extreme_over_15"] += d_3d
 
-        # Speed calculation along segment
+        # Kinematic calculation
         slope_frac = dz / max(0.1, d_2d)
         if category == "pedestrian":
-            speed_kmh = tobler_walking_speed(slope_frac, base_speed_kmh=base_spd)
+            fatigue_mult = (
+                senior_fatigue_decay(cumulative_dist, elevation_gain)
+                if profile.key == "senior"
+                else 1.0
+            )
+            speed_kmh = tobler_walking_speed(slope_frac, base_speed_kmh=base_spd) * fatigue_mult
             _j, kcal = minetti_energy_cost(slope_frac, mass_kg=70.0, distance_m=d_3d)
             total_calories += kcal
-        elif profile.key == "bicycle":
+        elif profile.key in {"bicycle", "mtb"}:
             speed_kmh = cyclist_speed(slope_frac, base_speed_kmh=base_spd)
-            total_calories += (d_3d / 1000.0) * 25.0  # ~25 kcal per km cycling
+            total_calories += (d_3d / 1000.0) * 28.0
         elif profile.key == "scooter":
             speed_kmh = scooter_speed(slope_frac, base_speed_kmh=base_spd)
-        else:  # Vehicle / Truck
+        else:
             speed_kmh = vehicle_free_flow_speed(hierarchy_rank=4, lanes=2, slope_pct=slope_pct)
 
         seg_time_s = d_3d / max(0.1, (speed_kmh * 1000.0 / 3600.0))
@@ -226,7 +380,6 @@ def compute_route_statistics(
         )
         cumulative_dist += d_3d
 
-    # Append the last point
     last_pt = dense_pts[-1]
     profile_list.append(
         {
@@ -243,11 +396,12 @@ def compute_route_statistics(
     mean_lst = (thermal_sum / cumulative_dist) if cumulative_dist > 0 else 0.5
     thermal_comfort = max(0.0, min(1.0, 1.0 - mean_lst))
 
-    # Convert slope bins to percentages
     slope_dist_pct = {
         k: round((v / cumulative_dist) * 100.0, 1) if cumulative_dist > 0 else 0.0
         for k, v in slope_bins.items()
     }
+
+    cues = generate_cue_sheet(coords_3d, profile)
 
     return RouteStatistics(
         total_distance_m=cumulative_dist,
@@ -260,6 +414,9 @@ def compute_route_statistics(
         avg_slope_pct=avg_slope,
         total_calories_kcal=total_calories,
         thermal_comfort_score=thermal_comfort,
+        ada_compliant=(ada_violations == 0),
+        ada_violations_count=ada_violations,
         slope_distribution=slope_dist_pct,
         elevation_profile=profile_list,
+        cue_sheet=cues,
     )

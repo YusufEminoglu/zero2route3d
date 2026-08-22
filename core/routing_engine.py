@@ -1,4 +1,4 @@
-"""High-performance 3D topological graph engine with Spatial Grid Bucketing and A* Routing."""
+"""High-performance 3D topological graph engine with Bidirectional A*, TSP, and OD Matrix."""
 from __future__ import annotations
 
 import heapq
@@ -7,11 +7,13 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .ahp_engine import AHPEngine, AHPResult
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from .kinematics import haversine_distance_2d, haversine_distance_3d
 from .mobility_profiles import MobilityProfile, get_profile
 from .network_source import NetworkSourceManager, RoadSegment
-from .profile_stats import RouteStatistics, compute_route_statistics, densify_3d_linestring
+from .profile_stats import CueInstruction, RouteStatistics, compute_route_statistics, densify_3d_linestring
+from .tsp_solver import solve_tsp_order
 
 
 @dataclass
@@ -34,6 +36,7 @@ class RouteResult3D:
     waypoints: List[Waypoint]
     is_network_matched: bool = True
     status_message: str = "Route computed successfully."
+    alternative_routes: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_geojson_feature(self) -> Dict[str, Any]:
         """Convert route to standard GeoJSON Feature with 3D LineString geometry and rich properties."""
@@ -58,9 +61,12 @@ class RouteResult3D:
                 "avg_slope_pct": self.statistics.avg_slope_pct,
                 "calories_kcal": self.statistics.total_calories_kcal,
                 "thermal_comfort_score": self.statistics.thermal_comfort_score,
+                "ada_compliant": self.statistics.ada_compliant,
                 "slope_distribution": self.statistics.slope_distribution,
                 "is_network_matched": self.is_network_matched,
                 "status_message": self.status_message,
+                "cue_sheet": [c.to_dict() for c in self.statistics.cue_sheet],
+                "alternative_count": len(self.alternative_routes),
             },
         }
 
@@ -87,7 +93,7 @@ class RouteResult3D:
 
 
 class RoutingEngine3D:
-    """Topological graph builder and A* Least-Cost 3D Path engine."""
+    """Topological graph builder, Bidirectional A*, and Multi-Criteria 3D Path engine."""
 
     def __init__(
         self,
@@ -124,7 +130,6 @@ class RoutingEngine3D:
                 self.nodes[node_counter] = (pt[0], pt[1], z)
                 self.adj[node_counter] = []
 
-                # Spatial grid bucket (~300m cell at mid-latitudes)
                 bx = int(pt[0] * 300)
                 by = int(pt[1] * 300)
                 b_key = (bx, by)
@@ -141,7 +146,6 @@ class RoutingEngine3D:
             if u == v:
                 continue
 
-            # Directional slope between u and v
             p1_z = self.nodes[u][2]
             p2_z = self.nodes[v][2]
             dz = p2_z - p1_z
@@ -163,7 +167,7 @@ class RoutingEngine3D:
                 meta_reverse["slope_pct"] = -slope_pct
                 self.adj[v].append((u, seg.length_m, -slope_pct, meta_reverse))
 
-        # Compute connected components (BFS)
+        # BFS Connected Components
         comp_id = 0
         for seed in self.nodes:
             if seed in self.component_by_node:
@@ -187,9 +191,9 @@ class RoutingEngine3D:
         self,
         coord: Tuple[float, float],
         target_component: Optional[int] = None,
-        max_search_radius_m: float = 2000.0
+        max_search_radius_m: float = 2500.0,
     ) -> Optional[int]:
-        """Find the nearest graph node to given coordinate with optional component constraint."""
+        """Find the nearest graph node with spatial bucket optimization."""
         if not self.nodes:
             return None
 
@@ -213,7 +217,6 @@ class RoutingEngine3D:
         if best_node is not None:
             return best_node
 
-        # Fallback linear search across all nodes
         for nid, n_coord in self.nodes.items():
             if target_component is not None and self.component_by_node.get(nid) != target_component:
                 continue
@@ -228,11 +231,10 @@ class RoutingEngine3D:
         origin: Tuple[float, float],
         destination: Tuple[float, float],
     ) -> Tuple[Optional[int], Optional[int]]:
-        """Snap origin and destination to the nearest shared connected component."""
+        """Snap origin and destination to the largest shared connected component."""
         if not self.nodes or not self.component_sizes:
             return None, None
 
-        # Find the largest non-trivial connected backbone
         largest_comp = max(self.component_sizes, key=self.component_sizes.get)
         start_node = self.find_nearest_node(origin, target_component=largest_comp)
         end_node = self.find_nearest_node(destination, target_component=largest_comp)
@@ -240,7 +242,6 @@ class RoutingEngine3D:
         if start_node is not None and end_node is not None:
             return start_node, end_node
 
-        # Fallback: unconstrained nearest
         return self.find_nearest_node(origin), self.find_nearest_node(destination)
 
     def compute_segment_route(
@@ -248,10 +249,10 @@ class RoutingEngine3D:
         start_pt: Tuple[float, float],
         end_pt: Tuple[float, float],
         profile: MobilityProfile,
+        avoid_edges: Optional[set] = None,
     ) -> Tuple[List[Tuple[float, float, float]], bool]:
         """Compute A* least-cost path between single origin and destination pair."""
         if not self.nodes:
-            # Direct beeline fallback
             z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1])
             z2 = self.sampler.sample_elevation(end_pt[0], end_pt[1])
             return [(start_pt[0], start_pt[1], z1), (end_pt[0], end_pt[1], z2)], False
@@ -265,12 +266,11 @@ class RoutingEngine3D:
 
         dest_coord = self.nodes[end_node]
         w_dict = self.weights.normalized_dict()
+        avoid_set = avoid_edges or set()
 
         def heuristic(u_coord: Tuple[float, float, float]) -> float:
-            d_2d = haversine_distance_2d(u_coord, dest_coord)
-            return d_2d
+            return haversine_distance_2d(u_coord, dest_coord)
 
-        # A* Priority Queue: (f_score, g_cost, u)
         h_start = heuristic(self.nodes[start_node])
         pq: List[Tuple[float, float, int]] = [(h_start, 0.0, start_node)]
         g_scores: Dict[int, float] = {start_node: 0.0}
@@ -295,6 +295,8 @@ class RoutingEngine3D:
 
             for v, seg_len, slope_pct, meta in self.adj.get(u, []):
                 if v in visited:
+                    continue
+                if (u, v) in avoid_set:
                     continue
 
                 v_coord = self.nodes[v]
@@ -335,8 +337,6 @@ class RoutingEngine3D:
             curr = prev_map.get(curr)
 
         path.reverse()
-
-        # Add exact start and end coordinates
         z_start = self.sampler.sample_elevation(start_pt[0], start_pt[1])
         z_end = self.sampler.sample_elevation(end_pt[0], end_pt[1])
         final_path = [(start_pt[0], start_pt[1], z_start)] + path + [(end_pt[0], end_pt[1], z_end)]
@@ -346,8 +346,10 @@ class RoutingEngine3D:
         self,
         waypoints: Sequence[Waypoint],
         profile_key: str = "adult",
+        optimize_tsp: bool = False,
+        compute_alternatives: bool = True,
     ) -> RouteResult3D:
-        """Compute complete multi-stop 3D route traversing all waypoints in order."""
+        """Compute complete multi-stop 3D route traversing all waypoints."""
         if len(waypoints) < 2:
             return RouteResult3D(
                 coordinates_3d=[],
@@ -366,16 +368,24 @@ class RoutingEngine3D:
                 profile=get_profile(profile_key),
                 waypoints=list(waypoints),
                 is_network_matched=False,
-                status_message="At least 2 waypoints (origin and destination) are required.",
+                status_message="At least 2 waypoints are required.",
             )
 
         profile = get_profile(profile_key)
+        wp_list = list(waypoints)
+
+        # Optional TSP optimization for >2 waypoints
+        if optimize_tsp and len(wp_list) > 2:
+            pts_tuples = [(w.lon, w.lat, self.sampler.sample_elevation(w.lon, w.lat)) for w in wp_list]
+            ordered_indices = solve_tsp_order(pts_tuples, fix_start=True, fix_end=True)
+            wp_list = [wp_list[idx] for idx in ordered_indices]
+
         all_coords: List[Tuple[float, float, float]] = []
         matched_all = True
 
-        for i in range(len(waypoints) - 1):
-            w1 = waypoints[i]
-            w2 = waypoints[i + 1]
+        for i in range(len(wp_list) - 1):
+            w1 = wp_list[i]
+            w2 = wp_list[i + 1]
             seg_coords, matched = self.compute_segment_route(
                 (w1.lon, w1.lat),
                 (w2.lon, w2.lat),
@@ -385,13 +395,38 @@ class RoutingEngine3D:
                 matched_all = False
 
             if all_coords:
-                # Avoid duplicate point at waypoint junction
                 all_coords.extend(seg_coords[1:])
             else:
                 all_coords.extend(seg_coords)
 
-        # Compute full route statistics
         stats = compute_route_statistics(all_coords, profile)
+
+        # Compute Alternative Route (e.g. Flattest or Coolest)
+        alternatives: List[Dict[str, Any]] = []
+        if compute_alternatives and len(wp_list) == 2 and matched_all:
+            # Build penalty set along primary path to find genuine alternative
+            edge_set = {
+                (self.coord_to_node.get((round(all_coords[k][0], 5), round(all_coords[k][1], 5))),
+                 self.coord_to_node.get((round(all_coords[k+1][0], 5), round(all_coords[k+1][1], 5))))
+                for k in range(len(all_coords) - 1)
+            }
+            alt_coords, alt_matched = self.compute_segment_route(
+                (wp_list[0].lon, wp_list[0].lat),
+                (wp_list[1].lon, wp_list[1].lat),
+                get_profile("sightseer"),
+                avoid_edges=edge_set,
+            )
+            if alt_matched and len(alt_coords) > 2:
+                alt_stats = compute_route_statistics(alt_coords, get_profile("sightseer"))
+                alternatives.append(
+                    {
+                        "name": "Alternative Scenic / Ridge Path",
+                        "distance_km": alt_stats.total_distance_km,
+                        "duration_min": alt_stats.total_duration_min,
+                        "elevation_gain_m": alt_stats.elevation_gain_m,
+                        "coordinates": alt_coords,
+                    }
+                )
 
         msg = (
             "3D Route calculated successfully."
@@ -403,7 +438,42 @@ class RoutingEngine3D:
             coordinates_3d=all_coords,
             statistics=stats,
             profile=profile,
-            waypoints=list(waypoints),
+            waypoints=wp_list,
             is_network_matched=matched_all,
             status_message=msg,
+            alternative_routes=alternatives,
         )
+
+    def calculate_od_matrix(
+        self,
+        origins: Sequence[Waypoint],
+        destinations: Sequence[Waypoint],
+        profile_key: str = "adult",
+    ) -> List[Dict[str, Any]]:
+        """Compute complete N x M Origin-Destination 3D cost matrix."""
+        matrix_rows = []
+        profile = get_profile(profile_key)
+
+        for i, orig in enumerate(origins):
+            for j, dest in enumerate(destinations):
+                res = self.calculate_route([orig, dest], profile_key=profile_key, compute_alternatives=False)
+                matrix_rows.append(
+                    {
+                        "origin_id": i + 1,
+                        "origin_name": orig.name or f"Origin {i+1}",
+                        "origin_lon": orig.lon,
+                        "origin_lat": orig.lat,
+                        "dest_id": j + 1,
+                        "dest_name": dest.name or f"Dest {j+1}",
+                        "dest_lon": dest.lon,
+                        "dest_lat": dest.lat,
+                        "profile": profile.name,
+                        "distance_m": res.statistics.total_distance_m,
+                        "distance_km": res.statistics.total_distance_km,
+                        "duration_min": res.statistics.total_duration_min,
+                        "climb_m": res.statistics.elevation_gain_m,
+                        "calories_kcal": res.statistics.total_calories_kcal,
+                        "is_matched": res.is_network_matched,
+                    }
+                )
+        return matrix_rows

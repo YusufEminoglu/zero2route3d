@@ -1,13 +1,20 @@
 """02Route 3D Core Analytical Engine."""
 from __future__ import annotations
 
+from .ahp_engine import AHPEngine, AHPResult
+from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from .kinematics import (
+    aerodynamic_drag_power,
+    cyclist_speed,
     haversine_distance_2d,
     haversine_distance_3d,
-    tobler_walking_speed,
     minetti_energy_cost,
-    cyclist_speed,
+    rolling_resistance_force,
     scooter_speed,
+    senior_fatigue_decay,
+    solar_irradiance_aspect_factor,
+    tobler_walking_speed,
+    universal_thermal_comfort_utci,
     vehicle_free_flow_speed,
 )
 from .mobility_profiles import (
@@ -15,44 +22,54 @@ from .mobility_profiles import (
     MobilityProfile,
     get_profile,
     list_profile_keys,
+    load_custom_profile_json,
+    save_custom_profile_json,
 )
-from .environmental_raster import (
-    EnvironmentalSurfaceSampler,
-    MCDAWeights,
-)
-from .network_source import (
-    NetworkSourceManager,
-    RoadSegment,
-)
-from .routing_engine import (
-    RoutingEngine3D,
-    RouteResult3D,
-    Waypoint,
-)
+from .network_source import NetworkSourceManager, RoadSegment
 from .profile_stats import (
+    CueInstruction,
+    RouteStatistics,
     compute_route_statistics,
     densify_3d_linestring,
+    generate_cue_sheet,
+    smooth_elevation_series,
 )
+from .routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
+from .tsp_solver import solve_tsp_order
 
 __all__ = [
+    "AHPEngine",
+    "AHPResult",
+    "EnvironmentalSurfaceSampler",
+    "MCDAWeights",
+    "aerodynamic_drag_power",
+    "cyclist_speed",
     "haversine_distance_2d",
     "haversine_distance_3d",
-    "tobler_walking_speed",
     "minetti_energy_cost",
-    "cyclist_speed",
+    "rolling_resistance_force",
     "scooter_speed",
+    "senior_fatigue_decay",
+    "solar_irradiance_aspect_factor",
+    "tobler_walking_speed",
+    "universal_thermal_comfort_utci",
     "vehicle_free_flow_speed",
     "PROFILES",
     "MobilityProfile",
     "get_profile",
     "list_profile_keys",
-    "EnvironmentalSurfaceSampler",
-    "MCDAWeights",
+    "load_custom_profile_json",
+    "save_custom_profile_json",
     "NetworkSourceManager",
     "RoadSegment",
-    "RoutingEngine3D",
-    "RouteResult3D",
-    "Waypoint",
+    "CueInstruction",
+    "RouteStatistics",
     "compute_route_statistics",
     "densify_3d_linestring",
+    "generate_cue_sheet",
+    "smooth_elevation_series",
+    "RouteResult3D",
+    "RoutingEngine3D",
+    "Waypoint",
+    "solve_tsp_order",
 ]

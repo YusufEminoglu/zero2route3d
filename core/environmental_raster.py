@@ -1,17 +1,16 @@
 """Multi-criteria environmental raster cost surfaces and spatial sampling.
 
 Supports sampling digital elevation models (DEM), slope/aspect derivation,
-Land Surface Temperature (LST), and tree canopy/greenery indices.
-Includes graceful fallback if raster layers are not present in the QGIS session.
+solar irradiance, Land Surface Temperature (LST), and tree canopy/greenery indices.
 """
 from __future__ import annotations
 
 import contextlib
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .kinematics import haversine_distance_2d
+from .kinematics import haversine_distance_2d, solar_irradiance_aspect_factor
 
 
 @dataclass
@@ -23,6 +22,7 @@ class MCDAWeights:
     weight_heat: float = 0.5
     weight_green: float = 0.5
     weight_safety: float = 0.5
+    weight_solar: float = 0.3
 
     def normalized_dict(self) -> Dict[str, float]:
         """Return dictionary of normalized weight coefficients summing to 1.0."""
@@ -32,6 +32,7 @@ class MCDAWeights:
             + self.weight_heat
             + self.weight_green
             + self.weight_safety
+            + self.weight_solar
         )
         if total <= 0:
             return {
@@ -39,7 +40,8 @@ class MCDAWeights:
                 "slope": 0.2,
                 "heat": 0.2,
                 "green": 0.2,
-                "safety": 0.2,
+                "safety": 0.1,
+                "solar": 0.1,
             }
         return {
             "distance": self.weight_distance / total,
@@ -47,6 +49,7 @@ class MCDAWeights:
             "heat": self.weight_heat / total,
             "green": self.weight_green / total,
             "safety": self.weight_safety / total,
+            "solar": self.weight_solar / total,
         }
 
 
@@ -58,10 +61,14 @@ class EnvironmentalSurfaceSampler:
         dem_layer: Optional[Any] = None,
         lst_layer: Optional[Any] = None,
         green_layer: Optional[Any] = None,
+        sun_azimuth_deg: float = 180.0,
+        sun_elevation_deg: float = 55.0,
     ) -> None:
         self.dem_layer = dem_layer
         self.lst_layer = lst_layer
         self.green_layer = green_layer
+        self.sun_azimuth_deg = sun_azimuth_deg
+        self.sun_elevation_deg = sun_elevation_deg
         self._dem_cache: Dict[Tuple[float, float], float] = {}
 
     def sample_elevation(self, lon: float, lat: float) -> float:
@@ -72,13 +79,12 @@ class EnvironmentalSurfaceSampler:
 
         elevation = 0.0
 
-        # Attempt to sample from QGIS raster layer if available
         if self.dem_layer is not None:
             with contextlib.suppress(Exception):
                 from qgis.core import (
-                    QgsPointXY,
                     QgsCoordinateReferenceSystem,
                     QgsCoordinateTransform,
+                    QgsPointXY,
                     QgsProject,
                 )
 
@@ -95,8 +101,7 @@ class EnvironmentalSurfaceSampler:
                     self._dem_cache[coord_key] = elevation
                     return elevation
 
-        # Fallback gentle synthetic topography for offline preview/testing
-        # Produces deterministic, smooth hills based on coordinates
+        # Deterministic synthetic terrain
         elevation = 15.0 + 35.0 * math.sin(lon * 80.0) * math.cos(lat * 80.0)
         self._dem_cache[coord_key] = elevation
         return elevation
@@ -104,12 +109,12 @@ class EnvironmentalSurfaceSampler:
     def sample_slope_and_aspect(
         self,
         p1: Sequence[float],
-        p2: Sequence[float]
-    ) -> Tuple[float, float]:
-        """Compute directional slope (%) and aspect angle (degrees) between two points."""
+        p2: Sequence[float],
+    ) -> Tuple[float, float, float]:
+        """Compute directional slope (%), aspect angle (deg), and solar irradiance factor (0..1)."""
         dist_2d = haversine_distance_2d(p1, p2)
         if dist_2d < 0.1:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.5
 
         z1 = float(p1[2]) if len(p1) > 2 else self.sample_elevation(p1[0], p1[1])
         z2 = float(p2[2]) if len(p2) > 2 else self.sample_elevation(p2[0], p2[1])
@@ -117,22 +122,28 @@ class EnvironmentalSurfaceSampler:
         dz = z2 - z1
         slope_pct = (dz / dist_2d) * 100.0
 
-        # Compass bearing from p1 to p2
         dx = (p2[0] - p1[0]) * math.cos(math.radians((p1[1] + p2[1]) * 0.5))
         dy = p2[1] - p1[1]
         bearing_rad = math.atan2(dx, dy)
         aspect_deg = (math.degrees(bearing_rad) + 360.0) % 360.0
 
-        return slope_pct, aspect_deg
+        solar_factor = solar_irradiance_aspect_factor(
+            aspect_deg=aspect_deg,
+            slope_pct=slope_pct,
+            sun_azimuth_deg=self.sun_azimuth_deg,
+            sun_elevation_deg=self.sun_elevation_deg,
+        )
+
+        return slope_pct, aspect_deg, solar_factor
 
     def sample_lst(self, lon: float, lat: float) -> float:
         """Sample Land Surface Temperature (normalized 0.0 = cool, 1.0 = hot)."""
         if self.lst_layer is not None:
             with contextlib.suppress(Exception):
                 from qgis.core import (
-                    QgsPointXY,
                     QgsCoordinateReferenceSystem,
                     QgsCoordinateTransform,
+                    QgsPointXY,
                     QgsProject,
                 )
 
@@ -145,11 +156,8 @@ class EnvironmentalSurfaceSampler:
 
                 val, success = self.lst_layer.dataProvider().sample(pt, 1)
                 if success and val is not None and not math.isnan(val):
-                    # Assume typical urban LST range ~ 20 to 50 Celsius
                     normalized = (float(val) - 20.0) / 30.0
                     return max(0.0, min(1.0, normalized))
-
-        # Default neutral thermal index
         return 0.5
 
     def sample_greenery(self, lon: float, lat: float) -> float:
@@ -157,9 +165,9 @@ class EnvironmentalSurfaceSampler:
         if self.green_layer is not None:
             with contextlib.suppress(Exception):
                 from qgis.core import (
-                    QgsPointXY,
                     QgsCoordinateReferenceSystem,
                     QgsCoordinateTransform,
+                    QgsPointXY,
                     QgsProject,
                 )
 
@@ -173,6 +181,4 @@ class EnvironmentalSurfaceSampler:
                 val, success = self.green_layer.dataProvider().sample(pt, 1)
                 if success and val is not None and not math.isnan(val):
                     return max(0.0, min(1.0, float(val)))
-
-        # Default moderate greenery
         return 0.4

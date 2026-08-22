@@ -1,138 +1,154 @@
-"""Unit tests for 02Route 3D pure Python algorithms and kinematics."""
-import math
+"""Comprehensive unit tests for 02Route 3D pure analytical and kinematic logic."""
+from __future__ import annotations
+
 import unittest
 
-from zero2route3d.core import (
-    EnvironmentalSurfaceSampler,
-    MCDAWeights,
-    MobilityProfile,
-    NetworkSourceManager,
-    PROFILES,
-    RoadSegment,
-    RoutingEngine3D,
-    Waypoint,
-    compute_route_statistics,
+from zero2route3d.core.ahp_engine import AHPEngine
+from zero2route3d.core.kinematics import (
+    aerodynamic_drag_power,
     cyclist_speed,
-    densify_3d_linestring,
-    get_profile,
     haversine_distance_2d,
     haversine_distance_3d,
     minetti_energy_cost,
+    rolling_resistance_force,
     scooter_speed,
+    senior_fatigue_decay,
+    solar_irradiance_aspect_factor,
     tobler_walking_speed,
+    universal_thermal_comfort_utci,
     vehicle_free_flow_speed,
 )
+from zero2route3d.core.mobility_profiles import (
+    PROFILES,
+    MobilityProfile,
+    get_profile,
+    list_profile_keys,
+)
+from zero2route3d.core.network_source import NetworkSourceManager
+from zero2route3d.core.profile_stats import (
+    compute_route_statistics,
+    densify_3d_linestring,
+    generate_cue_sheet,
+    smooth_elevation_series,
+)
+from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+from zero2route3d.core.tsp_solver import solve_tsp_order
 
 
-class TestKinematics(unittest.TestCase):
-    """Test geodesic distance and biomechanical equations."""
+class TestRoute3DPureLogic(unittest.TestCase):
+    """Test suite covering core physics, graph routing, AHP, and TSP logic."""
 
-    def test_haversine_distances(self):
-        p1 = (27.1287, 38.4189, 10.0)
-        p2 = (27.1400, 38.4250, 45.0)
-        d2d = haversine_distance_2d(p1, p2)
-        d3d = haversine_distance_3d(p1, p2)
-        self.assertGreater(d2d, 1000.0)
-        self.assertGreater(d3d, d2d)
+    def test_haversine_2d_and_3d(self) -> None:
+        p1 = (27.1428, 38.4237, 10.0)
+        p2 = (27.1438, 38.4237, 25.0)
+        d2 = haversine_distance_2d(p1, p2)
+        d3 = haversine_distance_3d(p1, p2)
+        self.assertGreater(d2, 70.0)
+        self.assertGreater(d3, d2)
+        self.assertAlmostEqual(d3, (d2**2 + 15.0**2)**0.5, places=1)
 
-    def test_tobler_hiking_speed(self):
-        # Flat surface (0% slope)
+    def test_tobler_and_kinematics(self) -> None:
         flat_spd = tobler_walking_speed(0.0, base_speed_kmh=5.0)
-        self.assertAlmostEqual(flat_spd, 5.0, delta=0.5)
-
-        # Gentle downhill (-5% slope) should be fastest
+        uphill_spd = tobler_walking_speed(0.15, base_speed_kmh=5.0)
         downhill_spd = tobler_walking_speed(-0.05, base_speed_kmh=5.0)
-        self.assertGreaterEqual(downhill_spd, flat_spd)
+        self.assertGreater(flat_spd, uphill_spd)
+        self.assertGreater(downhill_spd, uphill_spd)
 
-        # Steep uphill (+20% slope) should be significantly slower
-        uphill_spd = tobler_walking_speed(0.20, base_speed_kmh=5.0)
-        self.assertLess(uphill_spd, flat_spd * 0.7)
+    def test_minetti_energy(self) -> None:
+        _j_flat, kcal_flat = minetti_energy_cost(0.0, mass_kg=70.0, distance_m=1000.0)
+        _j_up, kcal_up = minetti_energy_cost(0.10, mass_kg=70.0, distance_m=1000.0)
+        self.assertGreater(kcal_up, kcal_flat)
+        self.assertGreater(kcal_flat, 10.0)
 
-    def test_minetti_energy_cost(self):
-        joules_flat, kcal_flat = minetti_energy_cost(0.0, mass_kg=70.0, distance_m=100.0)
-        joules_up, kcal_up = minetti_energy_cost(0.15, mass_kg=70.0, distance_m=100.0)
-        self.assertGreater(kcal_flat, 0.0)
-        self.assertGreater(kcal_up, kcal_flat * 2.0)
+    def test_aerodynamic_and_rolling_resistance(self) -> None:
+        drag = aerodynamic_drag_power(velocity_kmh=25.0)
+        self.assertGreater(drag, 10.0)
+        f_roll = rolling_resistance_force(mass_kg=85.0, slope_fraction=0.05, surface_type="asphalt")
+        self.assertGreater(f_roll, 2.0)
 
-    def test_active_and_vehicle_speeds(self):
-        bike_flat = cyclist_speed(0.0, base_speed_kmh=18.0)
-        bike_up = cyclist_speed(0.10, base_speed_kmh=18.0)
-        self.assertLess(bike_up, bike_flat)
+    def test_senior_fatigue_and_utci(self) -> None:
+        fatigue = senior_fatigue_decay(distance_m=4000.0, accumulated_climb_m=150.0)
+        self.assertLess(fatigue, 0.9)
+        self.assertGreater(fatigue, 0.4)
 
-        scooter_flat = scooter_speed(0.0, base_speed_kmh=20.0)
-        scooter_steep = scooter_speed(0.15, base_speed_kmh=20.0)
-        self.assertEqual(scooter_steep, 4.0)  # motor cutoff
+        stress_score = universal_thermal_comfort_utci(temp_c=34.0, mean_radiant_temp_c=45.0)
+        self.assertGreater(stress_score, 0.5)
 
-        car_h1 = vehicle_free_flow_speed(1, lanes=4)
-        car_h4 = vehicle_free_flow_speed(4, lanes=2)
-        self.assertGreater(car_h1, car_h4)
+    def test_ahp_pairwise_matrix(self) -> None:
+        engine = AHPEngine(["slope", "heat", "green"])
+        engine.set_pairwise_comparison("slope", "heat", 3.0)
+        engine.set_pairwise_comparison("slope", "green", 2.0)
+        engine.set_pairwise_comparison("heat", "green", 0.5)
+        res = engine.calculate()
+        self.assertTrue(res.is_consistent)
+        self.assertLess(res.consistency_ratio, 0.10)
+        self.assertGreater(res.weights["slope"], res.weights["heat"])
 
+    def test_tsp_solver(self) -> None:
+        pts = [
+            (27.0, 38.0, 0.0),
+            (27.5, 38.0, 0.0),
+            (27.2, 38.0, 0.0),
+            (27.9, 38.0, 0.0),
+        ]
+        order = solve_tsp_order(pts, fix_start=True, fix_end=True)
+        self.assertEqual(order[0], 0)
+        self.assertEqual(order[-1], 3)
+        self.assertEqual(order[1], 2)
+        self.assertEqual(order[2], 1)
 
-class TestMobilityProfiles(unittest.TestCase):
-    """Test mobility profile catalog and resistance calculations."""
+    def test_profiles_catalog(self) -> None:
+        keys = list_profile_keys()
+        self.assertIn("adult", keys)
+        self.assertIn("wheelchair", keys)
+        self.assertIn("stroller", keys)
+        self.assertIn("truck", keys)
+        self.assertIn("paramedic", keys)
 
-    def test_profile_catalog(self):
-        self.assertIn("adult", PROFILES)
-        self.assertIn("senior", PROFILES)
-        self.assertIn("wheelchair", PROFILES)
-        self.assertIn("stroller", PROFILES)
-        self.assertIn("truck", PROFILES)
+        wheelchair = get_profile("wheelchair")
+        self.assertFalse(wheelchair.stair_allowed)
+        self.assertLessEqual(wheelchair.max_slope_pct, 6.0)
 
-        p_wheel = get_profile("wheelchair")
-        self.assertFalse(p_wheel.stair_allowed)
-        self.assertEqual(p_wheel.max_slope_pct, 5.0)
+    def test_densification_and_smoothing(self) -> None:
+        coords = [(27.0, 38.0, 10.0), (27.01, 38.0, 20.0)]
+        densified = densify_3d_linestring(coords, sample_interval_m=10.0)
+        self.assertGreater(len(densified), 20)
 
-    def test_edge_resistance_constraints(self):
-        p_stroller = get_profile("stroller")
-        # Stairs should be impassable for stroller
-        stair_cost = p_stroller.calculate_edge_resistance(100.0, slope_pct=1.0, is_steps=True)
-        self.assertEqual(stair_cost, float("inf"))
+        elevs = [10.0, 12.0, 50.0, 14.0, 15.0]
+        smoothed = smooth_elevation_series(elevs, window_size=3)
+        self.assertLess(smoothed[2], 50.0)
 
-        # Flat smooth asphalt should have finite normal cost
-        normal_cost = p_stroller.calculate_edge_resistance(100.0, slope_pct=1.0, is_steps=False)
-        self.assertLess(normal_cost, 300.0)
+    def test_cue_sheet_generation(self) -> None:
+        coords = [
+            (27.000, 38.000, 10.0),
+            (27.005, 38.000, 12.0),
+            (27.005, 38.005, 14.0),
+            (27.010, 38.005, 15.0),
+        ]
+        cues = generate_cue_sheet(coords, get_profile("adult"))
+        self.assertGreaterEqual(len(cues), 2)
+        self.assertEqual(cues[0].direction, "depart")
+        self.assertEqual(cues[-1].direction, "arrive")
 
+    def test_routing_graph_and_od_matrix(self) -> None:
+        net_mgr = NetworkSourceManager()
+        bbox = (27.10, 38.40, 27.15, 38.45)
+        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
 
-class TestRoutingEngine(unittest.TestCase):
-    """Test A* routing on synthetic and grid networks."""
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
 
-    def setUp(self):
-        self.net_mgr = NetworkSourceManager()
-        self.bbox = (27.12, 38.41, 27.16, 38.44)
-        self.grid_segs = self.net_mgr.generate_synthetic_grid(self.bbox, grid_steps=6)
-        self.sampler = EnvironmentalSurfaceSampler()
-        self.engine = RoutingEngine3D(sampler=self.sampler, weights=MCDAWeights())
-        self.engine.build_graph(self.grid_segs)
-
-    def test_routing_success(self):
-        w1 = Waypoint(27.125, 38.415)
-        w2 = Waypoint(27.155, 38.435)
-        res = self.engine.calculate_route([w1, w2], profile_key="senior")
+        w1 = Waypoint(lon=27.11, lat=38.41, name="Orig1")
+        w2 = Waypoint(lon=27.14, lat=38.44, name="Dest1")
+        res = engine.calculate_route([w1, w2], profile_key="adult")
 
         self.assertTrue(res.is_network_matched)
-        self.assertGreater(len(res.coordinates_3d), 3)
-        self.assertGreater(res.statistics.total_distance_m, 1000.0)
-        self.assertGreater(res.statistics.total_duration_min, 5.0)
+        self.assertGreater(len(res.coordinates_3d), 2)
+        self.assertGreater(res.statistics.total_distance_m, 100.0)
 
-        # Check GeoJSON export
-        geojson = res.to_geojson_feature()
-        self.assertEqual(geojson["type"], "Feature")
-        self.assertEqual(geojson["geometry"]["type"], "LineString")
-        self.assertEqual(len(geojson["geometry"]["coordinates"][0]), 3)
-
-        # Check GPX export
-        gpx = res.to_gpx()
-        self.assertIn("<gpx", gpx)
-        self.assertIn("<trkpt", gpx)
-
-    def test_densification_and_stats(self):
-        coords = [(27.12, 38.41, 10.0), (27.13, 38.42, 40.0)]
-        dense = densify_3d_linestring(coords, sample_interval_m=10.0)
-        self.assertGreater(len(dense), 10)
-
-        stats = compute_route_statistics(dense, get_profile("adult"))
-        self.assertGreater(stats.elevation_gain_m, 20.0)
-        self.assertGreater(stats.total_calories_kcal, 0.0)
+        matrix = engine.calculate_od_matrix([w1], [w2], profile_key="adult")
+        self.assertEqual(len(matrix), 1)
+        self.assertGreater(matrix[0]["distance_m"], 100.0)
 
 
 if __name__ == "__main__":

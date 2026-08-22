@@ -1,15 +1,17 @@
 """Mobility profiles catalog and parameter specifications for 3D route planning.
 
-Provides detailed profiles across pedestrian, accessibility, micromobility,
-and vehicular transport modes.
+Provides 15 specialized profiles across pedestrian, accessibility, micromobility,
+and vehicular transport modes, with custom profile building and JSON preset export.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
-@dataclass(frozen=True)
+@dataclass
 class MobilityProfile:
     """Configuration and physiological/kinematic constraints for a mobility mode."""
 
@@ -33,10 +35,10 @@ class MobilityProfile:
         length_m: float,
         slope_pct: float,
         is_steps: bool = False,
-        surface_quality: float = 0.8,  # 0.0 = rough dirt/cobble, 1.0 = smooth asphalt
+        surface_quality: float = 0.8,
         hierarchy_rank: int = 4,
-        lst_normalized: float = 0.5,  # 0.0 = cool/shaded, 1.0 = extreme heat island
-        green_normalized: float = 0.5,  # 0.0 = no canopy, 1.0 = dense tree canopy
+        lst_normalized: float = 0.5,
+        green_normalized: float = 0.5,
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> float:
         """Calculate generalized impedance (cost) for traversing a segment under this profile."""
@@ -49,9 +51,7 @@ class MobilityProfile:
         abs_slope = abs(slope_pct)
         if abs_slope > self.max_slope_pct:
             if not self.category == "pedestrian":
-                # Impassable for vehicle / wheelchair
                 return float("inf")
-            # Severe exponential penalty for pedestrians walking on extreme slope
             slope_mult = 1.0 + (abs_slope / max(1.0, self.max_slope_pct)) ** 3 * 20.0 * w_slope
         else:
             slope_mult = 1.0 + (abs_slope / 10.0) * w_slope * 1.5
@@ -72,20 +72,25 @@ class MobilityProfile:
             smooth_mult = 1.0
 
         # 4. Thermal & Environmental Microclimate Resistance
-        # Hot surface adds resistance; tree canopy reduces resistance
         thermal_cost = 1.0 + (lst_normalized * w_heat * 1.8) - (green_normalized * w_green * 0.4)
         thermal_mult = max(0.6, thermal_cost)
 
         # 5. Road Hierarchy Multiplier
         hier_mult = self.hierarchy_weights.get(hierarchy_rank, 1.0)
 
-        # Total Generalized Resistance Cost
         cost = length_m * slope_mult * stair_mult * smooth_mult * thermal_mult * hier_mult
         return max(0.01, cost)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> MobilityProfile:
+        return cls(**data)
+
 
 # -------------------------------------------------------------------------
-# Standard Profiles Registry
+# 15 Standard & Specialized Mobility Profiles
 # -------------------------------------------------------------------------
 
 PROFILES: Dict[str, MobilityProfile] = {
@@ -123,7 +128,7 @@ PROFILES: Dict[str, MobilityProfile] = {
     ),
     "child": MobilityProfile(
         key="child",
-        name="Child / Family Walk",
+        name="Child / Safe Walk",
         category="pedestrian",
         base_speed_kmh=3.5,
         max_slope_pct=12.0,
@@ -150,7 +155,7 @@ PROFILES: Dict[str, MobilityProfile] = {
         green_preference=0.7,
         surface_smoothness_req=0.8,
         hierarchy_weights={1: 3.5, 2: 2.0, 3: 1.3, 4: 1.0, 5: 0.9},
-        description="Strictly avoids steps and high curbs; enforces smooth pavement and gentle ramps (max 6% grade).",
+        description="Strictly avoids steps; enforces smooth pavement and gentle ramps (max 6% grade).",
         icon_name="stroller",
     ),
     "wheelchair": MobilityProfile(
@@ -169,6 +174,22 @@ PROFILES: Dict[str, MobilityProfile] = {
         description="Strict universal accessibility: zero stairs, max 5% slope tolerance, smooth continuous surfaces.",
         icon_name="wheelchair",
     ),
+    "jogger": MobilityProfile(
+        key="jogger",
+        name="Runner / Fitness Jogger",
+        category="pedestrian",
+        base_speed_kmh=9.5,
+        max_slope_pct=20.0,
+        stair_allowed=True,
+        stair_penalty=1.5,
+        slope_sensitivity=0.8,
+        heat_sensitivity=0.6,
+        green_preference=0.85,
+        surface_smoothness_req=0.3,
+        hierarchy_weights={1: 6.0, 2: 3.0, 3: 1.5, 4: 1.0, 5: 0.7},
+        description="Running pace, seeks park pathways, tree shade, and undulating terrain for exercise.",
+        icon_name="jogger",
+    ),
     "bicycle": MobilityProfile(
         key="bicycle",
         name="City & Commuter Bicycle",
@@ -184,6 +205,22 @@ PROFILES: Dict[str, MobilityProfile] = {
         hierarchy_weights={1: 10.0, 2: 1.6, 3: 1.1, 4: 0.9, 5: 1.0},
         description="Grade-aware cycling routing prioritizing dedicated paths, secondary streets, and moderate slopes.",
         icon_name="bicycle",
+    ),
+    "mtb": MobilityProfile(
+        key="mtb",
+        name="Mountain / Gravel Bike",
+        category="micromobility",
+        base_speed_kmh=16.0,
+        max_slope_pct=28.0,
+        stair_allowed=True,
+        stair_penalty=5.0,
+        slope_sensitivity=0.9,
+        heat_sensitivity=0.2,
+        green_preference=0.8,
+        surface_smoothness_req=0.1,
+        hierarchy_weights={1: 15.0, 2: 2.0, 3: 1.2, 4: 0.9, 5: 0.6},
+        description="All-terrain offroad cycling, tolerates steep trails, dirt paths, and steps.",
+        icon_name="mtb",
     ),
     "scooter": MobilityProfile(
         key="scooter",
@@ -217,6 +254,22 @@ PROFILES: Dict[str, MobilityProfile] = {
         description="Vehicular routing prioritizing high-capacity arterials and motorways with realistic speed hierarchy.",
         icon_name="car",
     ),
+    "delivery_van": MobilityProfile(
+        key="delivery_van",
+        name="Delivery Courier Van",
+        category="vehicle",
+        base_speed_kmh=42.0,
+        max_slope_pct=18.0,
+        stair_allowed=False,
+        stair_penalty=1000.0,
+        slope_sensitivity=0.9,
+        heat_sensitivity=0.0,
+        green_preference=0.0,
+        surface_smoothness_req=0.6,
+        hierarchy_weights={1: 0.7, 2: 0.8, 3: 1.0, 4: 1.2, 5: 2.0},
+        description="Last-mile courier and delivery logistics prioritizing navigable streets and efficient access.",
+        icon_name="delivery_van",
+    ),
     "truck": MobilityProfile(
         key="truck",
         name="Heavy Goods / Logistics Truck",
@@ -233,6 +286,54 @@ PROFILES: Dict[str, MobilityProfile] = {
         description="Heavy commercial vehicles: strict 7% grade limit, wide turning radii, avoids narrow urban corridors.",
         icon_name="truck",
     ),
+    "paramedic": MobilityProfile(
+        key="paramedic",
+        name="Emergency / First Responder",
+        category="vehicle",
+        base_speed_kmh=65.0,
+        max_slope_pct=22.0,
+        stair_allowed=False,
+        stair_penalty=1000.0,
+        slope_sensitivity=0.4,
+        heat_sensitivity=0.0,
+        green_preference=0.0,
+        surface_smoothness_req=0.4,
+        hierarchy_weights={1: 0.5, 2: 0.6, 3: 0.8, 4: 1.0, 5: 1.5},
+        description="Fastest emergency response routing across major corridors with priority access.",
+        icon_name="paramedic",
+    ),
+    "sightseer": MobilityProfile(
+        key="sightseer",
+        name="Scenic & Panoramic Walk",
+        category="pedestrian",
+        base_speed_kmh=4.2,
+        max_slope_pct=20.0,
+        stair_allowed=True,
+        stair_penalty=1.0,
+        slope_sensitivity=0.5,
+        heat_sensitivity=0.4,
+        green_preference=1.0,
+        surface_smoothness_req=0.3,
+        hierarchy_weights={1: 8.0, 2: 4.0, 3: 2.0, 4: 1.0, 5: 0.6},
+        description="Tourist and leisure walking prioritizing viewpoint ridges, historic alleys, and parks.",
+        icon_name="sightseer",
+    ),
+    "night_walk": MobilityProfile(
+        key="night_walk",
+        name="Safe & Illuminated Night Walk",
+        category="pedestrian",
+        base_speed_kmh=4.8,
+        max_slope_pct=15.0,
+        stair_allowed=True,
+        stair_penalty=3.0,
+        slope_sensitivity=1.2,
+        heat_sensitivity=0.0,
+        green_preference=0.2,
+        surface_smoothness_req=0.7,
+        hierarchy_weights={1: 1.2, 2: 1.0, 3: 1.0, 4: 1.4, 5: 4.0},
+        description="Night safety profile staying on lit, active main urban streets and avoiding isolated dark paths.",
+        icon_name="night_walk",
+    ),
 }
 
 
@@ -244,3 +345,14 @@ def get_profile(key: str) -> MobilityProfile:
 def list_profile_keys() -> List[str]:
     """Return all registered profile keys."""
     return list(PROFILES.keys())
+
+
+def save_custom_profile_json(profile: MobilityProfile, target_path: Path) -> None:
+    """Save custom profile to JSON preset file."""
+    target_path.write_text(json.dumps(profile.to_dict(), indent=2), encoding="utf-8")
+
+
+def load_custom_profile_json(source_path: Path) -> MobilityProfile:
+    """Load custom profile from JSON preset file."""
+    data = json.loads(source_path.read_text(encoding="utf-8"))
+    return MobilityProfile.from_dict(data)

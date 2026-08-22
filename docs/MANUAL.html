@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>02Route 3D — Multi-Criteria 3D Mobility Studio User Manual</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 32px; background: #090d16; color: #f8fafc; }
+    h1, h2, h3 { color: #38bdf8; }
+    h1 { border-bottom: 2px solid #0284c7; padding-bottom: 12px; }
+    .badge { background: #0284c7; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 18px; margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #334155; padding: 10px 14px; text-align: left; }
+    th { background: #0f172a; color: #38bdf8; }
+    tr:nth-child(even) { background: #182234; }
+    code { background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <h1>02Route 3D — Multi-Criteria 3D Mobility Studio <span class="badge">v0.1.0</span></h1>
+  <p><strong>02Route 3D</strong> is an elite QGIS plugin designed for multi-criteria 3D route planning, kinematic simulation, and hardware-accelerated 3D urban visualization directly inside QGIS.</p>
+
+  <div class="card">
+    <h2>1. Key Capabilities</h2>
+    <ul>
+      <li><strong>Embedded 60 FPS WebGL 3D Studio:</strong> Real-time hardware-accelerated 3D terrain visualization, LOD1 building massing, volumetric trees, and dynamic sun/shadow simulation.</li>
+      <li><strong>15 Specialized Mobility Profiles:</strong> Adult, Senior, Stroller, Child, Wheelchair ADA, Bicycle, Mountain Bike, E-Scooter, Car, Van, Heavy Truck, Paramedic, Sightseer, and Night Walk.</li>
+      <li><strong>Multi-Criteria Decision Analysis (AHP):</strong> Pairwise comparison matrix with Saaty consistency validation (CR &lt; 0.10) for slope, thermal LST, and tree canopy weights.</li>
+      <li><strong>Traveling Salesperson (TSP) Optimizer:</strong> 2-Opt local search optimization to reorder multi-stop journeys.</li>
+      <li><strong>Turn-by-Turn Navigational Cue Sheet:</strong> Tabular instructions with slope warnings, elevation deltas, and CSV/HTML export.</li>
+      <li><strong>Origin-Destination (OD) 3D Cost Matrix:</strong> High-speed <i>N x M</i> pairwise travel-time, distance, and calorie matrix calculator.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>2. Mobility Profiles Reference</h2>
+    <table>
+      <thead>
+        <tr><th>Key</th><th>Profile Name</th><th>Category</th><th>Speed</th><th>Max Slope</th><th>Stairs</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>adult</code></td><td>Standard Adult</td><td>Pedestrian</td><td>5.0 km/h</td><td>25%</td><td>Allowed</td></tr>
+        <tr><td><code>senior</code></td><td>Senior / Elderly</td><td>Pedestrian</td><td>3.2 km/h</td><td>10%</td><td>Heavy Penalty</td></tr>
+        <tr><td><code>stroller</code></td><td>Stroller / Pram</td><td>Pedestrian</td><td>4.0 km/h</td><td>6%</td><td>Prohibited</td></tr>
+        <tr><td><code>wheelchair</code></td><td>Wheelchair (ADA)</td><td>Pedestrian</td><td>3.8 km/h</td><td>5%</td><td>Prohibited</td></tr>
+        <tr><td><code>bicycle</code></td><td>City Bicycle</td><td>Micromobility</td><td>18.0 km/h</td><td>15%</td><td>Prohibited</td></tr>
+        <tr><td><code>scooter</code></td><td>E-Scooter</td><td>Micromobility</td><td>20.0 km/h</td><td>12%</td><td>Prohibited</td></tr>
+        <tr><td><code>car</code></td><td>Passenger Car</td><td>Vehicle</td><td>50.0 km/h</td><td>25%</td><td>Prohibited</td></tr>
+        <tr><td><code>truck</code></td><td>Heavy Truck</td><td>Vehicle</td><td>40.0 km/h</td><td>7%</td><td>Prohibited</td></tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
