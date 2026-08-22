@@ -321,6 +321,11 @@ class Studio3DApp {
     this.rebuildScene();
     this.renderProfileChart();
     this.resetCameraView();
+
+    this.isPlaying = true;
+    if (this.elPlayIcon) {
+      this.elPlayIcon.textContent = '⏸';
+    }
   }
 
   rebuildScene() {

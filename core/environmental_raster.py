@@ -24,6 +24,23 @@ class MCDAWeights:
     weight_safety: float = 0.5
     weight_solar: float = 0.3
 
+    def __init__(
+        self,
+        weight_distance: float = 1.0,
+        weight_slope: float = 1.0,
+        weight_heat: float = 0.5,
+        weight_green: float = 0.5,
+        weight_safety: float = 0.5,
+        weight_solar: float = 0.3,
+        **kwargs: Any,
+    ) -> None:
+        self.weight_distance = float(kwargs.get("distance", weight_distance))
+        self.weight_slope = float(kwargs.get("slope", weight_slope))
+        self.weight_heat = float(kwargs.get("heat", weight_heat))
+        self.weight_green = float(kwargs.get("green", weight_green))
+        self.weight_safety = float(kwargs.get("safety", weight_safety))
+        self.weight_solar = float(kwargs.get("solar", weight_solar))
+
     def normalized_dict(self) -> Dict[str, float]:
         """Return dictionary of normalized weight coefficients summing to 1.0."""
         total = (
