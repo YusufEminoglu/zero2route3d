@@ -48,12 +48,22 @@ class Route3DPlugin:
 
     def toggle_dock(self) -> None:
         """Open or toggle visibility of the 3D Studio dock panel."""
+        _RightDock = getattr(getattr(Qt, "DockWidgetArea", Qt), "RightDockWidgetArea", getattr(Qt, "RightDockWidgetArea", 2))
         if self.dock is None:
-            area = getattr(Qt.DockWidgetArea, "RightDockWidgetArea", getattr(Qt, "RightDockWidgetArea", 2))
-            self.iface.addDockWidget(area, self.dock)
+            parent_window = self.iface.mainWindow() if self.iface else None
+            self.dock = Route3DStudioDock(iface=self.iface, parent=parent_window)
+            if self.iface:
+                self.iface.addDockWidget(_RightDock, self.dock)
             self.dock.show()
+            self.dock.raise_()
+            self.dock.activateWindow()
         else:
-            self.dock.setVisible(not self.dock.isVisible())
+            should_show = not self.dock.isVisible()
+            self.dock.setVisible(should_show)
+            if should_show:
+                self.dock.show()
+                self.dock.raise_()
+                self.dock.activateWindow()
 
     def unload(self) -> None:
         """Tear down GUI elements and deregister processing provider."""
