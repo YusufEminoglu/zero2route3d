@@ -58,11 +58,12 @@ class Studio3DApp {
     this.slicerSystem = new TerrainSlicerSystem(this.scene, this.renderer);
     this.voiceSystem = new VoiceCueSystem();
 
-    // Route state
+    // Route state & Elevation normalization
     this.routeData = null;
     this.scenePoints = [];
     this.curve = null;
     this.originLonLat = null;
+    this.baseElevation = 0.0;
     this.activeScenario = 'shortest';
 
     // Feature Toggles & State
@@ -259,7 +260,8 @@ class Studio3DApp {
     const meanLat = (this.originLonLat.lat * Math.PI) / 180.0;
     const dx = (lon - this.originLonLat.lon) * 111320.0 * Math.cos(meanLat);
     const dz = -(lat - this.originLonLat.lat) * 110574.0;
-    const dy = (eleMeters || 0.0) * this.elevationExaggeration;
+    const baseEle = this.baseElevation !== undefined ? this.baseElevation : 0.0;
+    const dy = ((eleMeters || 0.0) - baseEle) * this.elevationExaggeration;
     return new THREE.Vector3(dx, dy, dz);
   }
 
@@ -269,6 +271,10 @@ class Studio3DApp {
 
     const coords = geojson?.geometry?.coordinates || [];
     if (coords.length < 2) return;
+
+    // Determine reference minimum base elevation
+    const elevations = coords.map((c) => (c[2] !== undefined ? c[2] : 0.0));
+    this.baseElevation = Math.min(...elevations);
 
     this.originLonLat = { lon: coords[0][0], lat: coords[0][1] };
     this.scenePoints = coords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
@@ -372,7 +378,9 @@ class Studio3DApp {
     const segments = 64;
     const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
     geo.rotateX(-Math.PI / 2);
-    geo.translate(center.x, -2, center.z);
+
+    const avgRouteY = this.scenePoints.reduce((acc, p) => acc + p.y, 0) / (this.scenePoints.length || 1);
+    geo.translate(center.x, avgRouteY - 0.5, center.z);
 
     // Create Real OpenStreetMap / Carto Light Tile Canvas Texture
     const basemapTexture = this.createBasemapCanvasTexture(width, depth, center);
@@ -437,7 +445,6 @@ class Studio3DApp {
   }
 
   buildClassyRoadRibbon() {
-    // Classy Asphalt Road Ribbon with Road Markings (No flashing neon)
     if (!this.curve || this.scenePoints.length < 2) return;
 
     const tubularSegments = Math.max(120, this.scenePoints.length * 8);
@@ -465,7 +472,7 @@ class Studio3DApp {
       roughness: 0.3,
     });
     this.centerlineMesh = new THREE.Mesh(centerGeo, centerMat);
-    this.centerlineMesh.position.y += 0.2;
+    this.centerlineMesh.position.y += 0.15;
     this.scene.add(this.centerlineMesh);
   }
 
@@ -528,17 +535,16 @@ class Studio3DApp {
         const coords = bld.coordinates || [];
         if (coords.length < 3) return;
 
-        const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, 0));
+        const bldBaseEle = bld.base_elevation_m !== undefined ? bld.base_elevation_m : (this.baseElevation || 0.0);
+        const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, bldBaseEle));
 
-        let avgX = 0, avgZ = 0;
+        let avgY = 0;
         scenePts.forEach((p) => {
-          avgX += p.x;
-          avgZ += p.z;
+          avgY += p.y;
         });
-        avgX /= scenePts.length;
-        avgZ /= scenePts.length;
+        avgY /= scenePts.length;
 
-        // Shape in local coordinates
+        // Shape in local XZ coordinates
         const shape = new THREE.Shape();
         shape.moveTo(scenePts[0].x, -scenePts[0].z);
         for (let i = 1; i < scenePts.length; i++) {
@@ -546,14 +552,14 @@ class Studio3DApp {
         }
         shape.closePath();
 
-        const height = Math.max(5.0, bld.height_m || (bld.levels ? bld.levels * 3.2 : 12.0));
+        const height = Math.max(6.0, bld.height_m || (bld.levels ? bld.levels * 3.2 : 12.0));
         const extrudeSettings = {
           depth: height,
           bevelEnabled: true,
           bevelSegments: 1,
           steps: 1,
-          bevelSize: 0.15,
-          bevelThickness: 0.15,
+          bevelSize: 0.2,
+          bevelThickness: 0.2,
         };
 
         const bldGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
@@ -561,13 +567,15 @@ class Studio3DApp {
 
         const mat = bldMats[idx % bldMats.length];
         const bldMesh = new THREE.Mesh(bldGeo, mat);
+        // Base elevation strictly matched to the road section elevation
+        bldMesh.position.y = avgY;
         bldMesh.castShadow = true;
         bldMesh.receiveShadow = true;
         this.buildingsGroup.add(bldMesh);
       });
     }
 
-    // Street trees along sidewalk
+    // Street trees along sidewalk matched to road elevation
     const treeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.85 });
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
     const step = 8;
@@ -583,7 +591,9 @@ class Studio3DApp {
       foliage.position.y = 6.5;
       tree.add(trunk);
       tree.add(foliage);
-      tree.position.copy(pt.clone().add(normal.clone().multiplyScalar(14)));
+      // Place tree right on the road segment's elevation pt.y
+      const treePos = pt.clone().add(normal.clone().multiplyScalar(12));
+      tree.position.copy(treePos);
       tree.castShadow = true;
       this.treesGroup.add(tree);
     }
