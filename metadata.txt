@@ -1,0 +1,33 @@
+[general]
+name=02Route 3D - Multi-Criteria 3D Mobility Studio
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+description=Interactive 3D route planning studio with multi-profile kinematics, raster resistance surfaces, and embedded 60 FPS WebGL animation.
+version=0.1.0
+author=Yusuf Eminoglu
+email=yusuf.eminoglu@deu.edu.tr
+
+about=02Route 3D is a unified multi-criteria 3D mobility and pathfinding studio for QGIS. It computes optimal 3D routes across complex terrain and urban networks with realistic slope, aspect, surface temperature (LST), tree shade, and road hierarchy resistances. Features include 9 specialised mobility profiles (Standard Adult, Senior, Child, Stroller, Wheelchair, Bicycle, E-Scooter, Passenger Car, Heavy Freight), Tobler and Minetti biomechanical energy and time equations, and a hardware-accelerated embedded 3D WebGL viewport with cinematic drone and chase camera animation, elevation profile HUD, and 3D LineStringZ export.
+
+tracker=https://github.com/YusufEminoglu/zero2route3d/issues
+repository=https://github.com/YusufEminoglu/zero2route3d
+homepage=https://yusufeminoglu.github.io/zero2route3d/
+
+category=Analysis
+tags=routing,3d,network analysis,mobility,accessibility,walkability,least cost path,threejs,elevation,slope,tobler,kinematics,isochrone
+
+icon=icons/icon.png
+
+experimental=False
+deprecated=False
+hasProcessingProvider=yes
+license=GPL-2.0-or-later
+
+changelog=
+    0.1.0 - Initial release:
+        - Interactive card-based QGIS Dock with adaptive dark/light styling.
+        - Multi-profile 3D routing engine (Adult, Senior, Stroller, Wheelchair, Bicycle, Scooter, Car, Truck).
+        - Multi-criteria raster cost surfaces (DEM, Slope, LST, Tree Canopy, Road Hierarchy).
+        - Hardware-accelerated embedded 3D WebGL studio with 60 FPS animation, chase and drone cam, and elevation HUD.
+        - 3D LineStringZ vector layer creation and GPX/GeoJSON export.
+        - Native QGIS Processing provider with 3D shortest path and 3D isochrone algorithms.

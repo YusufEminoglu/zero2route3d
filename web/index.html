@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>02Route 3D Studio</title>
+  <link rel="stylesheet" href="css/studio3d.css">
+</head>
+<body>
+  <!-- 3D WebGL Canvas Container -->
+  <div id="canvasContainer"></div>
+
+  <!-- Empty Overlay Placeholder -->
+  <div id="emptyOverlay">
+    <div class="empty-icon">🏔️</div>
+    <div class="empty-text">Select Start & Destination in QGIS<br>to compute 3D route</div>
+  </div>
+
+  <!-- Top Floating HUD -->
+  <div class="hud-panel top-hud">
+    <div class="brand-section">
+      <span class="brand-badge">3D STUDIO</span>
+      <span class="brand-title">02Route 3D</span>
+    </div>
+    <div class="stats-row">
+      <div class="stat-item">
+        <span class="stat-label">Distance</span>
+        <span class="stat-value" id="valDistance">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Duration</span>
+        <span class="stat-value" id="valDuration">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Climb</span>
+        <span class="stat-value" id="valClimb">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Max Slope</span>
+        <span class="stat-value" id="valMaxSlope">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Energy</span>
+        <span class="stat-value" id="valCalories">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Toolbar: Camera & View Modes -->
+  <div class="hud-panel right-tools">
+    <button class="tool-btn cam-btn active" data-cam="orbit" title="Free 360 Orbit Camera">
+      <span>🌐</span> Orbit
+    </button>
+    <button class="tool-btn cam-btn" data-cam="chase" title="Drone Chase Follow Camera">
+      <span>🛸</span> Chase
+    </button>
+    <button class="tool-btn cam-btn" data-cam="pov" title="First-Person Driver/Walker View">
+      <span>👁️</span> POV
+    </button>
+  </div>
+
+  <!-- Bottom HUD: Player & Elevation Profile Chart -->
+  <div class="hud-panel bottom-player">
+    <!-- Player Bar -->
+    <div class="player-controls">
+      <div class="play-btn-group">
+        <button id="btnPlay" class="btn-icon" title="Play/Pause 3D Traversal">
+          <span id="playIcon">▶</span>
+        </button>
+      </div>
+
+      <div class="timeline-scrubber">
+        <input type="range" id="scrubber" class="scrubber-slider" min="0" max="1000" value="0">
+      </div>
+
+      <div class="speed-selector">
+        <div class="speed-opt active" data-speed="1.0">1x</div>
+        <div class="speed-opt" data-speed="2.0">2x</div>
+        <div class="speed-opt" data-speed="5.0">5x</div>
+        <div class="speed-opt" data-speed="10.0">10x</div>
+      </div>
+    </div>
+
+    <!-- Elevation Chart Drawer with Hover Sync -->
+    <div class="chart-drawer" id="chartDrawer">
+      <svg id="profileSvg" preserveAspectRatio="none"></svg>
+      <div class="profile-needle" id="profileNeedle"></div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module" src="js/app3d.js"></script>
+</body>
+</html>
