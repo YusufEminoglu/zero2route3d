@@ -791,3 +791,13 @@ window.setRouteData = function (geojsonData) {
     window.app3d.loadRoute(geojsonData);
   }
 };
+
+// Auto-load latest route from data/current_route.json on browser startup
+fetch('data/current_route.json')
+  .then((res) => (res.ok ? res.json() : null))
+  .then((data) => {
+    if (data && window.app3d) {
+      window.app3d.loadRoute(data);
+    }
+  })
+  .catch(() => {});

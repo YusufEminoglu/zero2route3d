@@ -1,0 +1,21 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [27.1428, 38.4237, 10.0],
+      [27.1460, 38.4260, 15.0],
+      [27.1510, 38.4300, 22.0],
+      [27.1580, 38.4340, 28.0],
+      [27.1650, 38.4380, 34.6]
+    ]
+  },
+  "properties": {
+    "profile_key": "adult",
+    "distance_km": 3.8,
+    "duration_min": 46.3,
+    "elevation_gain_m": 34.6,
+    "max_slope_pct": 2.4,
+    "calories_kcal": 259.0
+  }
+}

@@ -1,4 +1,4 @@
-"""Embedded WebGL Viewport and Python-to-JavaScript Bridge for 02Route 3D."""
+"""Embedded 3D Studio Cockpit and Local WebGL Bridge for 02Route 3D."""
 from __future__ import annotations
 
 import contextlib
@@ -8,136 +8,214 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from qgis.PyQt.QtCore import QUrl
-from qgis.PyQt.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtGui import QColor, QDesktopServices, QPainter, QPen
+from qgis.PyQt.QtWidgets import (
+    QCheckBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .server import Route3DLocalServer
 
-# Safe QWebEngineView imports
-HAS_WEBENGINE = False
-QWebEngineView = None
-QWebEngineSettings = None
-
-try:
-    from qgis.PyQt.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
-    HAS_WEBENGINE = True
-except Exception:
-    with contextlib.suppress(Exception):
-        from PyQt5.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
-        HAS_WEBENGINE = True
-
 
 class Studio3DWebViewport(QWidget):
-    """Embedded hardware-accelerated 3D WebGL viewport running inside the QGIS dock."""
+    """3D Studio Cockpit Viewport & Hardware-Accelerated WebGL Bridge."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-
-        self.web_view: Optional[Any] = None
         self.web_root = Path(__file__).resolve().parent.parent / "web"
-        self.html_path = self.web_root / "index.html"
+        self.data_dir = self.web_root / "data"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.current_route_file = self.data_dir / "current_route.json"
+
         self.server = Route3DLocalServer(web_root=self.web_root)
         self._current_geojson: Optional[Dict[str, Any]] = None
-        self._is_page_loaded = False
 
-        self._setup_view()
+        self._build_cockpit_ui()
 
-    def _setup_view(self) -> None:
-        if HAS_WEBENGINE and QWebEngineView is not None:
-            try:
-                self.web_view = QWebEngineView(self)
-                settings = self.web_view.settings()
-                if settings is not None:
-                    attrs = [
-                        "WebGLEnabled",
-                        "Accelerated2dCanvasEnabled",
-                        "LocalContentCanAccessRemoteUrls",
-                        "LocalContentCanAccessFileUrls",
-                        "JavascriptEnabled",
-                    ]
-                    for attr_name in attrs:
-                        enum_target = getattr(QWebEngineSettings, "WebAttribute", QWebEngineSettings)
-                        attr = getattr(enum_target, attr_name, None)
-                        if attr is not None:
-                            with contextlib.suppress(Exception):
-                                settings.setAttribute(attr, True)
+    def _build_cockpit_ui(self) -> None:
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(12)
 
-                self.web_view.loadFinished.connect(self._on_load_finished)
-                self.layout.addWidget(self.web_view)
-                self.reload_scene()
-                return
-            except Exception:
-                self.web_view = None
+        # Top Hero Card
+        hero_card = QFrame()
+        hero_card.setObjectName("heroCard")
+        hero_card.setStyleSheet("""
+            QFrame#heroCard {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0f172a, stop:1 #1e293b);
+                border: 1px solid rgba(56, 189, 248, 0.35);
+                border-radius: 12px;
+                padding: 14px;
+            }
+        """)
+        hero_layout = QVBoxLayout(hero_card)
+        hero_layout.setContentsMargins(12, 12, 12, 12)
+        hero_layout.setSpacing(8)
 
-        # Fallback container
-        fb = QWidget(self)
-        fb_layout = QVBoxLayout(fb)
-        fb_layout.setContentsMargins(24, 24, 24, 24)
-        fb_layout.setSpacing(16)
+        title_row = QHBoxLayout()
+        lbl_badge = QLabel("3D STUDIO")
+        lbl_badge.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0ea5e9, stop:1 #6366f1);
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 6px;
+        """)
+        title_row.addWidget(lbl_badge)
 
-        lbl = QLabel(
-            "<h3>🚀 3D WebGL Mobility Studio</h3>"
-            "<p style='color:#94a3b8; font-size:12px;'>"
-            "Direct hardware-accelerated WebGL 3D route rendering and kinematic animation."
-            "</p>",
-            fb,
+        lbl_title = QLabel("Three.js 3D WebGL Cockpit")
+        lbl_title.setStyleSheet("color: #f8fafc; font-size: 15px; font-weight: 700;")
+        title_row.addWidget(lbl_title)
+        title_row.addStretch()
+        hero_layout.addLayout(title_row)
+
+        lbl_desc = QLabel(
+            "Hardware-accelerated 60 FPS 3D terrain viewer with thermal photon ribbons, "
+            "kinematic avatars, 24-hr solar illumination, and underground cross-section slicing."
         )
-        lbl.setStyleSheet("color: #0f172a;")
-        fb_layout.addWidget(lbl)
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setStyleSheet("color: #94a3b8; font-size: 12px; line-height: 1.4;")
+        hero_layout.addWidget(lbl_desc)
 
-        btn_open = QPushButton("🌐 Open 3D Studio in Browser (Chrome/Edge)", fb)
-        btn_open.setStyleSheet("""
+        # Primary Launch Button
+        self.btn_launch_3d = QPushButton("🚀 Open 3D WebGL Studio in Browser (60 FPS)")
+        self.btn_launch_3d.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_launch_3d.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:1 #2563eb);
                 color: #ffffff;
-                font-weight: 700;
-                font-size: 13px;
-                padding: 12px 20px;
+                font-weight: 800;
+                font-size: 14px;
+                padding: 14px 20px;
                 border-radius: 8px;
+                border: none;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0369a1, stop:1 #1d4ed8);
             }
+            QPushButton:pressed {
+                background: #1e40af;
+            }
         """)
-        btn_open.clicked.connect(self.open_in_external_browser)
-        fb_layout.addWidget(btn_open)
-        fb_layout.addStretch()
+        self.btn_launch_3d.clicked.connect(self.open_in_external_browser)
+        hero_layout.addWidget(self.btn_launch_3d)
 
-        self.layout.addWidget(fb)
+        # Auto-open checkbox
+        self.chk_auto_open = QCheckBox("Automatically open 3D Studio when new route is computed")
+        self.chk_auto_open.setChecked(True)
+        self.chk_auto_open.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        hero_layout.addWidget(self.chk_auto_open)
 
-    def _on_load_finished(self, ok: bool) -> None:
-        self._is_page_loaded = bool(ok)
-        if self._is_page_loaded and self._current_geojson is not None:
-            self._dispatch_route_js(self._current_geojson)
+        main_layout.addWidget(hero_card)
 
-    def reload_scene(self) -> None:
-        """Reload the local 3D HTML application via local HTTP server."""
-        if self.web_view is not None:
-            server_url = self.server.start()
-            self.web_view.load(QUrl(server_url))
+        # 3D Route Telemetry Card
+        telemetry_card = QFrame()
+        telemetry_card.setStyleSheet("""
+            QFrame {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        tel_layout = QVBoxLayout(telemetry_card)
+        tel_layout.setContentsMargins(8, 8, 8, 8)
+        tel_layout.setSpacing(6)
+
+        lbl_tel_header = QLabel("📈 3D Route Elevation & Grade Profile")
+        lbl_tel_header.setStyleSheet("color: #0f172a; font-weight: 700; font-size: 13px;")
+        tel_layout.addWidget(lbl_tel_header)
+
+        self.lbl_profile_chart = QLabel()
+        self.lbl_profile_chart.setMinimumHeight(120)
+        self.lbl_profile_chart.setStyleSheet("background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px;")
+        self.lbl_profile_chart.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_profile_chart.setText("Compute a 3D Route to view elevation cross-section")
+        tel_layout.addWidget(self.lbl_profile_chart)
+
+        # 3D Feature Badges Row
+        badge_grid = QGridLayout()
+        badge_grid.setSpacing(6)
+        features = [
+            ("⛰️ 3D Terrain Exaggeration", "#0284c7"),
+            ("🔥 Thermal Heat Ribbon", "#e11d48"),
+            ("🌙 24-hr Solar Cycle", "#d97706"),
+            ("🏃 Kinematic Avatars", "#059669"),
+            ("🔪 Sub-surface Slicer", "#7c3aed"),
+            ("🔊 Voice Audio Cues", "#0d9488"),
+        ]
+        for idx, (feat_name, feat_color) in enumerate(features):
+            lbl_f = QLabel(feat_name)
+            lbl_f.setStyleSheet(f"""
+                background: #f1f5f9;
+                color: {feat_color};
+                font-weight: 600;
+                font-size: 11px;
+                padding: 5px 8px;
+                border-radius: 5px;
+                border: 1px solid #e2e8f0;
+            """)
+            badge_grid.addWidget(lbl_f, idx // 2, idx % 2)
+
+        tel_layout.addLayout(badge_grid)
+        main_layout.addWidget(telemetry_card)
+        main_layout.addStretch()
 
     def send_route(self, geojson_data: Dict[str, Any]) -> None:
-        """Transmit computed route GeoJSON to the 3D WebGL canvas via JavaScript."""
+        """Save computed route GeoJSON and optionally pop the 3D WebGL Studio."""
         self._current_geojson = geojson_data
-        if self.web_view is not None:
-            if not self._is_page_loaded:
-                self.reload_scene()
-            else:
-                self._dispatch_route_js(geojson_data)
+        with contextlib.suppress(Exception):
+            self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
 
-    def _dispatch_route_js(self, geojson_data: Dict[str, Any]) -> None:
-        if self.web_view is None:
+        self._render_qt_elevation_profile(geojson_data)
+
+        if self.chk_auto_open.isChecked():
+            self.open_in_external_browser()
+
+    def _render_qt_elevation_profile(self, geojson_data: Dict[str, Any]) -> None:
+        coords = geojson_data.get("geometry", {}).get("coordinates", [])
+        if len(coords) < 2:
             return
-        json_str = json.dumps(geojson_data)
-        script = f"if (window.setRouteData) {{ window.setRouteData({json_str}); }}"
-        self.web_view.page().runJavaScript(script)
+
+        elevations = [c[2] if len(c) > 2 else 0.0 for c in coords]
+        min_e = min(elevations)
+        max_e = max(elevations)
+        gain = geojson_data.get("properties", {}).get("elevation_gain_m", 0.0)
+        dist = geojson_data.get("properties", {}).get("distance_km", 0.0)
+        dur = geojson_data.get("properties", {}).get("duration_min", 0.0)
+
+        html_summary = f"""
+        <div style='padding: 10px; font-family: sans-serif;'>
+            <table width='100%' style='font-size: 12px; color: #334155;'>
+                <tr>
+                    <td><b>Distance:</b> {dist:.2f} km</td>
+                    <td><b>Duration:</b> {dur:.1f} min</td>
+                </tr>
+                <tr>
+                    <td><b>Elevation Gain:</b> +{gain:.1f} m</td>
+                    <td><b>Min / Max Altitude:</b> {min_e:.0f} m / {max_e:.0f} m</td>
+                </tr>
+            </table>
+            <p style='color: #0284c7; font-weight: 600; margin-top: 8px;'>
+                ✅ 3D Route synchronized. Click the button above to explore in 3D WebGL.
+            </p>
+        </div>
+        """
+        self.lbl_profile_chart.setText(html_summary)
 
     def open_in_external_browser(self) -> None:
-        """Open the 3D web studio in the user's default external browser (e.g. Chrome/Edge)."""
+        """Start local HTTP server and launch the 3D WebGL studio in default browser."""
         server_url = self.server.start()
-        webbrowser.open(server_url)
+        QDesktopServices.openUrl(QUrl(server_url))
 
     def close(self) -> bool:
         self.server.stop()
