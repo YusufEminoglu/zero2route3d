@@ -40,12 +40,16 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsFeature,
     QgsField,
+    QgsFillSymbol,
     QgsGeometry,
+    QgsLineSymbol,
     QgsMapLayerProxyModel,
+    QgsMarkerSymbol,
     QgsPoint,
     QgsPointXY,
     QgsProject,
     QgsRectangle,
+    QgsSingleSymbolRenderer,
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
@@ -583,6 +587,16 @@ class Route3DStudioDock(QDockWidget):
         f_a.setAttributes(["Point A (Origin)", self.point_a.lon, self.point_a.lat])
         pr_a.addFeatures([f_a])
         layer_a.updateExtents()
+
+        sym_a = QgsMarkerSymbol.createSimple({
+            "name": "circle",
+            "color": "#059669",
+            "outline_color": "#ffffff",
+            "outline_width": "0.8",
+            "size": "5.0",
+        })
+        layer_a.setRenderer(QgsSingleSymbolRenderer(sym_a))
+
         if not layers_a:
             proj.addMapLayer(layer_a)
 
@@ -600,6 +614,16 @@ class Route3DStudioDock(QDockWidget):
         f_b.setAttributes(["Point B (Destination)", self.point_b.lon, self.point_b.lat])
         pr_b.addFeatures([f_b])
         layer_b.updateExtents()
+
+        sym_b = QgsMarkerSymbol.createSimple({
+            "name": "circle",
+            "color": "#dc2626",
+            "outline_color": "#ffffff",
+            "outline_width": "0.8",
+            "size": "5.0",
+        })
+        layer_b.setRenderer(QgsSingleSymbolRenderer(sym_b))
+
         if not layers_b:
             proj.addMapLayer(layer_b)
 
@@ -663,6 +687,13 @@ class Route3DStudioDock(QDockWidget):
                 r_feats.append(f)
             r_pr.addFeatures(r_feats)
             road_layer.updateExtents()
+
+            sym_road = QgsLineSymbol.createSimple({
+                "line_color": "#475569",
+                "line_width": "0.6",
+                "line_style": "solid",
+            })
+            road_layer.setRenderer(QgsSingleSymbolRenderer(sym_road))
             QgsProject.instance().addMapLayer(road_layer)
 
         # 2. Create Buildings Layer
@@ -680,6 +711,13 @@ class Route3DStudioDock(QDockWidget):
                 b_feats.append(f)
             b_pr.addFeatures(b_feats)
             bld_layer.updateExtents()
+
+            sym_bld = QgsFillSymbol.createSimple({
+                "color": "#cbd5e166",
+                "outline_color": "#64748b",
+                "outline_width": "0.3",
+            })
+            bld_layer.setRenderer(QgsSingleSymbolRenderer(sym_bld))
             QgsProject.instance().addMapLayer(bld_layer)
 
         if self.iface:
