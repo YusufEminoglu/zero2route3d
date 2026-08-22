@@ -275,7 +275,14 @@ class Route3DStudioDock(QDockWidget):
         self.btn_add_layer.setEnabled(False)
         exp_row.addWidget(self.btn_add_layer)
 
+        self.btn_export_gpx = QPushButton("💾 GPX")
+        self.btn_export_gpx.setToolTip("Export 3D Route to GPS Exchange Format (.gpx)")
+        self.btn_export_gpx.clicked.connect(self.export_gpx)
+        self.btn_export_gpx.setEnabled(False)
+        exp_row.addWidget(self.btn_export_gpx)
+
         self.btn_export_geojson = QPushButton("💾 GeoJSON")
+        self.btn_export_geojson.setToolTip("Export 3D Route to GeoJSON (.geojson)")
         self.btn_export_geojson.clicked.connect(self.export_geojson)
         self.btn_export_geojson.setEnabled(False)
         exp_row.addWidget(self.btn_export_geojson)
