@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>02Route 3D Studio</title>
+  <title>02Route 3D Studio - Mobility Cockpit</title>
   <link rel="stylesheet" href="css/studio3d.css">
 </head>
 <body>
@@ -12,16 +12,33 @@
 
   <!-- Empty Overlay Placeholder -->
   <div id="emptyOverlay">
-    <div class="empty-icon">🏔️</div>
-    <div class="empty-text">Select Start & Destination in QGIS<br>to compute 3D route</div>
+    <div class="empty-icon">🗺️</div>
+    <div class="empty-text">Select Start & Destination in QGIS<br>to compute 3D route corridor</div>
   </div>
 
   <!-- Top Floating HUD -->
   <div class="hud-panel top-hud">
     <div class="brand-section">
-      <span class="brand-badge">3D STUDIO</span>
-      <span class="brand-title">02Route 3D</span>
+      <span class="brand-badge">02Route 3D</span>
+      <span class="brand-title">Mobility Studio</span>
     </div>
+
+    <!-- DİRİ-Inspired Scenario Switcher -->
+    <div class="scenario-selector">
+      <button class="scenario-btn active" data-scenario="shortest" title="Standard Shortest Path">
+        <span>⚡</span> Shortest
+      </button>
+      <button class="scenario-btn" data-scenario="green" title="Shade & Greenery Cool Corridor">
+        <span>🌿</span> Green/Shade
+      </button>
+      <button class="scenario-btn" data-scenario="ada" title="Barrier-Free ADA Accessibility">
+        <span>♿</span> Barrier-Free
+      </button>
+      <button class="scenario-btn" data-scenario="cycle" title="Active Micro-Mobility & Cycling">
+        <span>🚲</span> Micro-Mobility
+      </button>
+    </div>
+
     <div class="stats-row">
       <div class="stat-item">
         <span class="stat-label">Distance</span>
@@ -32,7 +49,7 @@
         <span class="stat-value" id="valDuration">—</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Climb</span>
+        <span class="stat-label">Elevation Climb</span>
         <span class="stat-value" id="valClimb">—</span>
       </div>
       <div class="stat-item">
@@ -40,7 +57,7 @@
         <span class="stat-value" id="valMaxSlope">—</span>
       </div>
       <div class="stat-item">
-        <span class="stat-label">Energy</span>
+        <span class="stat-label">Energy Burn</span>
         <span class="stat-value" id="valCalories">—</span>
       </div>
     </div>
@@ -48,17 +65,17 @@
 
   <!-- Left Mini-Radar Overview Map -->
   <div class="hud-panel minimap-radar">
-    <canvas id="radarCanvas" width="120" height="120"></canvas>
+    <canvas id="radarCanvas" width="130" height="130"></canvas>
     <div class="compass-indicator" id="compassRose" title="Snap to North">N</div>
   </div>
 
   <!-- Right Toolbar: Camera & View Modes -->
   <div class="hud-panel right-tools">
     <div class="tool-group-title">Camera Mode</div>
-    <button class="tool-btn cam-btn active" data-cam="orbit" title="Free 360 Orbit Camera">
+    <button class="tool-btn cam-btn" data-cam="orbit" title="Free 360 Orbit Camera">
       <span>🌐</span> Orbit
     </button>
-    <button class="tool-btn cam-btn" data-cam="chase" title="Drone Chase Follow Camera">
+    <button class="tool-btn cam-btn active" data-cam="chase" title="Drone Chase Follow Camera">
       <span>🛸</span> Chase
     </button>
     <button class="tool-btn cam-btn" data-cam="pov" title="First-Person Driver/Walker View">
@@ -68,70 +85,56 @@
       <span>🎬</span> Tour
     </button>
 
-    <div class="tool-group-title">3D Terrain & Shaders</div>
-    <button class="tool-btn" id="btnExaggeration" title="Cycle Terrain Vertical Exaggeration (1x/2x/3x/5x)">
-      <span>⛰️</span> Exag: <b id="lblExag">2.0x</b>
+    <div class="tool-group-title">3D Layer Controls</div>
+    <button class="tool-btn active" id="btnBasemap" title="Toggle Real OpenStreetMap Ground Basemap">
+      <span>🗺️</span> Basemap: <b>ON</b>
     </button>
-    <button class="tool-btn" id="btnBuildings" title="Toggle 3D Extruded Buildings">
+    <button class="tool-btn active" id="btnBuildings" title="Toggle 3D Extruded OSM Buildings">
       <span>🏢</span> Buildings: <b>ON</b>
     </button>
-    <button class="tool-btn" id="btnTrees" title="Toggle Volumetric 3D Trees">
+    <button class="tool-btn active" id="btnTrees" title="Toggle Volumetric 3D Trees">
       <span>🌳</span> Trees: <b>ON</b>
     </button>
-    <button class="tool-btn" id="btnRibbonMode" title="Switch Ribbon Color Mode (Slope / Thermal / Cyan)">
-      <span>🎨</span> Mode: <b id="lblRibbonMode">Slope</b>
+    <button class="tool-btn" id="btnExaggeration" title="Cycle Terrain Vertical Exaggeration (1x/2x/3x/5x)">
+      <span>⛰️</span> Exag: <b id="lblExag">1.5x</b>
     </button>
     <button class="tool-btn" id="btnSlicer" title="Toggle 3D Underground Geological Slicer Plane">
       <span>🔪</span> Slicer
     </button>
-    <button class="tool-btn" id="btnNightMode" title="Toggle Solar Day / Night Lighting">
-      <span>🌙</span> Night
-    </button>
-    <button class="tool-btn" id="btnVoice" title="Toggle Voice Navigation Directions (Text-to-Speech)">
-      <span>🔊</span> Voice: <b>OFF</b>
-    </button>
 
     <div class="tool-group-title">Capture & Tools</div>
-    <button class="tool-btn" id="btnTapeMeasure" title="3D Distance & Altitude Measurement Tape">
-      <span>📏</span> Tape
-    </button>
     <button class="tool-btn" id="btnSnapshot" title="High-Res Canvas Snapshot">
       <span>📸</span> Snapshot
     </button>
-    <button class="tool-btn" id="btnRecord" title="Record WebM 3D Video">
-      <span>🔴</span> Record
+    <button class="tool-btn" id="btnRecord" title="Record 60 FPS WebM Video">
+      <span>🎥</span> Record
+    </button>
+    <button class="tool-btn" id="btnResetView" title="Reset Camera to Extent">
+      <span>🔄</span> Reset
     </button>
   </div>
 
-  <!-- Bottom HUD: Player & Elevation Profile Chart -->
-  <div class="hud-panel bottom-player">
-    <div class="player-controls">
-      <div class="play-btn-group">
-        <button id="btnPlay" class="btn-icon" title="Play/Pause 3D Traversal">
-          <span id="playIcon">▶</span>
-        </button>
-      </div>
+  <!-- Bottom Player & Scrubber -->
+  <div class="hud-panel bottom-controls">
+    <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
+      <span id="playIcon">▶</span>
+    </button>
 
-      <div class="timeline-scrubber">
-        <input type="range" id="scrubber" class="scrubber-slider" min="0" max="1000" value="0">
+    <div class="scrubber-container">
+      <div class="elevation-profile-chart" id="chartDrawer">
+        <svg id="profileSvg" width="100%" height="100%"></svg>
+        <div class="profile-needle" id="profileNeedle"></div>
       </div>
-
-      <div class="speed-selector">
-        <div class="speed-opt active" data-speed="1.0">1x</div>
-        <div class="speed-opt" data-speed="2.0">2x</div>
-        <div class="speed-opt" data-speed="5.0">5x</div>
-        <div class="speed-opt" data-speed="10.0">10x</div>
-      </div>
+      <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
     </div>
 
-    <!-- Elevation Chart Drawer with Hover Sync -->
-    <div class="chart-drawer" id="chartDrawer">
-      <svg id="profileSvg" preserveAspectRatio="none"></svg>
-      <div class="profile-needle" id="profileNeedle"></div>
+    <div class="speed-selector">
+      <button class="speed-opt active" data-speed="1.0">1x</button>
+      <button class="speed-opt" data-speed="2.0">2x</button>
+      <button class="speed-opt" data-speed="4.0">4x</button>
     </div>
   </div>
 
-  <!-- Scripts -->
   <script type="module" src="js/app3d.js"></script>
 </body>
 </html>
