@@ -653,4 +653,9 @@ class Route3DStudioDock(QDockWidget):
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", f"Exported 3D DXF to {path}")
 
+    def closeEvent(self, event: Any) -> None:
+        if self.viewport3d:
+            self.viewport3d.close()
+        super().closeEvent(event)
+
 

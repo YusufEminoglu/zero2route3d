@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from qgis.PyQt.QtCore import QUrl
-from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+
+from .server import Route3DLocalServer
 
 # Safe QWebEngineView imports
 HAS_WEBENGINE = False
@@ -17,11 +19,11 @@ QWebEngineView = None
 QWebEngineSettings = None
 
 try:
-    from qgis.PyQt.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+    from qgis.PyQt.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
     HAS_WEBENGINE = True
 except Exception:
     with contextlib.suppress(Exception):
-        from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+        from PyQt5.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
         HAS_WEBENGINE = True
 
 
@@ -34,8 +36,11 @@ class Studio3DWebViewport(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
 
         self.web_view: Optional[Any] = None
-        self.html_path = Path(__file__).resolve().parent.parent / "web" / "index.html"
+        self.web_root = Path(__file__).resolve().parent.parent / "web"
+        self.html_path = self.web_root / "index.html"
+        self.server = Route3DLocalServer(web_root=self.web_root)
         self._current_geojson: Optional[Dict[str, Any]] = None
+        self._is_page_loaded = False
 
         self._setup_view()
 
@@ -59,6 +64,7 @@ class Studio3DWebViewport(QWidget):
                             with contextlib.suppress(Exception):
                                 settings.setAttribute(attr, True)
 
+                self.web_view.loadFinished.connect(self._on_load_finished)
                 self.layout.addWidget(self.web_view)
                 self.reload_scene()
                 return
@@ -101,39 +107,38 @@ class Studio3DWebViewport(QWidget):
 
         self.layout.addWidget(fb)
 
+    def _on_load_finished(self, ok: bool) -> None:
+        self._is_page_loaded = bool(ok)
+        if self._is_page_loaded and self._current_geojson is not None:
+            self._dispatch_route_js(self._current_geojson)
+
     def reload_scene(self) -> None:
-        """Reload the local 3D HTML application."""
-        if self.web_view is not None and self.html_path.exists():
-            url = QUrl.fromLocalFile(str(self.html_path.resolve()))
-            self.web_view.load(url)
+        """Reload the local 3D HTML application via local HTTP server."""
+        if self.web_view is not None:
+            server_url = self.server.start()
+            self.web_view.load(QUrl(server_url))
 
     def send_route(self, geojson_data: Dict[str, Any]) -> None:
         """Transmit computed route GeoJSON to the 3D WebGL canvas via JavaScript."""
         self._current_geojson = geojson_data
         if self.web_view is not None:
-            json_str = json.dumps(geojson_data)
-            script = f"if (window.setRouteData) {{ window.setRouteData({json_str}); }}"
-            self.web_view.page().runJavaScript(script)
+            if not self._is_page_loaded:
+                self.reload_scene()
+            else:
+                self._dispatch_route_js(geojson_data)
+
+    def _dispatch_route_js(self, geojson_data: Dict[str, Any]) -> None:
+        if self.web_view is None:
+            return
+        json_str = json.dumps(geojson_data)
+        script = f"if (window.setRouteData) {{ window.setRouteData({json_str}); }}"
+        self.web_view.page().runJavaScript(script)
 
     def open_in_external_browser(self) -> None:
         """Open the 3D web studio in the user's default external browser (e.g. Chrome/Edge)."""
-        if not self.html_path.exists():
-            return
+        server_url = self.server.start()
+        webbrowser.open(server_url)
 
-        if self._current_geojson:
-            temp_html = Path(os.path.expanduser("~")) / ".qgis_zero2route3d_view.html"
-            raw_html = self.html_path.read_text(encoding="utf-8")
-            injected_script = f"""
-            <script>
-            window.addEventListener('load', () => {{
-              setTimeout(() => {{
-                if (window.setRouteData) window.setRouteData({json.dumps(self._current_geojson)});
-              }}, 300);
-            }});
-            </script>
-            """
-            merged = raw_html.replace("</body>", f"{injected_script}\n</body>")
-            temp_html.write_text(merged, encoding="utf-8")
-            webbrowser.open(temp_html.as_uri())
-        else:
-            webbrowser.open(self.html_path.as_uri())
+    def close(self) -> bool:
+        self.server.stop()
+        return super().close()
