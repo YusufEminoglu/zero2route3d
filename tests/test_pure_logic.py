@@ -38,13 +38,15 @@ from zero2route3d.core.profile_stats import (
     generate_cue_sheet,
     smooth_elevation_series,
 )
+from zero2route3d.core.qml_generator import generate_route_qml_style
+from zero2route3d.core.report_generator import generate_analytical_report_html
 from zero2route3d.core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from zero2route3d.core.solar_shadow import calculate_solar_position, compute_shade_exposure_along_route
 from zero2route3d.core.tsp_solver import solve_tsp_order
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
-    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, and solar logic."""
+    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, and report logic."""
 
     def test_haversine_2d_and_3d(self) -> None:
         p1 = (27.1428, 38.4237, 10.0)
@@ -249,6 +251,38 @@ class TestRoute3DPureLogic(unittest.TestCase):
         musters = [Waypoint(27.14, 38.44, "Shelter 1"), Waypoint(27.15, 38.45, "Shelter 2")]
         plan = router.calculate_evacuation_route(orig, musters)
         self.assertIsNotNone(plan.muster_point)
+
+    def test_report_and_qml_generation(self) -> None:
+        profile = get_profile("adult")
+        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 25.0)]
+        stats = compute_route_statistics(coords, profile)
+        res = RouteResult3D(
+            coordinates_3d=coords,
+            statistics=stats,
+            profile=profile,
+            waypoints=[Waypoint(27.14, 38.42), Waypoint(27.15, 38.43)],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp_html:
+            tmp_html_path = Path(tmp_html.name)
+        with tempfile.NamedTemporaryFile(suffix=".qml", delete=False) as tmp_qml:
+            tmp_qml_path = Path(tmp_qml.name)
+
+        try:
+            generate_analytical_report_html(res, tmp_html_path)
+            self.assertTrue(tmp_html_path.exists())
+            html_text = tmp_html_path.read_text(encoding="utf-8")
+            self.assertIn("Analytical Scorecard", html_text)
+
+            generate_route_qml_style(tmp_qml_path)
+            self.assertTrue(tmp_qml_path.exists())
+            qml_text = tmp_qml_path.read_text(encoding="utf-8")
+            self.assertIn("renderer-v2", qml_text)
+        finally:
+            if tmp_html_path.exists():
+                tmp_html_path.unlink()
+            if tmp_qml_path.exists():
+                tmp_qml_path.unlink()
 
 
 if __name__ == "__main__":

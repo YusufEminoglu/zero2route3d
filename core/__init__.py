@@ -39,6 +39,8 @@ from .profile_stats import (
     generate_cue_sheet,
     smooth_elevation_series,
 )
+from .qml_generator import generate_route_qml_style
+from .report_generator import generate_analytical_report_html
 from .routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .solar_shadow import (
     ShadeExposureReport,
@@ -64,6 +66,8 @@ __all__ = [
     "MultiModalLeg",
     "MultiModalRouter",
     "export_route_to_dxf_3d",
+    "generate_analytical_report_html",
+    "generate_route_qml_style",
     "calculate_solar_position",
     "compute_shade_exposure_along_route",
     "ShadeExposureReport",

@@ -9,6 +9,7 @@ from .alg_evacuation import EvacuationRoutingAlgorithm
 from .alg_export_dxf import ExportRouteToDxfAlgorithm
 from .alg_export_html import ExportStandalone3DHtmlAlgorithm
 from .alg_od_matrix import OriginDestinationMatrix3DAlgorithm
+from .alg_report_generator import GenerateAnalyticalReportAlgorithm
 from .alg_solar_exposure import SolarExposureAlgorithm
 from .alg_walkability import WalkabilityAuditAlgorithm
 from .provider import Route3DProcessingProvider
@@ -19,6 +20,7 @@ __all__ = [
     "EvacuationRoutingAlgorithm",
     "ExportRouteToDxfAlgorithm",
     "ExportStandalone3DHtmlAlgorithm",
+    "GenerateAnalyticalReportAlgorithm",
     "MultiCriteriaCostSurfaceAlgorithm",
     "OriginDestinationMatrix3DAlgorithm",
     "Route3DProcessingProvider",

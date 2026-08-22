@@ -14,6 +14,7 @@ from .alg_evacuation import EvacuationRoutingAlgorithm
 from .alg_export_dxf import ExportRouteToDxfAlgorithm
 from .alg_export_html import ExportStandalone3DHtmlAlgorithm
 from .alg_od_matrix import OriginDestinationMatrix3DAlgorithm
+from .alg_report_generator import GenerateAnalyticalReportAlgorithm
 from .alg_solar_exposure import SolarExposureAlgorithm
 from .alg_walkability import WalkabilityAuditAlgorithm
 
@@ -33,6 +34,7 @@ class Route3DProcessingProvider(QgsProcessingProvider):
         self.addAlgorithm(ExportRouteToDxfAlgorithm())
         self.addAlgorithm(SolarExposureAlgorithm())
         self.addAlgorithm(EvacuationRoutingAlgorithm())
+        self.addAlgorithm(GenerateAnalyticalReportAlgorithm())
 
     def id(self) -> str:
         return "zero2route3d"
