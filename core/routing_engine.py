@@ -38,6 +38,16 @@ class RouteResult3D:
     status_message: str = "Route computed successfully."
     alternative_routes: List[Dict[str, Any]] = field(default_factory=list)
 
+    @property
+    def profile_key(self) -> str:
+        """Convenience property to access profile key."""
+        return self.profile.key
+
+    @property
+    def profile_name(self) -> str:
+        """Convenience property to access profile display name."""
+        return self.profile.name
+
     def to_geojson_feature(self) -> Dict[str, Any]:
         """Convert route to standard GeoJSON Feature with 3D LineString geometry and rich properties."""
         return {
