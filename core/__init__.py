@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from .ahp_engine import AHPEngine, AHPResult
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
+from .html_bundler import StandaloneHtmlBundler
+from .isochrone_engine import IsochroneBand, IsochroneEngine3D, IsochroneResult
 from .kinematics import (
     aerodynamic_drag_power,
     cyclist_speed,
@@ -25,6 +27,7 @@ from .mobility_profiles import (
     load_custom_profile_json,
     save_custom_profile_json,
 )
+from .multimodal import MultiModalJourney, MultiModalLeg, MultiModalRouter
 from .network_source import NetworkSourceManager, RoadSegment
 from .profile_stats import (
     CueInstruction,
@@ -42,6 +45,13 @@ __all__ = [
     "AHPResult",
     "EnvironmentalSurfaceSampler",
     "MCDAWeights",
+    "StandaloneHtmlBundler",
+    "IsochroneBand",
+    "IsochroneEngine3D",
+    "IsochroneResult",
+    "MultiModalJourney",
+    "MultiModalLeg",
+    "MultiModalRouter",
     "aerodynamic_drag_power",
     "cyclist_speed",
     "haversine_distance_2d",

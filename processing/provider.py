@@ -8,6 +8,9 @@ from qgis.core import QgsProcessingAlgorithm, QgsProcessingProvider
 
 from .alg_3d_isochrone import ServiceArea3DAlgorithm
 from .alg_3d_route import Compute3DRouteAlgorithm
+from .alg_batch_route import Batch3DRouteAlgorithm
+from .alg_cost_surface import MultiCriteriaCostSurfaceAlgorithm
+from .alg_export_html import ExportStandalone3DHtmlAlgorithm
 from .alg_od_matrix import OriginDestinationMatrix3DAlgorithm
 from .alg_walkability import WalkabilityAuditAlgorithm
 
@@ -21,6 +24,9 @@ class Route3DProcessingProvider(QgsProcessingProvider):
         self.addAlgorithm(ServiceArea3DAlgorithm())
         self.addAlgorithm(OriginDestinationMatrix3DAlgorithm())
         self.addAlgorithm(WalkabilityAuditAlgorithm())
+        self.addAlgorithm(Batch3DRouteAlgorithm())
+        self.addAlgorithm(MultiCriteriaCostSurfaceAlgorithm())
+        self.addAlgorithm(ExportStandalone3DHtmlAlgorithm())
 
     def id(self) -> str:
         return "zero2route3d"

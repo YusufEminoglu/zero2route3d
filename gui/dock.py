@@ -275,15 +275,16 @@ class Route3DStudioDock(QDockWidget):
         self.btn_add_layer.setEnabled(False)
         exp_row.addWidget(self.btn_add_layer)
 
-        self.btn_export_gpx = QPushButton("💾 GPX")
-        self.btn_export_gpx.clicked.connect(self.export_gpx)
-        self.btn_export_gpx.setEnabled(False)
-        exp_row.addWidget(self.btn_export_gpx)
-
         self.btn_export_geojson = QPushButton("💾 GeoJSON")
         self.btn_export_geojson.clicked.connect(self.export_geojson)
         self.btn_export_geojson.setEnabled(False)
         exp_row.addWidget(self.btn_export_geojson)
+
+        self.btn_export_html = QPushButton("🌐 3D HTML")
+        self.btn_export_html.setToolTip("Export self-contained standalone 3D HTML report (opens anywhere offline)")
+        self.btn_export_html.clicked.connect(self.export_standalone_html)
+        self.btn_export_html.setEnabled(False)
+        exp_row.addWidget(self.btn_export_html)
         act_layout.addLayout(exp_row)
 
         layout.addWidget(card_act)
@@ -614,3 +615,16 @@ class Route3DStudioDock(QDockWidget):
             Path(path).write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", f"Exported GeoJSON to {path}")
+
+    def export_standalone_html(self) -> None:
+        if not self.current_route_result:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export Standalone 3D HTML Report", "", "HTML Files (*.html)")
+        if path:
+            from ..core.html_bundler import StandaloneHtmlBundler
+            web_dir = Path(__file__).resolve().parent.parent / "web"
+            bundler = StandaloneHtmlBundler(web_dir)
+            bundler.export_standalone_html(self.current_route_result, Path(path))
+            if self.iface:
+                self.iface.messageBar().pushSuccess("02Route 3D", f"Exported Standalone 3D HTML to {path}")
+

@@ -1,9 +1,13 @@
 """Comprehensive unit tests for 02Route 3D pure analytical and kinematic logic."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from zero2route3d.core.ahp_engine import AHPEngine
+from zero2route3d.core.html_bundler import StandaloneHtmlBundler
+from zero2route3d.core.isochrone_engine import IsochroneEngine3D
 from zero2route3d.core.kinematics import (
     aerodynamic_drag_power,
     cyclist_speed,
@@ -24,6 +28,7 @@ from zero2route3d.core.mobility_profiles import (
     get_profile,
     list_profile_keys,
 )
+from zero2route3d.core.multimodal import MultiModalRouter
 from zero2route3d.core.network_source import NetworkSourceManager
 from zero2route3d.core.profile_stats import (
     compute_route_statistics,
@@ -31,12 +36,12 @@ from zero2route3d.core.profile_stats import (
     generate_cue_sheet,
     smooth_elevation_series,
 )
-from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+from zero2route3d.core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from zero2route3d.core.tsp_solver import solve_tsp_order
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
-    """Test suite covering core physics, graph routing, AHP, and TSP logic."""
+    """Test suite covering core physics, graph routing, AHP, TSP, and multimodal logic."""
 
     def test_haversine_2d_and_3d(self) -> None:
         p1 = (27.1428, 38.4237, 10.0)
@@ -149,6 +154,66 @@ class TestRoute3DPureLogic(unittest.TestCase):
         matrix = engine.calculate_od_matrix([w1], [w2], profile_key="adult")
         self.assertEqual(len(matrix), 1)
         self.assertGreater(matrix[0]["distance_m"], 100.0)
+
+    def test_multimodal_router(self) -> None:
+        net_mgr = NetworkSourceManager()
+        bbox = (27.10, 38.40, 27.15, 38.45)
+        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+
+        router = MultiModalRouter(engine)
+        w_orig = Waypoint(lon=27.11, lat=38.41, name="Home")
+        w_dest = Waypoint(lon=27.14, lat=38.44, name="Office")
+        hubs = [
+            Waypoint(lon=27.12, lat=38.42, name="Station 1"),
+            Waypoint(lon=27.13, lat=38.43, name="Station 2"),
+        ]
+
+        journey = router.calculate_multimodal_trip(w_orig, w_dest, hubs, access_mode="adult", main_mode="bicycle", egress_mode="adult")
+        self.assertEqual(len(journey.legs), 3)
+        self.assertGreater(journey.total_distance_km, 0.5)
+        self.assertGreater(journey.transfer_count, 1)
+
+    def test_isochrone_engine(self) -> None:
+        net_mgr = NetworkSourceManager()
+        bbox = (27.10, 38.40, 27.15, 38.45)
+        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+
+        iso_engine = IsochroneEngine3D(engine)
+        origin = Waypoint(lon=27.12, lat=38.42, name="Center")
+        iso_res = iso_engine.compute_isochrones(origin, profile_key="adult", time_intervals_min=(5.0, 10.0, 15.0))
+        self.assertEqual(len(iso_res.bands), 3)
+        self.assertGreater(iso_res.total_reachable_nodes, 0)
+
+    def test_standalone_html_bundler(self) -> None:
+        web_dir = Path(__file__).resolve().parent.parent / "web"
+        bundler = StandaloneHtmlBundler(web_dir)
+
+        profile = get_profile("adult")
+        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 20.0)]
+        stats = compute_route_statistics(coords, profile)
+        res = RouteResult3D(
+            coordinates_3d=coords,
+            statistics=stats,
+            profile=profile,
+            waypoints=[Waypoint(27.14, 38.42), Waypoint(27.15, 38.43)],
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            bundler.export_standalone_html(res, tmp_path)
+            self.assertTrue(tmp_path.exists())
+            content = tmp_path.read_text(encoding="utf-8")
+            self.assertIn("02Route 3D", content)
+            self.assertIn("canvasContainer", content)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
 
 
 if __name__ == "__main__":
