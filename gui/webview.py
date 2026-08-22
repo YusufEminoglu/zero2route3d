@@ -9,13 +9,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from qgis.PyQt.QtCore import QUrl
-from qgis.PyQt.QtWidgets import QLabel, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 # Safe QWebEngineView imports
 HAS_WEBENGINE = False
-with contextlib.suppress(ImportError):
-    from qgis.PyQt.QtWebEngineWidgets import QWebEngineSettings, QWebEngineView
+QWebEngineView = None
+QWebEngineSettings = None
+
+try:
+    from qgis.PyQt.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
     HAS_WEBENGINE = True
+except Exception:
+    with contextlib.suppress(Exception):
+        from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+        HAS_WEBENGINE = True
 
 
 class Studio3DWebViewport(QWidget):
@@ -33,20 +40,66 @@ class Studio3DWebViewport(QWidget):
         self._setup_view()
 
     def _setup_view(self) -> None:
-        if HAS_WEBENGINE:
-            self.web_view = QWebEngineView(self)
-            settings = self.web_view.settings()
-            settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        if HAS_WEBENGINE and QWebEngineView is not None:
+            try:
+                self.web_view = QWebEngineView(self)
+                settings = self.web_view.settings()
+                if settings is not None:
+                    attrs = [
+                        "WebGLEnabled",
+                        "Accelerated2dCanvasEnabled",
+                        "LocalContentCanAccessRemoteUrls",
+                        "LocalContentCanAccessFileUrls",
+                        "JavascriptEnabled",
+                    ]
+                    for attr_name in attrs:
+                        enum_target = getattr(QWebEngineSettings, "WebAttribute", QWebEngineSettings)
+                        attr = getattr(enum_target, attr_name, None)
+                        if attr is not None:
+                            with contextlib.suppress(Exception):
+                                settings.setAttribute(attr, True)
 
-            self.layout.addWidget(self.web_view)
-            self.reload_scene()
-        else:
-            lbl = QLabel("3D WebEngine is unavailable in this environment.\nUse 'Open in Browser' to view 3D route in Chrome.", self)
-            lbl.setStyleSheet("color: #94a3b8; padding: 20px; font-weight: 600;")
-            self.layout.addWidget(lbl)
+                self.layout.addWidget(self.web_view)
+                self.reload_scene()
+                return
+            except Exception:
+                self.web_view = None
+
+        # Fallback container
+        fb = QWidget(self)
+        fb_layout = QVBoxLayout(fb)
+        fb_layout.setContentsMargins(24, 24, 24, 24)
+        fb_layout.setSpacing(16)
+
+        lbl = QLabel(
+            "<h3>🚀 3D WebGL Mobility Studio</h3>"
+            "<p style='color:#94a3b8; font-size:12px;'>"
+            "Direct hardware-accelerated WebGL 3D route rendering and kinematic animation."
+            "</p>",
+            fb,
+        )
+        lbl.setStyleSheet("color: #0f172a;")
+        fb_layout.addWidget(lbl)
+
+        btn_open = QPushButton("🌐 Open 3D Studio in Browser (Chrome/Edge)", fb)
+        btn_open.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:1 #2563eb);
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 13px;
+                padding: 12px 20px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0369a1, stop:1 #1d4ed8);
+            }
+        """)
+        btn_open.clicked.connect(self.open_in_external_browser)
+        fb_layout.addWidget(btn_open)
+        fb_layout.addStretch()
+
+        self.layout.addWidget(fb)
 
     def reload_scene(self) -> None:
         """Reload the local 3D HTML application."""
@@ -68,7 +121,6 @@ class Studio3DWebViewport(QWidget):
             return
 
         if self._current_geojson:
-            # Inject route payload into a temporary standalone HTML for instant offline browser viewing
             temp_html = Path(os.path.expanduser("~")) / ".qgis_zero2route3d_view.html"
             raw_html = self.html_path.read_text(encoding="utf-8")
             injected_script = f"""
