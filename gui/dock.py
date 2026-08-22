@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
-from qgis.PyQt.QtGui import QCursor, QDesktopServices
+from qgis.PyQt.QtGui import QColor, QCursor, QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -51,6 +51,7 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
 from ..core.ahp_engine import AHPEngine
+from ..core.basemap import add_osm_basemap
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import PROFILES, MobilityProfile, get_profile, list_profile_keys
 from ..core.network_source import NetworkSourceManager, RoadSegment
@@ -77,12 +78,13 @@ class Route3DStudioDock(QDockWidget):
 
         self.network_manager = NetworkSourceManager()
         self.active_tool: Optional[RoutePointMapTool] = None
+        self.picking_target: str = "A"  # "A" or "B"
         self.current_route_result: Optional[RouteResult3D] = None
         self.cached_osm_buildings: List[OsmBuilding] = []
-        self.waypoints: List[Waypoint] = [
-            Waypoint(lon=27.1428, lat=38.4237, name="Izmir Point A"),
-            Waypoint(lon=27.1510, lat=38.4300, name="Alsancak Point B"),
-        ]
+
+        self.point_a = Waypoint(lon=27.1428, lat=38.4237, name="Point A (Origin)")
+        self.point_b = Waypoint(lon=27.1510, lat=38.4300, name="Point B (Destination)")
+        self.waypoints: List[Waypoint] = [self.point_a, self.point_b]
 
         self.web_root = Path(__file__).resolve().parent.parent / "web"
         self.data_dir = self.web_root / "data"
@@ -144,60 +146,90 @@ class Route3DStudioDock(QDockWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
-        # 1. OSM Basemap & Acquisition Action
+        # 1. OSM Basemap & Acquisition Action Card
         card_osm = QFrame()
         card_osm.setProperty("class", "route3dCard")
         osm_layout = QVBoxLayout(card_osm)
-        osm_header = QLabel("<b>1. OpenStreetMap Acquisition</b>")
+        osm_header = QLabel("<b>1. OpenStreetMap Basemap & Layers</b>")
         osm_layout.addWidget(osm_header)
 
-        self.btn_fetch_osm = QPushButton("⬇️ Fetch OSM Roads & Buildings for Area")
-        self.btn_fetch_osm.setToolTip("Downloads real OSM road network and building footprints for current extent")
+        osm_btn_row = QHBoxLayout()
+        self.btn_add_basemap = QPushButton("🗺️ Add OSM Basemap")
+        self.btn_add_basemap.setToolTip("Loads OpenStreetMap standard XYZ basemap into project")
+        self.btn_add_basemap.clicked.connect(self._on_add_osm_basemap)
+        osm_btn_row.addWidget(self.btn_add_basemap)
+
+        self.btn_fetch_osm = QPushButton("⬇️ Fetch Roads & Buildings")
+        self.btn_fetch_osm.setToolTip("Downloads real OSM road network and 3D building footprints for current area")
         self.btn_fetch_osm.clicked.connect(self._fetch_osm_layers_for_extent)
-        osm_layout.addWidget(self.btn_fetch_osm)
+        osm_btn_row.addWidget(self.btn_fetch_osm)
+        osm_layout.addLayout(osm_btn_row)
         layout.addWidget(card_osm)
 
-        # 2. Waypoints List Card (Point A & Point B)
-        card_wp = QFrame()
-        card_wp.setProperty("class", "route3dCard")
-        wp_layout = QVBoxLayout(card_wp)
+        # 2. Point A & Point B Dual Origin/Destination Card
+        card_ab = QFrame()
+        card_ab.setProperty("class", "route3dCard")
+        ab_layout = QVBoxLayout(card_ab)
+        ab_layout.addWidget(QLabel("<b>2. Route Points (A & B)</b>"))
 
-        wp_header = QHBoxLayout()
-        lbl_wp_title = QLabel("<b>2. Route Waypoints (A → B)</b>")
-        wp_header.addWidget(lbl_wp_title)
-        wp_header.addStretch()
+        # Point A Box
+        grp_a = QGroupBox("📍 Point A (Origin)")
+        a_vbox = QVBoxLayout(grp_a)
+        a_row = QHBoxLayout()
+        self.lbl_coord_a = QLabel(f"{self.point_a.lon:.4f}, {self.point_a.lat:.4f}")
+        self.lbl_coord_a.setStyleSheet("font-weight: bold; color: #059669;")
+        a_row.addWidget(self.lbl_coord_a)
+        a_row.addStretch()
 
-        self.btn_pick_map = QPushButton("📍 Pick Map")
-        self.btn_pick_map.setCheckable(True)
-        self.btn_pick_map.setToolTip("Click on canvas to place Origin (A) and Destination (B)")
-        self.btn_pick_map.clicked.connect(self._toggle_map_picker)
-        wp_header.addWidget(self.btn_pick_map)
+        self.btn_pick_a = QPushButton("📍 Pick on Map")
+        self.btn_pick_a.setCheckable(True)
+        self.btn_pick_a.clicked.connect(lambda chk: self._toggle_specific_picker("A", chk))
+        a_row.addWidget(self.btn_pick_a)
+        a_vbox.addLayout(a_row)
 
-        self.btn_tsp = QPushButton("✨ TSP")
-        self.btn_tsp.setToolTip("Optimize stop order via Traveling Salesperson algorithm")
-        self.btn_tsp.clicked.connect(self._optimize_stops_tsp)
-        wp_header.addWidget(self.btn_tsp)
-        wp_layout.addLayout(wp_header)
+        a_layer_row = QHBoxLayout()
+        a_layer_row.addWidget(QLabel("Or from Layer:"))
+        self.cmb_layer_a = QgsMapLayerComboBox()
+        self.cmb_layer_a.setFilters(QgsMapLayerProxyModel.PointLayer | QgsMapLayerProxyModel.PolygonLayer)
+        a_layer_row.addWidget(self.cmb_layer_a)
+        btn_use_layer_a = QPushButton("Use Layer")
+        btn_use_layer_a.clicked.connect(lambda: self._set_point_from_layer("A"))
+        a_layer_row.addWidget(btn_use_layer_a)
+        a_vbox.addLayout(a_layer_row)
+        ab_layout.addWidget(grp_a)
 
-        self.lst_waypoints = QListWidget()
-        self.lst_waypoints.setFixedHeight(85)
-        self._refresh_waypoint_list()
-        wp_layout.addWidget(self.lst_waypoints)
+        # Point B Box
+        grp_b = QGroupBox("🎯 Point B (Destination)")
+        b_vbox = QVBoxLayout(grp_b)
+        b_row = QHBoxLayout()
+        self.lbl_coord_b = QLabel(f"{self.point_b.lon:.4f}, {self.point_b.lat:.4f}")
+        self.lbl_coord_b.setStyleSheet("font-weight: bold; color: #dc2626;")
+        b_row.addWidget(self.lbl_coord_b)
+        b_row.addStretch()
 
-        btn_row = QHBoxLayout()
-        btn_add = QPushButton("➕ Add Stop")
-        btn_add.clicked.connect(self._add_waypoint_dialog)
-        btn_row.addWidget(btn_add)
+        self.btn_pick_b = QPushButton("📍 Pick on Map")
+        self.btn_pick_b.setCheckable(True)
+        self.btn_pick_b.clicked.connect(lambda chk: self._toggle_specific_picker("B", chk))
+        b_row.addWidget(self.btn_pick_b)
+        b_vbox.addLayout(b_row)
 
-        btn_remove = QPushButton("➖ Remove")
-        btn_remove.clicked.connect(self._remove_selected_waypoint)
-        btn_row.addWidget(btn_remove)
+        b_layer_row = QHBoxLayout()
+        b_layer_row.addWidget(QLabel("Or from Layer:"))
+        self.cmb_layer_b = QgsMapLayerComboBox()
+        self.cmb_layer_b.setFilters(QgsMapLayerProxyModel.PointLayer | QgsMapLayerProxyModel.PolygonLayer)
+        b_layer_row.addWidget(self.cmb_layer_b)
+        btn_use_layer_b = QPushButton("Use Layer")
+        btn_use_layer_b.clicked.connect(lambda: self._set_point_from_layer("B"))
+        b_layer_row.addWidget(btn_use_layer_b)
+        b_vbox.addLayout(b_layer_row)
+        ab_layout.addWidget(grp_b)
 
-        btn_reverse = QPushButton("⇄ Reverse")
-        btn_reverse.clicked.connect(self._reverse_waypoints)
-        btn_row.addWidget(btn_reverse)
-        wp_layout.addLayout(btn_row)
-        layout.addWidget(card_wp)
+        # Reverse A & B Button
+        btn_rev_ab = QPushButton("⇄ Swap Origin & Destination")
+        btn_rev_ab.clicked.connect(self._reverse_waypoints)
+        ab_layout.addWidget(btn_rev_ab)
+
+        layout.addWidget(card_ab)
 
         # 3. Mobility Profile Selector Card
         card_prof = QFrame()
@@ -442,66 +474,144 @@ class Route3DStudioDock(QDockWidget):
         layout.addWidget(grp_info)
         layout.addStretch()
 
-    def _refresh_waypoint_list(self) -> None:
-        self.lst_waypoints.clear()
-        for idx, wp in enumerate(self.waypoints, start=1):
-            lbl = "Origin (A)" if idx == 1 else ("Dest (B)" if idx == 2 and len(self.waypoints) == 2 else f"Stop {idx}")
-            item = QListWidgetItem(f"{lbl}: {wp.name} ({wp.lon:.4f}, {wp.lat:.4f})")
-            self.lst_waypoints.addItem(item)
+    def _on_add_osm_basemap(self) -> None:
+        """Add or reveal the OpenStreetMap standard XYZ tile layer."""
+        try:
+            _, created = add_osm_basemap()
+            if self.iface:
+                msg = "OpenStreetMap basemap added to project." if created else "OpenStreetMap basemap revealed."
+                self.iface.messageBar().pushSuccess("02Route 3D", msg)
+        except Exception as e:
+            if self.iface:
+                self.iface.messageBar().pushWarning("02Route 3D", f"Could not load OSM basemap: {e}")
 
-    def _toggle_map_picker(self, checked: bool) -> None:
+    def _toggle_specific_picker(self, target: str, checked: bool) -> None:
         if not self.canvas:
             return
         if checked:
+            self.picking_target = target
+            if target == "A" and self.btn_pick_b.isChecked():
+                self.btn_pick_b.setChecked(False)
+            elif target == "B" and self.btn_pick_a.isChecked():
+                self.btn_pick_a.setChecked(False)
+
             self.active_tool = RoutePointMapTool(self.canvas)
             self.active_tool.point_captured.connect(self._on_point_captured)
             self.canvas.setMapTool(self.active_tool)
             if self.iface:
-                self.iface.messageBar().pushInfo("02Route 3D", "Click on canvas to set Origin (A) and Destination (B)...")
+                self.iface.messageBar().pushInfo("02Route 3D", f"Click on map canvas to set Point {target}...")
         else:
             if self.active_tool:
                 self.canvas.unsetMapTool(self.active_tool)
                 self.active_tool = None
 
-    def _on_point_captured(self, point: QgsPoint) -> None:
-        if len(self.waypoints) >= 2:
-            self.waypoints.clear()
-        label = "Point A (Origin)" if len(self.waypoints) == 0 else "Point B (Destination)"
-        self.waypoints.append(Waypoint(lon=point.x(), lat=point.y(), name=label))
-        self._refresh_waypoint_list()
-        if len(self.waypoints) >= 2 and self.btn_pick_map.isChecked():
-            self.btn_pick_map.setChecked(False)
-            self._toggle_map_picker(False)
-            if self.iface:
-                self.iface.messageBar().pushSuccess("02Route 3D", "Origin (A) and Destination (B) captured! Click 'Compute 3D Shortest Path'.")
-
-    def _add_waypoint_dialog(self) -> None:
-        name = f"Stop {len(self.waypoints) + 1}"
-        if self.waypoints:
-            last = self.waypoints[-1]
-            self.waypoints.append(Waypoint(lon=last.lon + 0.004, lat=last.lat + 0.004, name=name))
+    def _on_point_captured(self, point: Any) -> None:
+        lon = float(point.x())
+        lat = float(point.y())
+        if self.picking_target == "A":
+            self.point_a = Waypoint(lon=lon, lat=lat, name="Point A (Origin)")
+            self.lbl_coord_a.setText(f"{lon:.4f}, {lat:.4f}")
+            self.btn_pick_a.setChecked(False)
         else:
-            self.waypoints.append(Waypoint(lon=27.1428, lat=38.4237, name="Point A"))
-        self._refresh_waypoint_list()
+            self.point_b = Waypoint(lon=lon, lat=lat, name="Point B (Destination)")
+            self.lbl_coord_b.setText(f"{lon:.4f}, {lat:.4f}")
+            self.btn_pick_b.setChecked(False)
 
-    def _remove_selected_waypoint(self) -> None:
-        row = self.lst_waypoints.currentRow()
-        if 0 <= row < len(self.waypoints):
-            self.waypoints.pop(row)
-            self._refresh_waypoint_list()
+        if self.active_tool:
+            self.canvas.unsetMapTool(self.active_tool)
+            self.active_tool = None
+
+        self.waypoints = [self.point_a, self.point_b]
+        self._update_point_vector_layers()
+
+        if self.iface:
+            self.iface.messageBar().pushSuccess("02Route 3D", f"Point {self.picking_target} updated on map canvas!")
+
+    def _set_point_from_layer(self, target: str) -> None:
+        """Extract Point A or B coordinate from selected feature or centroid of chosen QGIS layer."""
+        cmb = self.cmb_layer_a if target == "A" else self.cmb_layer_b
+        layer = cmb.currentLayer()
+        if not layer or not layer.isValid():
+            QMessageBox.warning(self, "02Route 3D", f"Please select a valid vector layer for Point {target}.")
+            return
+
+        # Check selected features first
+        selected = layer.selectedFeatures()
+        feat = selected[0] if selected else next(layer.getFeatures(), None)
+        if not feat or not feat.geometry():
+            QMessageBox.warning(self, "02Route 3D", f"No features found in layer '{layer.name()}'.")
+            return
+
+        geom = feat.geometry()
+        pt = geom.centroid().asPoint()
+
+        # Transform to WGS84
+        crs_layer = layer.crs()
+        crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+        if crs_layer != crs_wgs:
+            transform = QgsCoordinateTransform(crs_layer, crs_wgs, QgsProject.instance())
+            pt = transform.transform(pt)
+
+        if target == "A":
+            self.point_a = Waypoint(lon=pt.x(), lat=pt.y(), name=f"Point A ({layer.name()})")
+            self.lbl_coord_a.setText(f"{pt.x():.4f}, {pt.y():.4f}")
+        else:
+            self.point_b = Waypoint(lon=pt.x(), lat=pt.y(), name=f"Point B ({layer.name()})")
+            self.lbl_coord_b.setText(f"{pt.x():.4f}, {pt.y():.4f}")
+
+        self.waypoints = [self.point_a, self.point_b]
+        self._update_point_vector_layers()
+
+        if self.iface:
+            self.iface.messageBar().pushSuccess("02Route 3D", f"Point {target} loaded from '{layer.name()}'!")
+
+    def _update_point_vector_layers(self) -> None:
+        """Create or update dedicated Point A and Point B pin vector layers on the QGIS canvas."""
+        proj = QgsProject.instance()
+
+        # 1. Point A Layer
+        layer_a_name = "📍 Route Point A (Origin)"
+        layers_a = proj.mapLayersByName(layer_a_name)
+        layer_a = layers_a[0] if layers_a else QgsVectorLayer("Point?crs=EPSG:4326", layer_a_name, "memory")
+        pr_a = layer_a.dataProvider()
+        pr_a.truncate()
+        if not layer_a.fields():
+            pr_a.addAttributes([QgsField("name", 10), QgsField("lon", 6), QgsField("lat", 6)])
+            layer_a.updateFields()
+        f_a = QgsFeature()
+        f_a.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_a.lon, self.point_a.lat)))
+        f_a.setAttributes(["Point A (Origin)", self.point_a.lon, self.point_a.lat])
+        pr_a.addFeatures([f_a])
+        layer_a.updateExtents()
+        if not layers_a:
+            proj.addMapLayer(layer_a)
+
+        # 2. Point B Layer
+        layer_b_name = "🎯 Route Point B (Destination)"
+        layers_b = proj.mapLayersByName(layer_b_name)
+        layer_b = layers_b[0] if layers_b else QgsVectorLayer("Point?crs=EPSG:4326", layer_b_name, "memory")
+        pr_b = layer_b.dataProvider()
+        pr_b.truncate()
+        if not layer_b.fields():
+            pr_b.addAttributes([QgsField("name", 10), QgsField("lon", 6), QgsField("lat", 6)])
+            layer_b.updateFields()
+        f_b = QgsFeature()
+        f_b.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_b.lon, self.point_b.lat)))
+        f_b.setAttributes(["Point B (Destination)", self.point_b.lon, self.point_b.lat])
+        pr_b.addFeatures([f_b])
+        layer_b.updateExtents()
+        if not layers_b:
+            proj.addMapLayer(layer_b)
+
+        if self.canvas:
+            self.canvas.refresh()
 
     def _reverse_waypoints(self) -> None:
-        self.waypoints.reverse()
-        self._refresh_waypoint_list()
-
-    def _optimize_stops_tsp(self) -> None:
-        if len(self.waypoints) < 3:
-            return
-        from ..core.tsp_solver import solve_tsp_order
-        coords = [(w.lon, w.lat, 0.0) for w in self.waypoints]
-        order = solve_tsp_order(coords, fix_start=True, fix_end=False)
-        self.waypoints = [self.waypoints[i] for i in order]
-        self._refresh_waypoint_list()
+        self.point_a, self.point_b = self.point_b, self.point_a
+        self.lbl_coord_a.setText(f"{self.point_a.lon:.4f}, {self.point_a.lat:.4f}")
+        self.lbl_coord_b.setText(f"{self.point_b.lon:.4f}, {self.point_b.lat:.4f}")
+        self.waypoints = [self.point_a, self.point_b]
+        self._update_point_vector_layers()
 
     def _on_profile_changed(self, index: int) -> None:
         key = self.cmb_profile.itemData(index) or "adult"
@@ -577,9 +687,7 @@ class Route3DStudioDock(QDockWidget):
 
     def compute_route(self) -> None:
         """Compute the 3D shortest path, output QGIS line layer, extract 50m corridor buildings, and sync 3D studio."""
-        if len(self.waypoints) < 2:
-            QMessageBox.warning(self, "02Route 3D", "Please pick Origin (Point A) and Destination (Point B).")
-            return
+        self.waypoints = [self.point_a, self.point_b]
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(20)
@@ -708,7 +816,7 @@ class Route3DStudioDock(QDockWidget):
         feat = QgsFeature()
         feat.setGeometry(geom)
         feat.setAttributes([
-            self.current_route_result.profile_key,
+            self.current_route_result.profile.key,
             self.current_route_result.statistics.total_distance_km,
             self.current_route_result.statistics.total_duration_min,
             self.current_route_result.statistics.elevation_gain_m,
@@ -719,7 +827,7 @@ class Route3DStudioDock(QDockWidget):
         layer.updateExtents()
 
         from ..core.qml_generator import generate_route_qml_style
-        qml_xml = generate_route_qml_style(self.current_route_result.profile_key, line_width_mm=1.2)
+        qml_xml = generate_route_qml_style(self.current_route_result.profile.key, line_width_mm=1.2)
         qml_path = self.web_root / "temp_route_style.qml"
         with contextlib.suppress(Exception):
             qml_path.write_text(qml_xml, encoding="utf-8")

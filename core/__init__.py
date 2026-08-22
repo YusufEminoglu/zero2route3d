@@ -8,6 +8,7 @@ from .accessibility_equity import (
     ZoneAccessibilityRecord,
 )
 from .ahp_engine import AHPEngine, AHPResult
+from .basemap import add_osm_basemap
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from .evacuation import EvacuationPlan, EvacuationRouter, HazardZone
 from .html_bundler import StandaloneHtmlBundler
@@ -83,6 +84,7 @@ __all__ = [
     "ZoneAccessibilityRecord",
     "AHPEngine",
     "AHPResult",
+    "add_osm_basemap",
     "EnvironmentalSurfaceSampler",
     "MCDAWeights",
     "EvacuationPlan",
