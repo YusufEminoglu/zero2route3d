@@ -271,6 +271,24 @@ class TestRoute3DPureLogic(unittest.TestCase):
         gpx_xml = match_res.to_gpx()
         self.assertIn("<trkpt", gpx_xml)
 
+    def test_corridor_building_filter(self) -> None:
+        from ..core.osm_downloader import OsmBuilding
+        from ..core.route_corridor_3d import filter_buildings_in_corridor
+
+        route_coords = [
+            (27.1400, 38.4200, 10.0),
+            (27.1450, 38.4250, 15.0),
+            (27.1500, 38.4300, 20.0),
+        ]
+        blds = [
+            OsmBuilding("b1", [(27.1402, 38.4201), (27.1404, 38.4201), (27.1404, 38.4203)], height_m=16.0, levels=5),
+            OsmBuilding("b2_far", [(27.2000, 38.5000), (27.2010, 38.5000), (27.2010, 38.5010)], height_m=12.0, levels=4),
+        ]
+        corridor = filter_buildings_in_corridor(route_coords, blds, buffer_meters=50.0)
+        self.assertEqual(len(corridor), 1)
+        self.assertEqual(corridor[0]["id"], "b1")
+        self.assertEqual(corridor[0]["height_m"], 16.0)
+
 
 if __name__ == "__main__":
     unittest.main()

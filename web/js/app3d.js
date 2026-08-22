@@ -346,7 +346,6 @@ class Studio3DApp {
     this.avatarRig.setProfile(this.routeData?.properties?.profile_key || 'adult');
     this.buildUrbanEnvironment();
     this.buildParticleFlow();
-    this.solarSystem.buildStreetlampsAlongRoute(this.curve, this.scenePoints, 35.0);
     this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup);
 
     this.progress = 0.0;
@@ -489,57 +488,57 @@ class Studio3DApp {
   }
 
   buildUrbanEnvironment() {
-    // Procedural LOD1 3D Massing along route corridor
-    const bldMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.7,
-      metalness: 0.3,
-      wireframe: false,
-    });
+    const buildings = this.routeData?.properties?.corridor_buildings || [];
 
-    const treeMat = new THREE.MeshStandardMaterial({
-      color: 0x10b981,
-      roughness: 0.9,
-    });
+    const bldMats = [
+      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.7, metalness: 0.1 }),
+      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.65, metalness: 0.12 }),
+      new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8, metalness: 0.08 }),
+      new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.75, metalness: 0.1 }),
+    ];
 
-    const step = 8;
-    for (let i = 0; i < this.scenePoints.length - 1; i += step) {
-      const pt = this.scenePoints[i];
-      const tangent = this.curve.getTangentAt(i / this.scenePoints.length);
-      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+    if (buildings.length > 0) {
+      buildings.forEach((bld, idx) => {
+        const coords = bld.coordinates || [];
+        if (coords.length < 3) return;
 
-      // Left building
-      const h1 = 20 + ((i * 13) % 45);
-      const bGeo1 = new THREE.BoxGeometry(22, h1, 24);
-      const bMesh1 = new THREE.Mesh(bGeo1, bldMat);
-      bMesh1.position.copy(pt.clone().add(normal.clone().multiplyScalar(38)));
-      bMesh1.position.y = pt.y + h1 * 0.5 - 2;
-      bMesh1.castShadow = true;
-      bMesh1.receiveShadow = true;
-      this.buildingsGroup.add(bMesh1);
+        const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, 0));
 
-      // Right building
-      const h2 = 18 + ((i * 19) % 55);
-      const bGeo2 = new THREE.BoxGeometry(24, h2, 26);
-      const bMesh2 = new THREE.Mesh(bGeo2, bldMat);
-      bMesh2.position.copy(pt.clone().add(normal.clone().multiplyScalar(-38)));
-      bMesh2.position.y = pt.y + h2 * 0.5 - 2;
-      bMesh2.castShadow = true;
-      bMesh2.receiveShadow = true;
-      this.buildingsGroup.add(bMesh2);
+        let avgX = 0, avgZ = 0;
+        scenePts.forEach((p) => {
+          avgX += p.x;
+          avgZ += p.z;
+        });
+        avgX /= scenePts.length;
+        avgZ /= scenePts.length;
 
-      // Trees along sidewalk
-      const treeTrunkGeo = new THREE.CylinderGeometry(0.8, 1.2, 8, 6);
-      const treeFoliageGeo = new THREE.DodecahedronGeometry(5, 0);
-      const tree = new THREE.Group();
-      const trunk = new THREE.Mesh(treeTrunkGeo, new THREE.MeshStandardMaterial({ color: 0x5c4033 }));
-      const foliage = new THREE.Mesh(treeFoliageGeo, treeMat);
-      foliage.position.y = 8;
-      tree.add(trunk);
-      tree.add(foliage);
-      tree.position.copy(pt.clone().add(normal.clone().multiplyScalar(18)));
-      tree.position.y = pt.y + 4;
-      this.treesGroup.add(tree);
+        // Shape in local coordinates
+        const shape = new THREE.Shape();
+        shape.moveTo(scenePts[0].x, -scenePts[0].z);
+        for (let i = 1; i < scenePts.length; i++) {
+          shape.lineTo(scenePts[i].x, -scenePts[i].z);
+        }
+        shape.closePath();
+
+        const height = Math.max(4.0, bld.height_m || (bld.levels ? bld.levels * 3.2 : 12.0));
+        const extrudeSettings = {
+          depth: height,
+          bevelEnabled: true,
+          bevelSegments: 1,
+          steps: 1,
+          bevelSize: 0.15,
+          bevelThickness: 0.15,
+        };
+
+        const bldGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        bldGeo.rotateX(-Math.PI / 2);
+
+        const mat = bldMats[idx % bldMats.length];
+        const bldMesh = new THREE.Mesh(bldGeo, mat);
+        bldMesh.castShadow = true;
+        bldMesh.receiveShadow = true;
+        this.buildingsGroup.add(bldMesh);
+      });
     }
   }
 
@@ -605,10 +604,10 @@ class Studio3DApp {
     }
 
     if (this.cameraMode === 'chase') {
-      const offset = tangent.clone().multiplyScalar(-65).add(new THREE.Vector3(0, 32, 0));
+      const offset = tangent.clone().multiplyScalar(-38).add(new THREE.Vector3(0, 18, 0));
       const targetPos = pt.clone().add(offset);
       this.camera.position.lerp(targetPos, 0.08);
-      this.controls.target.lerp(pt.clone().add(new THREE.Vector3(0, 5, 0)), 0.1);
+      this.controls.target.lerp(pt.clone().add(new THREE.Vector3(0, 3, 0)), 0.1);
     } else if (this.cameraMode === 'pov') {
       this.camera.position.copy(pt.clone().add(new THREE.Vector3(0, 6, 0)));
       this.controls.target.copy(pt.clone().add(tangent.clone().multiplyScalar(120)));

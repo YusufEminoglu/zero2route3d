@@ -48,6 +48,7 @@ from .mobility_profiles import (
 )
 from .multimodal import MultiModalJourney, MultiModalLeg, MultiModalRouter
 from .network_source import NetworkSourceManager, RoadSegment
+from .osm_downloader import OsmBuilding, OsmDataFetcher
 from .pareto_router import (
     ParetoCostVector,
     ParetoFrontierResult,
@@ -65,6 +66,7 @@ from .profile_stats import (
 )
 from .qml_generator import generate_route_qml_style
 from .report_generator import generate_analytical_report_html
+from .route_corridor_3d import filter_buildings_in_corridor
 from .routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .solar_shadow import (
     ShadeExposureReport,
@@ -132,6 +134,9 @@ __all__ = [
     "save_custom_profile_json",
     "NetworkSourceManager",
     "RoadSegment",
+    "OsmBuilding",
+    "OsmDataFetcher",
+    "filter_buildings_in_corridor",
     "CueInstruction",
     "RouteStatistics",
     "compute_route_statistics",

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
+import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QCursor, QDesktopServices
@@ -35,12 +37,15 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import (
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsFeature,
     QgsField,
     QgsGeometry,
     QgsMapLayerProxyModel,
     QgsPoint,
+    QgsPointXY,
     QgsProject,
+    QgsRectangle,
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
@@ -48,7 +53,9 @@ from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 from ..core.ahp_engine import AHPEngine
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import PROFILES, MobilityProfile, get_profile, list_profile_keys
-from ..core.network_source import NetworkSourceManager
+from ..core.network_source import NetworkSourceManager, RoadSegment
+from ..core.osm_downloader import OsmBuilding, OsmDataFetcher
+from ..core.route_corridor_3d import filter_buildings_in_corridor
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .cue_sheet_widget import CueSheetWidget
 from .map_tools import RoutePointMapTool
@@ -71,9 +78,10 @@ class Route3DStudioDock(QDockWidget):
         self.network_manager = NetworkSourceManager()
         self.active_tool: Optional[RoutePointMapTool] = None
         self.current_route_result: Optional[RouteResult3D] = None
+        self.cached_osm_buildings: List[OsmBuilding] = []
         self.waypoints: List[Waypoint] = [
-            Waypoint(lon=27.1428, lat=38.4237, name="Izmir Center (Origin A)"),
-            Waypoint(lon=27.1650, lat=38.4380, name="Alsancak (Dest B)"),
+            Waypoint(lon=27.1428, lat=38.4237, name="Izmir Point A"),
+            Waypoint(lon=27.1510, lat=38.4300, name="Alsancak Point B"),
         ]
 
         self.web_root = Path(__file__).resolve().parent.parent / "web"
@@ -136,41 +144,43 @@ class Route3DStudioDock(QDockWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
-        # Search Bar
-        search_row = QHBoxLayout()
-        self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText("🔍 Search address or landmark (Photon)...")
-        self.txt_search.returnPressed.connect(self._on_search_location)
-        search_row.addWidget(self.txt_search)
+        # 1. OSM Basemap & Acquisition Action
+        card_osm = QFrame()
+        card_osm.setProperty("class", "route3dCard")
+        osm_layout = QVBoxLayout(card_osm)
+        osm_header = QLabel("<b>1. OpenStreetMap Acquisition</b>")
+        osm_layout.addWidget(osm_header)
 
-        btn_search = QPushButton("Find")
-        btn_search.clicked.connect(self._on_search_location)
-        search_row.addWidget(btn_search)
-        layout.addLayout(search_row)
+        self.btn_fetch_osm = QPushButton("⬇️ Fetch OSM Roads & Buildings for Area")
+        self.btn_fetch_osm.setToolTip("Downloads real OSM road network and building footprints for current extent")
+        self.btn_fetch_osm.clicked.connect(self._fetch_osm_layers_for_extent)
+        osm_layout.addWidget(self.btn_fetch_osm)
+        layout.addWidget(card_osm)
 
-        # Waypoints List Card
+        # 2. Waypoints List Card (Point A & Point B)
         card_wp = QFrame()
         card_wp.setProperty("class", "route3dCard")
         wp_layout = QVBoxLayout(card_wp)
 
         wp_header = QHBoxLayout()
-        lbl_wp_title = QLabel("<b>Waypoints & Stops</b>")
+        lbl_wp_title = QLabel("<b>2. Route Waypoints (A → B)</b>")
         wp_header.addWidget(lbl_wp_title)
         wp_header.addStretch()
 
         self.btn_pick_map = QPushButton("📍 Pick Map")
         self.btn_pick_map.setCheckable(True)
+        self.btn_pick_map.setToolTip("Click on canvas to place Origin (A) and Destination (B)")
         self.btn_pick_map.clicked.connect(self._toggle_map_picker)
         wp_header.addWidget(self.btn_pick_map)
 
-        self.btn_tsp = QPushButton("✨ TSP Tour")
+        self.btn_tsp = QPushButton("✨ TSP")
         self.btn_tsp.setToolTip("Optimize stop order via Traveling Salesperson algorithm")
         self.btn_tsp.clicked.connect(self._optimize_stops_tsp)
         wp_header.addWidget(self.btn_tsp)
         wp_layout.addLayout(wp_header)
 
         self.lst_waypoints = QListWidget()
-        self.lst_waypoints.setFixedHeight(95)
+        self.lst_waypoints.setFixedHeight(85)
         self._refresh_waypoint_list()
         wp_layout.addWidget(self.lst_waypoints)
 
@@ -189,11 +199,11 @@ class Route3DStudioDock(QDockWidget):
         wp_layout.addLayout(btn_row)
         layout.addWidget(card_wp)
 
-        # Mobility Profile Selector Card
+        # 3. Mobility Profile Selector Card
         card_prof = QFrame()
         card_prof.setProperty("class", "route3dCard")
         prof_layout = QVBoxLayout(card_prof)
-        prof_layout.addWidget(QLabel("<b>Mobility Profile</b>"))
+        prof_layout.addWidget(QLabel("<b>3. User Mobility Profile</b>"))
 
         self.cmb_profile = QComboBox()
         for key in list_profile_keys():
@@ -207,13 +217,13 @@ class Route3DStudioDock(QDockWidget):
         prof_layout.addWidget(self.lbl_profile_info)
         layout.addWidget(card_prof)
 
-        # Execution & Action Card
+        # 4. Action Card (Compute + 3D Corridor Animation)
         card_act = QFrame()
         card_act.setProperty("class", "route3dCard")
         act_layout = QVBoxLayout(card_act)
 
         # Primary Compute 3D Route
-        self.btn_compute = QPushButton("🚀 Compute 3D Route")
+        self.btn_compute = QPushButton("⚡ Compute 3D Shortest Path")
         self.btn_compute.setObjectName("primaryButton")
         self.btn_compute.setStyleSheet("""
             QPushButton#primaryButton {
@@ -231,26 +241,20 @@ class Route3DStudioDock(QDockWidget):
         self.btn_compute.clicked.connect(self.compute_route)
         act_layout.addWidget(self.btn_compute)
 
-        # Auto-open 3D WebGL Studio in Browser checkbox
-        self.chk_auto_open = QCheckBox("🌐 Auto-open 3D WebGL Studio in browser upon calculation")
-        self.chk_auto_open.setChecked(True)
-        self.chk_auto_open.setStyleSheet("color: #0369a1; font-weight: 600; font-size: 11px;")
-        act_layout.addWidget(self.chk_auto_open)
-
-        # Open 3D Studio Button
-        self.btn_open_3d = QPushButton("🌐 Open 3D WebGL Studio in Browser (60 FPS)")
+        # Open 3D WebGL Studio Button
+        self.btn_open_3d = QPushButton("🎬 Open 3D Animation & 50m Building Corridor (60 FPS)")
         self.btn_open_3d.setStyleSheet("""
             QPushButton {
-                background: #f1f5f9;
-                color: #0f172a;
-                border: 1px solid #cbd5e1;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
+                color: #ffffff;
+                border: none;
                 font-weight: 700;
                 font-size: 12px;
-                padding: 7px 12px;
+                padding: 10px 14px;
                 border-radius: 6px;
             }
             QPushButton:hover {
-                background: #e2e8f0;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #047857, stop:1 #059669);
             }
         """)
         self.btn_open_3d.clicked.connect(self.open_3d_studio)
@@ -303,7 +307,7 @@ class Route3DStudioDock(QDockWidget):
         exp_row.addWidget(self.btn_export_geojson)
 
         self.btn_export_html = QPushButton("🌐 3D HTML")
-        self.btn_export_html.setToolTip("Export self-contained standalone 3D HTML report (opens anywhere offline)")
+        self.btn_export_html.setToolTip("Export standalone 3D HTML report")
         self.btn_export_html.clicked.connect(self.export_standalone_html)
         self.btn_export_html.setEnabled(False)
         exp_row.addWidget(self.btn_export_html)
@@ -430,7 +434,7 @@ class Route3DStudioDock(QDockWidget):
             "• <b>Energy:</b> Minetti Metabolic Cost Polynomial (2002)<br>"
             "• <b>Cyclist:</b> Cycling Power Balance (Aerodynamic Drag + Rolling Resistance)<br>"
             "• <b>Comfort:</b> UTCI (Universal Thermal Climate Index) Stress Penalty<br>"
-            "• <b>ADA Accessibility:</b> Wheelchair Maximum 6.0% Slope Incline Barrier"
+            "• <b>Corridor Buffer:</b> 50-meter 3D building footprint extrusion along route centerline"
         )
         info_text.setTextFormat(Qt.TextFormat.RichText)
         info_text.setWordWrap(True)
@@ -441,7 +445,8 @@ class Route3DStudioDock(QDockWidget):
     def _refresh_waypoint_list(self) -> None:
         self.lst_waypoints.clear()
         for idx, wp in enumerate(self.waypoints, start=1):
-            item = QListWidgetItem(f"{idx}. {wp.name} ({wp.lon:.4f}, {wp.lat:.4f})")
+            lbl = "Origin (A)" if idx == 1 else ("Dest (B)" if idx == 2 and len(self.waypoints) == 2 else f"Stop {idx}")
+            item = QListWidgetItem(f"{lbl}: {wp.name} ({wp.lon:.4f}, {wp.lat:.4f})")
             self.lst_waypoints.addItem(item)
 
     def _toggle_map_picker(self, checked: bool) -> None:
@@ -451,26 +456,32 @@ class Route3DStudioDock(QDockWidget):
             self.active_tool = RoutePointMapTool(self.canvas)
             self.active_tool.point_captured.connect(self._on_point_captured)
             self.canvas.setMapTool(self.active_tool)
+            if self.iface:
+                self.iface.messageBar().pushInfo("02Route 3D", "Click on canvas to set Origin (A) and Destination (B)...")
         else:
             if self.active_tool:
                 self.canvas.unsetMapTool(self.active_tool)
                 self.active_tool = None
 
     def _on_point_captured(self, point: QgsPoint) -> None:
-        name = f"Point {len(self.waypoints) + 1}"
-        self.waypoints.append(Waypoint(lon=point.x(), lat=point.y(), name=name))
+        if len(self.waypoints) >= 2:
+            self.waypoints.clear()
+        label = "Point A (Origin)" if len(self.waypoints) == 0 else "Point B (Destination)"
+        self.waypoints.append(Waypoint(lon=point.x(), lat=point.y(), name=label))
         self._refresh_waypoint_list()
-        if self.btn_pick_map.isChecked():
+        if len(self.waypoints) >= 2 and self.btn_pick_map.isChecked():
             self.btn_pick_map.setChecked(False)
             self._toggle_map_picker(False)
+            if self.iface:
+                self.iface.messageBar().pushSuccess("02Route 3D", "Origin (A) and Destination (B) captured! Click 'Compute 3D Shortest Path'.")
 
     def _add_waypoint_dialog(self) -> None:
         name = f"Stop {len(self.waypoints) + 1}"
         if self.waypoints:
             last = self.waypoints[-1]
-            self.waypoints.append(Waypoint(lon=last.lon + 0.005, lat=last.lat + 0.005, name=name))
+            self.waypoints.append(Waypoint(lon=last.lon + 0.004, lat=last.lat + 0.004, name=name))
         else:
-            self.waypoints.append(Waypoint(lon=27.1428, lat=38.4237, name="Izmir Point"))
+            self.waypoints.append(Waypoint(lon=27.1428, lat=38.4237, name="Point A"))
         self._refresh_waypoint_list()
 
     def _remove_selected_waypoint(self) -> None:
@@ -498,59 +509,95 @@ class Route3DStudioDock(QDockWidget):
         stairs = "Allowed" if p.stair_allowed else "Prohibited"
         self.lbl_profile_info.setText(f"Speed: {p.base_speed_kmh:.1f} km/h | Max Slope: {p.max_slope_pct:.1f}% | Stairs: {stairs}")
 
-    def _on_search_location(self) -> None:
-        query = self.txt_search.text().strip()
-        if not query:
-            return
-        import http.client
-        import urllib.parse
-        try:
-            encoded_query = urllib.parse.quote(query)
-            conn = http.client.HTTPSConnection("photon.komoot.io", timeout=4)
-            headers = {"User-Agent": "02Route3D-QGIS-Plugin"}
-            conn.request("GET", f"/api/?q={encoded_query}&limit=1", headers=headers)
-            response = conn.getresponse()
-            if response.status == 200:
-                data = json.loads(response.read().decode("utf-8"))
-                features = data.get("features", [])
-                if features:
-                    coords = features[0]["geometry"]["coordinates"]
-                    name = features[0].get("properties", {}).get("name", query)
-                    self.waypoints.append(Waypoint(lon=coords[0], lat=coords[1], name=name))
-                    self._refresh_waypoint_list()
-                    if self.iface:
-                        self.iface.messageBar().pushSuccess("02Route 3D", f"Found & Added: {name}")
-                else:
-                    if self.iface:
-                        self.iface.messageBar().pushWarning("02Route 3D", "No results found for location.")
-            conn.close()
-        except Exception:
-            if self.iface:
-                self.iface.messageBar().pushWarning("02Route 3D", "Photon geocoding service unavailable.")
+    def _get_active_bbox(self) -> Tuple[float, float, float, float]:
+        """Compute WGS84 bounding box from canvas or waypoints."""
+        if self.canvas:
+            extent = self.canvas.extent()
+            crs_canvas = self.canvas.mapSettings().destinationCrs()
+            crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+            transform = QgsCoordinateTransform(crs_canvas, crs_wgs, QgsProject.instance())
+            rect = transform.transformBoundingBox(extent)
+            return (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+        if self.waypoints:
+            lons = [w.lon for w in self.waypoints]
+            lats = [w.lat for w in self.waypoints]
+            return (min(lons) - 0.015, min(lats) - 0.015, max(lons) + 0.015, max(lats) + 0.015)
+        return (27.13, 38.41, 27.17, 38.45)
 
-    def _open_profile_editor(self) -> None:
-        key = self.cmb_profile.currentData() or "adult"
-        prof = get_profile(key)
-        dialog = ProfileEditorDialog(prof, parent=self)
-        if dialog.exec_():
-            updated = dialog.get_updated_profile()
-            PROFILES[updated.key] = updated
-            self._on_profile_changed(self.cmb_profile.currentIndex())
+    def _fetch_osm_layers_for_extent(self) -> None:
+        """Download real OSM roads and building footprints for current area and load into QGIS."""
+        bbox = self._get_active_bbox()
+        if self.iface:
+            self.iface.messageBar().pushInfo("02Route 3D", "Fetching real OpenStreetMap roads and 3D building footprints from Overpass API...")
+
+        roads, buildings = OsmDataFetcher.fetch_roads_and_buildings(bbox)
+        self.cached_osm_buildings = buildings
+
+        if not roads and not buildings:
+            if self.iface:
+                self.iface.messageBar().pushWarning("02Route 3D", "No OSM elements found in current bounding box.")
+            return
+
+        # 1. Create Roads Layer
+        if roads:
+            road_layer = QgsVectorLayer("LineString?crs=EPSG:4326", "OSM Road Network", "memory")
+            r_pr = road_layer.dataProvider()
+            r_pr.addAttributes([QgsField("name", 10), QgsField("highway", 10), QgsField("oneway", 1)])
+            road_layer.updateFields()
+            r_feats = []
+            for r in roads:
+                f = QgsFeature()
+                pts = [QgsPointXY(p[0], p[1]) for p in r.geometry]
+                f.setGeometry(QgsGeometry.fromPolylineXY(pts))
+                f.setAttributes([r.name, r.highway_type, 1 if r.oneway else 0])
+                r_feats.append(f)
+            r_pr.addFeatures(r_feats)
+            road_layer.updateExtents()
+            QgsProject.instance().addMapLayer(road_layer)
+
+        # 2. Create Buildings Layer
+        if buildings:
+            bld_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "OSM Buildings 3D", "memory")
+            b_pr = bld_layer.dataProvider()
+            b_pr.addAttributes([QgsField("height_m", 6), QgsField("levels", 2), QgsField("type", 10)])
+            bld_layer.updateFields()
+            b_feats = []
+            for b in buildings:
+                f = QgsFeature()
+                pts = [QgsPointXY(p[0], p[1]) for p in b.polygon]
+                f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
+                f.setAttributes([b.height_m, b.levels, b.building_type])
+                b_feats.append(f)
+            b_pr.addFeatures(b_feats)
+            bld_layer.updateExtents()
+            QgsProject.instance().addMapLayer(bld_layer)
+
+        if self.iface:
+            self.iface.messageBar().pushSuccess("02Route 3D", f"Acquired {len(roads)} OSM roads and {len(buildings)} building footprints!")
 
     def compute_route(self) -> None:
-        """Compute the 3D shortest/least-cost route and optionally pop the 3D WebGL Studio."""
+        """Compute the 3D shortest path, output QGIS line layer, extract 50m corridor buildings, and sync 3D studio."""
         if len(self.waypoints) < 2:
-            QMessageBox.warning(self, "02Route 3D", "Please provide at least 2 waypoints (Origin & Destination).")
+            QMessageBox.warning(self, "02Route 3D", "Please pick Origin (Point A) and Destination (Point B).")
             return
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(20)
 
+        # Bounding box & OSM acquisition
+        lons = [w.lon for w in self.waypoints]
+        lats = [w.lat for w in self.waypoints]
+        bbox = (min(lons) - 0.015, min(lats) - 0.015, max(lons) + 0.015, max(lats) + 0.015)
+
+        if not self.cached_osm_buildings:
+            _, buildings = OsmDataFetcher.fetch_roads_and_buildings(bbox)
+            self.cached_osm_buildings = buildings
+
         # Environmental raster sampling
         weights = MCDAWeights(
-            slope=self.sld_slope.value() / 100.0,
-            heat=self.sld_heat.value() / 100.0,
-            green=self.sld_green.value() / 100.0,
+            weight_slope=self.sld_slope.value() / 100.0,
+            weight_heat=self.sld_heat.value() / 100.0,
+            weight_green=self.sld_green.value() / 100.0,
         )
         sampler = EnvironmentalSurfaceSampler(
             dem_layer=self.cmb_dem_layer.currentLayer(),
@@ -560,10 +607,9 @@ class Route3DStudioDock(QDockWidget):
         )
 
         engine = RoutingEngine3D(sampler=sampler, weights=weights)
-        lons = [w.lon for w in self.waypoints]
-        lats = [w.lat for w in self.waypoints]
-        bbox = (min(lons) - 0.02, min(lats) - 0.02, max(lons) + 0.02, max(lats) + 0.02)
-        segments = self.network_manager.generate_synthetic_grid(bbox, grid_steps=10)
+        segments = self.network_manager.fetch_osm_network_bbox(bbox)
+        if not segments:
+            segments = self.network_manager.generate_synthetic_grid(bbox, grid_steps=10)
         engine.build_graph(segments)
 
         self.progress_bar.setValue(60)
@@ -589,22 +635,36 @@ class Route3DStudioDock(QDockWidget):
         self.btn_export_html.setEnabled(True)
         self.btn_export_dxf.setEnabled(True)
 
-        # Save route JSON for 3D Studio auto-fetch
+        # 50m Linear Corridor Building Filter
+        corridor_blds = filter_buildings_in_corridor(result.coordinates_3d, self.cached_osm_buildings, buffer_meters=50.0)
+
+        # Convert to GeoJSON Feature with real corridor buildings
         geojson_data = result.to_geojson_feature()
+        geojson_data["properties"]["corridor_buildings"] = corridor_blds
+
         with contextlib.suppress(Exception):
             self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+
+        # Automatically add the computed route layer to QGIS
+        self.add_route_layer_to_qgis()
 
         self.progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
         self.route_calculated.emit(result)
 
-        if self.chk_auto_open.isChecked():
-            self.open_3d_studio()
-
     def open_3d_studio(self) -> None:
-        """Start local HTTP server and launch the 3D WebGL studio in default browser."""
+        """Start local HTTP server and launch the 3D WebGL studio with 50m building corridor in browser."""
         server_url = self.local_server.start()
         QDesktopServices.openUrl(QUrl(server_url))
+
+    def _open_profile_editor(self) -> None:
+        key = self.cmb_profile.currentData() or "adult"
+        prof = get_profile(key)
+        dialog = ProfileEditorDialog(prof, parent=self)
+        if dialog.exec_():
+            updated = dialog.get_updated_profile()
+            PROFILES[updated.key] = updated
+            self._on_profile_changed(self.cmb_profile.currentIndex())
 
     def _compute_od_matrix(self) -> None:
         if len(self.waypoints) < 2:
@@ -630,7 +690,8 @@ class Route3DStudioDock(QDockWidget):
         if not self.current_route_result or not self.current_route_result.coordinates_3d:
             return
 
-        layer = QgsVectorLayer("LineStringZ?crs=EPSG:4326", "02Route 3D Path", "memory")
+        layer_name = f"Route 3D ({self.current_route_result.profile.name})"
+        layer = QgsVectorLayer("LineStringZ?crs=EPSG:4326", layer_name, "memory")
         pr = layer.dataProvider()
         pr.addAttributes([
             QgsField("profile", 10),
