@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .ahp_engine import AHPEngine, AHPResult
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
+from .evacuation import EvacuationPlan, EvacuationRouter, HazardZone
 from .html_bundler import StandaloneHtmlBundler
 from .isochrone_engine import IsochroneBand, IsochroneEngine3D, IsochroneResult
 from .kinematics import (
@@ -29,6 +30,7 @@ from .mobility_profiles import (
 )
 from .multimodal import MultiModalJourney, MultiModalLeg, MultiModalRouter
 from .network_source import NetworkSourceManager, RoadSegment
+from .profile_dxf import export_route_to_dxf_3d
 from .profile_stats import (
     CueInstruction,
     RouteStatistics,
@@ -38,6 +40,12 @@ from .profile_stats import (
     smooth_elevation_series,
 )
 from .routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
+from .solar_shadow import (
+    ShadeExposureReport,
+    SolarPosition,
+    calculate_solar_position,
+    compute_shade_exposure_along_route,
+)
 from .tsp_solver import solve_tsp_order
 
 __all__ = [
@@ -45,6 +53,9 @@ __all__ = [
     "AHPResult",
     "EnvironmentalSurfaceSampler",
     "MCDAWeights",
+    "EvacuationPlan",
+    "EvacuationRouter",
+    "HazardZone",
     "StandaloneHtmlBundler",
     "IsochroneBand",
     "IsochroneEngine3D",
@@ -52,6 +63,11 @@ __all__ = [
     "MultiModalJourney",
     "MultiModalLeg",
     "MultiModalRouter",
+    "export_route_to_dxf_3d",
+    "calculate_solar_position",
+    "compute_shade_exposure_along_route",
+    "ShadeExposureReport",
+    "SolarPosition",
     "aerodynamic_drag_power",
     "cyclist_speed",
     "haversine_distance_2d",

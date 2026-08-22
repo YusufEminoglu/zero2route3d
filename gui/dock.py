@@ -285,6 +285,12 @@ class Route3DStudioDock(QDockWidget):
         self.btn_export_html.clicked.connect(self.export_standalone_html)
         self.btn_export_html.setEnabled(False)
         exp_row.addWidget(self.btn_export_html)
+
+        self.btn_export_dxf = QPushButton("📐 3D DXF")
+        self.btn_export_dxf.setToolTip("Export AutoCAD 3D Polyline and Longitudinal Profile (.dxf)")
+        self.btn_export_dxf.clicked.connect(self.export_dxf)
+        self.btn_export_dxf.setEnabled(False)
+        exp_row.addWidget(self.btn_export_dxf)
         act_layout.addLayout(exp_row)
 
         layout.addWidget(card_act)
@@ -532,6 +538,8 @@ class Route3DStudioDock(QDockWidget):
         self.btn_add_layer.setEnabled(True)
         self.btn_export_gpx.setEnabled(True)
         self.btn_export_geojson.setEnabled(True)
+        self.btn_export_html.setEnabled(True)
+        self.btn_export_dxf.setEnabled(True)
 
         # 3D Viewport Transmit
         self.viewport3d.send_route(result.to_geojson_feature())
@@ -627,4 +635,15 @@ class Route3DStudioDock(QDockWidget):
             bundler.export_standalone_html(self.current_route_result, Path(path))
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", f"Exported Standalone 3D HTML to {path}")
+
+    def export_dxf(self) -> None:
+        if not self.current_route_result or not self.current_route_result.coordinates_3d:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export AutoCAD 3D Route (DXF)", "", "AutoCAD DXF Files (*.dxf)")
+        if path:
+            from ..core.profile_dxf import export_route_to_dxf_3d
+            export_route_to_dxf_3d(self.current_route_result.coordinates_3d, Path(path))
+            if self.iface:
+                self.iface.messageBar().pushSuccess("02Route 3D", f"Exported 3D DXF to {path}")
+
 

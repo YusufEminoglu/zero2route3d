@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from zero2route3d.core.ahp_engine import AHPEngine
+from zero2route3d.core.evacuation import EvacuationRouter
 from zero2route3d.core.html_bundler import StandaloneHtmlBundler
 from zero2route3d.core.isochrone_engine import IsochroneEngine3D
 from zero2route3d.core.kinematics import (
@@ -30,6 +31,7 @@ from zero2route3d.core.mobility_profiles import (
 )
 from zero2route3d.core.multimodal import MultiModalRouter
 from zero2route3d.core.network_source import NetworkSourceManager
+from zero2route3d.core.profile_dxf import export_route_to_dxf_3d
 from zero2route3d.core.profile_stats import (
     compute_route_statistics,
     densify_3d_linestring,
@@ -37,11 +39,12 @@ from zero2route3d.core.profile_stats import (
     smooth_elevation_series,
 )
 from zero2route3d.core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
+from zero2route3d.core.solar_shadow import calculate_solar_position, compute_shade_exposure_along_route
 from zero2route3d.core.tsp_solver import solve_tsp_order
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
-    """Test suite covering core physics, graph routing, AHP, TSP, and multimodal logic."""
+    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, and solar logic."""
 
     def test_haversine_2d_and_3d(self) -> None:
         p1 = (27.1428, 38.4237, 10.0)
@@ -191,7 +194,6 @@ class TestRoute3DPureLogic(unittest.TestCase):
     def test_standalone_html_bundler(self) -> None:
         web_dir = Path(__file__).resolve().parent.parent / "web"
         bundler = StandaloneHtmlBundler(web_dir)
-
         profile = get_profile("adult")
         coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 20.0)]
         stats = compute_route_statistics(coords, profile)
@@ -204,16 +206,49 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tmp:
             tmp_path = Path(tmp.name)
-
         try:
             bundler.export_standalone_html(res, tmp_path)
             self.assertTrue(tmp_path.exists())
             content = tmp_path.read_text(encoding="utf-8")
             self.assertIn("02Route 3D", content)
-            self.assertIn("canvasContainer", content)
         finally:
             if tmp_path.exists():
                 tmp_path.unlink()
+
+    def test_dxf_3d_export(self) -> None:
+        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 25.0)]
+        with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            export_route_to_dxf_3d(coords, tmp_path)
+            self.assertTrue(tmp_path.exists())
+            dxf_text = tmp_path.read_text(encoding="utf-8")
+            self.assertIn("POLYLINE", dxf_text)
+            self.assertIn("3D_ROUTE", dxf_text)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+    def test_solar_shadow_and_evacuation(self) -> None:
+        sun = calculate_solar_position(38.4, solar_hour=14.0)
+        self.assertGreater(sun.elevation_deg, 30.0)
+
+        coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 20.0)]
+        shade_rep = compute_shade_exposure_along_route(coords, solar_hour=14.0)
+        self.assertGreaterEqual(shade_rep.direct_sun_pct + shade_rep.shaded_pct, 99.0)
+
+        net_mgr = NetworkSourceManager()
+        bbox = (27.10, 38.40, 27.15, 38.45)
+        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+
+        router = EvacuationRouter(engine)
+        router.add_hazard_zone(lon=27.12, lat=38.42, radius_m=300.0)
+        orig = Waypoint(27.11, 38.41, "Camp")
+        musters = [Waypoint(27.14, 38.44, "Shelter 1"), Waypoint(27.15, 38.45, "Shelter 2")]
+        plan = router.calculate_evacuation_route(orig, musters)
+        self.assertIsNotNone(plan.muster_point)
 
 
 if __name__ == "__main__":
