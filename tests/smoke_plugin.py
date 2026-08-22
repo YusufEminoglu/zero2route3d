@@ -119,6 +119,14 @@ def test_lifecycle(iface):
     )
 
 
+def test_processing_provider():
+    from zero2route3d.processing.provider import Route3DProcessingProvider
+    provider = Route3DProcessingProvider()
+    provider.loadAlgorithms()
+    algs = provider.algorithms()
+    return _ok(f"Route3DProcessingProvider loaded {len(algs)} algorithms", len(algs) >= 10)
+
+
 def run_all(iface):
     print("=" * 60)
     print(" zero2route3d - lifecycle smoke")
@@ -127,6 +135,7 @@ def run_all(iface):
         test_metadata(),
         test_class_factory(),
         test_lifecycle(iface),
+        test_processing_provider(),
     ]
     passed = sum(1 for r in results if r)
     print("-" * 60)
