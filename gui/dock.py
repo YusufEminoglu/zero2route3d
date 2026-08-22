@@ -559,7 +559,7 @@ class Route3DStudioDock(QDockWidget):
             weights=weights,
         )
 
-        engine = RoutingEngine3D(sampler=sampler)
+        engine = RoutingEngine3D(sampler=sampler, weights=weights)
         lons = [w.lon for w in self.waypoints]
         lats = [w.lat for w in self.waypoints]
         bbox = (min(lons) - 0.02, min(lats) - 0.02, max(lons) + 0.02, max(lats) + 0.02)

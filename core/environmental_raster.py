@@ -80,12 +80,14 @@ class EnvironmentalSurfaceSampler:
         green_layer: Optional[Any] = None,
         sun_azimuth_deg: float = 180.0,
         sun_elevation_deg: float = 55.0,
+        weights: Optional[MCDAWeights] = None,
     ) -> None:
         self.dem_layer = dem_layer
         self.lst_layer = lst_layer
         self.green_layer = green_layer
         self.sun_azimuth_deg = sun_azimuth_deg
         self.sun_elevation_deg = sun_elevation_deg
+        self.weights = weights or MCDAWeights()
         self._dem_cache: Dict[Tuple[float, float], float] = {}
 
     def sample_elevation(self, lon: float, lat: float) -> float:
