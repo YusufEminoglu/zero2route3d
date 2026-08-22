@@ -19,6 +19,7 @@ class RoutePointMapTool(QgsMapToolEmitPoint):
     """Interactive canvas tool to click and select Origin, Destination, or Waypoint."""
 
     point_selected = pyqtSignal(float, float, str)  # (lon, lat, point_type)
+    point_captured = pyqtSignal(object)  # QgsPointXY / object
 
     def __init__(
         self,
@@ -43,16 +44,18 @@ class RoutePointMapTool(QgsMapToolEmitPoint):
 
         lon = point.x()
         lat = point.y()
+        pt_wgs84 = point
 
         if crs_src != crs_wgs84:
             transform = QgsCoordinateTransform(crs_src, crs_wgs84, QgsProject.instance())
-            point_wgs84 = transform.transform(point)
-            lon = point_wgs84.x()
-            lat = point_wgs84.y()
+            pt_wgs84 = transform.transform(point)
+            lon = pt_wgs84.x()
+            lat = pt_wgs84.y()
 
         # Place visual vertex marker on canvas
         self._update_marker(point)
 
+        self.point_captured.emit(pt_wgs84)
         self.point_selected.emit(lon, lat, self.point_type)
         if self.on_picked:
             self.on_picked(lon, lat, self.point_type)
