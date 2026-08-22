@@ -4,6 +4,7 @@ import { HeatStressRibbonManager } from './HeatStressRibbon.js';
 import { SolarNightSystem } from './SolarNightSystem.js';
 import { KinematicAvatarRig } from './KinematicAvatarRig.js';
 import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';
+import { VoiceCueSystem } from './VoiceCueSystem.js';
 
 class Studio3DApp {
   constructor() {
@@ -33,6 +34,7 @@ class Studio3DApp {
     this.solarSystem = new SolarNightSystem(this.scene, this.renderer);
     this.avatarRig = new KinematicAvatarRig(this.scene);
     this.slicerSystem = new TerrainSlicerSystem(this.scene, this.renderer);
+    this.voiceSystem = new VoiceCueSystem();
 
     // Camera & Controls
     this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.5, 60000);
@@ -242,6 +244,19 @@ class Studio3DApp {
       });
     }
 
+    // Voice Navigation toggle
+    const btnVoice = document.getElementById('btnVoice');
+    if (btnVoice) {
+      let isVoice = false;
+      btnVoice.addEventListener('click', () => {
+        isVoice = !isVoice;
+        btnVoice.querySelector('b').textContent = isVoice ? 'ON' : 'OFF';
+        if (this.voiceSystem) {
+          this.voiceSystem.toggle(isVoice);
+        }
+      });
+    }
+
     // Snapshot button
     const btnSnap = document.getElementById('btnSnapshot');
     if (btnSnap) {
@@ -298,6 +313,10 @@ class Studio3DApp {
     if (this.elClimb) this.elClimb.textContent = `+${props.elevation_gain_m || 15} m`;
     if (this.elSlope) this.elSlope.textContent = `${props.max_slope_pct || 6.5}%`;
     if (this.elKcal) this.elKcal.textContent = `${props.calories_kcal || 95} kcal`;
+
+    if (this.voiceSystem && props.cue_sheet) {
+      this.voiceSystem.loadCues(props.cue_sheet);
+    }
 
     this.rebuildScene();
     this.renderProfileChart();
@@ -567,6 +586,10 @@ class Studio3DApp {
       this.avatarRig.root.lookAt(pt.clone().add(tangent));
       const spd = this.routeData?.properties?.base_speed_kmh || 12.0;
       this.avatarRig.updateKinematics(0.016, spd, tangent, 0, this.solarSystem ? this.solarSystem.isNight : false);
+    }
+
+    if (this.voiceSystem) {
+      this.voiceSystem.update(this.progress);
     }
 
     if (this.elScrubber) {
