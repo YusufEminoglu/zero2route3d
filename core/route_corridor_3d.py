@@ -6,7 +6,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .kinematics import haversine_distance_2d
-from .osm_downloader import OsmBuilding
+from .osm_downloader import OsmBuilding, OsmPark, OsmTree
 
 
 def point_to_segment_distance_meters(
@@ -132,12 +132,14 @@ def filter_corridor_assets_multi_route(
     buildings: Sequence[OsmBuilding],
     buffer_meters: float = 30.0,
     green_sampler: Optional[Any] = None,
+    osm_trees: Optional[Sequence[OsmTree]] = None,
+    osm_parks: Optional[Sequence[OsmPark]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Multi-route corridor asset extractor.
 
     Buffers across ALL active route paths (30m buffer default) to extract:
     1. Real 3D OSM buildings within the multi-route buffer with calculated base elevations and levels.
-    2. Volumetric 3D trees placed along greenery / park / corridor zones within the 30m buffer.
+    2. Real & volumetric 3D trees placed along greenery / park / corridor zones within the 30m buffer.
 
     Returns:
         (corridor_buildings, corridor_trees)
@@ -192,7 +194,7 @@ def filter_corridor_assets_multi_route(
     building_centroids: List[Tuple[float, float, float]] = []  # (lon, lat, radius_m)
     seen_building_ids = set()
 
-    for b in buildings:
+    for b in (buildings or []):
         if not b.polygon or len(b.polygon) < 3:
             continue
 
@@ -236,12 +238,78 @@ def filter_corridor_assets_multi_route(
             })
 
     # -------------------------------------------------------------
-    # 2. Extract Volumetric 3D Trees in 30m corridor buffer
+    # 2. Extract Real & Volumetric 3D Trees in 30m corridor buffer
     # -------------------------------------------------------------
     corridor_trees: List[Dict[str, Any]] = []
     placed_tree_positions: List[Tuple[float, float]] = []
 
-    # Lateral offsets across the 30m corridor (left and right)
+    # 2.1 First place real OSM trees & tree rows
+    if osm_trees:
+        for t in osm_trees:
+            if not (math.isfinite(t.lon) and math.isfinite(t.lat)):
+                continue
+            d = point_to_multi_linestrings_distance_meters(t.lon, t.lat, all_lines_2d)
+            if d > buf_m + 5.0 or d < 1.0:
+                continue
+
+            # Check building collision
+            collides_bld = any(haversine_distance_2d((t.lon, t.lat), (b_lon, b_lat)) < b_rad for b_lon, b_lat, b_rad in building_centroids)
+            if collides_bld:
+                continue
+
+            # Check tree-to-tree spacing
+            if any(haversine_distance_2d((t.lon, t.lat), pos) < 5.0 for pos in placed_tree_positions):
+                continue
+
+            tree_z = get_closest_multi_route_elevation(t.lon, t.lat, cleaned_routes, green_sampler)
+            corridor_trees.append({
+                "id": f"osm_tree_{t.tree_id}",
+                "coordinates": [round(t.lon, 6), round(t.lat, 6)],
+                "base_elevation_m": round(tree_z, 2),
+                "height_m": round(t.height_m, 1),
+                "canopy_radius_m": round(t.canopy_radius_m, 1),
+                "trunk_height_m": round(t.height_m * 0.3, 1),
+                "trunk_radius_m": round(max(0.18, t.canopy_radius_m * 0.08), 2),
+                "tree_type": t.tree_type,
+                "species": t.species,
+                "greenery_index": 0.85,
+            })
+            placed_tree_positions.append((t.lon, t.lat))
+
+    # 2.2 Place trees inside real OSM park/greenery polygons in corridor
+    if osm_parks:
+        for p in osm_parks:
+            if not p.polygon or len(p.polygon) < 3:
+                continue
+            poly_lons = [pt[0] for pt in p.polygon]
+            poly_lats = [pt[1] for pt in p.polygon]
+            c_lon = sum(poly_lons) / len(poly_lons)
+            c_lat = sum(poly_lats) / len(poly_lats)
+            d = point_to_multi_linestrings_distance_meters(c_lon, c_lat, all_lines_2d)
+            if d <= buf_m + 10.0:
+                # Add park trees
+                for pt in p.polygon:
+                    pt_lon, pt_lat = pt[0], pt[1]
+                    dist_to_route = point_to_multi_linestrings_distance_meters(pt_lon, pt_lat, all_lines_2d)
+                    if 4.0 <= dist_to_route <= buf_m:
+                        if not any(haversine_distance_2d((pt_lon, pt_lat), pos) < 8.0 for pos in placed_tree_positions):
+                            if not any(haversine_distance_2d((pt_lon, pt_lat), (b_lon, b_lat)) < b_rad for b_lon, b_lat, b_rad in building_centroids):
+                                tree_z = get_closest_multi_route_elevation(pt_lon, pt_lat, cleaned_routes, green_sampler)
+                                corridor_trees.append({
+                                    "id": f"park_tree_{len(corridor_trees)+1}",
+                                    "coordinates": [round(pt_lon, 6), round(pt_lat, 6)],
+                                    "base_elevation_m": round(tree_z, 2),
+                                    "height_m": 9.0,
+                                    "canopy_radius_m": 3.8,
+                                    "trunk_height_m": 2.2,
+                                    "trunk_radius_m": 0.32,
+                                    "tree_type": "broadleaf",
+                                    "species": p.name or "park",
+                                    "greenery_index": 0.9,
+                                })
+                                placed_tree_positions.append((pt_lon, pt_lat))
+
+    # 2.3 Lateral procedural corridor greenery where trees are sparse
     lateral_offsets = [-24.0, -16.0, -9.0, 9.0, 16.0, 24.0]
     step_interval_m = 18.0
 
@@ -294,10 +362,10 @@ def filter_corridor_assets_multi_route(
                     if collides_building:
                         continue
 
-                    # 3. Check spacing against already placed trees (min 10m spacing)
+                    # 3. Check spacing against already placed trees (min 9m spacing)
                     collides_tree = False
                     for t_pos in placed_tree_positions:
-                        if haversine_distance_2d((cand_lon, cand_lat), t_pos) < 10.0:
+                        if haversine_distance_2d((cand_lon, cand_lat), t_pos) < 9.0:
                             collides_tree = True
                             break
                     if collides_tree:

@@ -63,7 +63,7 @@ from ..core.mobility_profiles import (
     list_profile_keys_for_group,
 )
 from ..core.network_source import NetworkSourceError, NetworkSourceManager
-from ..core.osm_downloader import OsmBuilding, OsmDataFetcher
+from ..core.osm_downloader import OsmBuilding, OsmDataFetcher, OsmPark, OsmTree
 from ..core.osm_styling import apply_osm_atlas_style
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
 from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
@@ -119,6 +119,8 @@ class Route3DStudioDock(QDockWidget):
         self.current_route_result: Optional[RouteResult3D] = None
         self.multi_route_results: Dict[str, RouteResult3D] = {}
         self.cached_osm_buildings: List[OsmBuilding] = []
+        self.cached_osm_trees: List[OsmTree] = []
+        self.cached_osm_parks: List[OsmPark] = []
         self.copernicus_dem_layers: List[Any] = []
         self._managed_route_layer_ids: set[str] = set()
         self._handling_layer_removal = False
@@ -1079,6 +1081,8 @@ class Route3DStudioDock(QDockWidget):
         self._clear_route_point("A")
         self._clear_route_point("B")
         self.cached_osm_buildings = []
+        self.cached_osm_trees = []
+        self.cached_osm_parks = []
         if self.iface:
             self.iface.messageBar().pushInfo("02Route 3D", "Route session cleared. Select new Point A and Point B.")
 
@@ -1105,6 +1109,8 @@ class Route3DStudioDock(QDockWidget):
         route_layers_removed = bool(removed & self._managed_route_layer_ids)
         if source_removed:
             self.cached_osm_buildings = []
+            self.cached_osm_trees = []
+            self.cached_osm_parks = []
         if point_a_removed:
             self.point_a = None
             self.lbl_coord_a.setText("📍 Not selected (Pick on map or choose layer)")
@@ -1382,7 +1388,7 @@ class Route3DStudioDock(QDockWidget):
         self.cmb_profile.setCurrentIndex(index)
 
     def quick_compute_route(self) -> None:
-        """1-Click streamlined workflow: auto-load basemap, auto-fetch network/DEM if missing, compute 3D route, enable 2D animation, and ready 3D Studio."""
+        """1-Click streamlined workflow: auto-load basemap, auto-fetch real 3D environment (buildings, trees, parks), compute 3D route, and launch 3D Studio."""
         if not self.point_a or not self.point_b:
             msg = "Please select both Point A (Origin) and Point B (Destination) first using 'Pick on Map'."
             if self.iface:
@@ -1394,7 +1400,28 @@ class Route3DStudioDock(QDockWidget):
         # 1. Ensure OSM Basemap exists in project
         self._on_add_osm_basemap()
 
-        # 2. Compute route
+        # 2. Auto-fetch real OSM urban environment (roads, 3D buildings, trees, parks) if missing
+        lons = [self.point_a.lon, self.point_b.lon]
+        lats = [self.point_a.lat, self.point_b.lat]
+        d_lon = max(0.001, max(lons) - min(lons))
+        d_lat = max(0.001, max(lats) - min(lats))
+        buf_lon = min(0.008, max(0.0035, d_lon * 0.45))
+        buf_lat = min(0.008, max(0.0035, d_lat * 0.45))
+        bbox = (min(lons) - buf_lon, min(lats) - buf_lat, max(lons) + buf_lon, max(lats) + buf_lat)
+
+        if not self.cached_osm_buildings or not self.cached_osm_trees:
+            if self.iface:
+                self.iface.messageBar().pushInfo("02Route 3D", "⚡ Quick Mode: Auto-acquiring real 3D buildings, trees, and park greenery...")
+            roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
+            if buildings:
+                self.cached_osm_buildings = buildings
+            if trees:
+                self.cached_osm_trees = trees
+            if parks:
+                self.cached_osm_parks = parks
+            self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
+
+        # 3. Compute route & sync 3D WebGL diorama
         self.compute_route()
 
     def _selected_extra_raster_layers(self) -> List[Any]:
@@ -1453,70 +1480,169 @@ class Route3DStudioDock(QDockWidget):
             return (min(lons) - 0.015, min(lats) - 0.015, max(lons) + 0.015, max(lats) + 0.015)
         return (27.13, 38.41, 27.17, 38.45)
 
+    def _load_osm_layers_into_qgis(
+        self,
+        roads: List[Any],
+        buildings: List[OsmBuilding],
+        trees: Optional[List[OsmTree]] = None,
+        parks: Optional[List[OsmPark]] = None,
+    ) -> None:
+        """Create or update dedicated OSM Road Network, 3D Buildings, and Parks/Trees layers in QGIS."""
+        proj = QgsProject.instance()
+
+        # 1. Roads Layer
+        if roads:
+            road_layers = proj.mapLayersByName("OSM Road Network")
+            if road_layers:
+                road_layer = road_layers[0]
+                with contextlib.suppress(Exception):
+                    road_layer.startEditing()
+                    road_layer.deleteFeatures(road_layer.allFeatureIds())
+                    r_feats = []
+                    for r in roads:
+                        f = QgsFeature(road_layer.fields())
+                        pts = [QgsPointXY(p[0], p[1]) for p in r.geometry]
+                        f.setGeometry(QgsGeometry.fromPolylineXY(pts))
+                        f.setAttributes([r.name, r.highway_type, 1 if r.oneway else 0])
+                        r_feats.append(f)
+                    road_layer.addFeatures(r_feats)
+                    road_layer.commitChanges()
+                    road_layer.updateExtents()
+                    road_layer.triggerRepaint()
+            else:
+                road_layer = QgsVectorLayer("LineString?crs=EPSG:4326", "OSM Road Network", "memory")
+                r_pr = road_layer.dataProvider()
+                r_pr.addAttributes([
+                    QgsField("name", QVariant.String),
+                    QgsField("highway", QVariant.String),
+                    QgsField("oneway", QVariant.Int),
+                ])
+                road_layer.updateFields()
+                r_feats = []
+                for r in roads:
+                    f = QgsFeature()
+                    pts = [QgsPointXY(p[0], p[1]) for p in r.geometry]
+                    f.setGeometry(QgsGeometry.fromPolylineXY(pts))
+                    f.setAttributes([r.name, r.highway_type, 1 if r.oneway else 0])
+                    r_feats.append(f)
+                r_pr.addFeatures(r_feats)
+                road_layer.updateExtents()
+                road_layer.setCustomProperty("zero2route3d/source", "osm")
+                apply_osm_atlas_style(road_layer)
+                proj.addMapLayer(road_layer)
+            self.cmb_route_road_layer.setLayer(road_layer)
+
+        # 2. Buildings Layer
+        if buildings:
+            bld_layers = proj.mapLayersByName("OSM Buildings 3D")
+            if bld_layers:
+                bld_layer = bld_layers[0]
+                with contextlib.suppress(Exception):
+                    bld_layer.startEditing()
+                    bld_layer.deleteFeatures(bld_layer.allFeatureIds())
+                    b_feats = []
+                    for b in buildings:
+                        f = QgsFeature(bld_layer.fields())
+                        pts = [QgsPointXY(p[0], p[1]) for p in b.polygon]
+                        f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
+                        f.setAttributes([b.height_m, b.levels, b.building_type])
+                        b_feats.append(f)
+                    bld_layer.addFeatures(b_feats)
+                    bld_layer.commitChanges()
+                    bld_layer.updateExtents()
+                    bld_layer.triggerRepaint()
+            else:
+                bld_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "OSM Buildings 3D", "memory")
+                b_pr = bld_layer.dataProvider()
+                b_pr.addAttributes([
+                    QgsField("height_m", QVariant.Double),
+                    QgsField("levels", QVariant.Int),
+                    QgsField("type", QVariant.String),
+                ])
+                bld_layer.updateFields()
+                b_feats = []
+                for b in buildings:
+                    f = QgsFeature()
+                    pts = [QgsPointXY(p[0], p[1]) for p in b.polygon]
+                    f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
+                    f.setAttributes([b.height_m, b.levels, b.building_type])
+                    b_feats.append(f)
+                b_pr.addFeatures(b_feats)
+                bld_layer.updateExtents()
+                bld_layer.setCustomProperty("zero2route3d/source", "osm")
+                apply_osm_atlas_style(bld_layer)
+                proj.addMapLayer(bld_layer)
+            self.cmb_route_building_layer.setLayer(bld_layer)
+
+        # 3. Trees & Parks Layer
+        if trees:
+            tree_layers = proj.mapLayersByName("OSM Trees & Greenery")
+            if tree_layers:
+                tree_layer = tree_layers[0]
+                with contextlib.suppress(Exception):
+                    tree_layer.startEditing()
+                    tree_layer.deleteFeatures(tree_layer.allFeatureIds())
+                    t_feats = []
+                    for t in trees:
+                        f = QgsFeature(tree_layer.fields())
+                        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(t.lon, t.lat)))
+                        f.setAttributes([t.species, t.height_m, t.canopy_radius_m, t.tree_type])
+                        t_feats.append(f)
+                    tree_layer.addFeatures(t_feats)
+                    tree_layer.commitChanges()
+                    tree_layer.updateExtents()
+                    tree_layer.triggerRepaint()
+            else:
+                tree_layer = QgsVectorLayer("Point?crs=EPSG:4326", "OSM Trees & Greenery", "memory")
+                t_pr = tree_layer.dataProvider()
+                t_pr.addAttributes([
+                    QgsField("species", QVariant.String),
+                    QgsField("height_m", QVariant.Double),
+                    QgsField("canopy_r", QVariant.Double),
+                    QgsField("tree_type", QVariant.String),
+                ])
+                tree_layer.updateFields()
+                t_feats = []
+                for t in trees:
+                    f = QgsFeature()
+                    f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(t.lon, t.lat)))
+                    f.setAttributes([t.species, t.height_m, t.canopy_radius_m, t.tree_type])
+                    t_feats.append(f)
+                t_pr.addFeatures(t_feats)
+                tree_layer.updateExtents()
+                tree_sym = QgsMarkerSymbol.createSimple({
+                    "name": "circle",
+                    "color": "#16a34a",
+                    "outline_color": "#ffffff",
+                    "outline_width": "0.4",
+                    "size": "3.5",
+                })
+                tree_layer.setRenderer(QgsSingleSymbolRenderer(tree_sym))
+                proj.addMapLayer(tree_layer)
+
     def _fetch_osm_layers_for_extent(self) -> None:
-        """Download real OSM roads and building footprints for current area and load into QGIS."""
+        """Download real OSM roads, 3D buildings, trees, and park greenery for current area and load into QGIS."""
         bbox = self._get_active_bbox()
         if self.iface:
-            self.iface.messageBar().pushInfo("02Route 3D", "Fetching real OpenStreetMap roads and 3D building footprints from Overpass API...")
+            self.iface.messageBar().pushInfo("02Route 3D", "Fetching real OSM roads, 3D building footprints, trees, and parks from Overpass API...")
 
-        roads, buildings = OsmDataFetcher.fetch_roads_and_buildings(bbox)
+        roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
         self.cached_osm_buildings = buildings
+        self.cached_osm_trees = trees
+        self.cached_osm_parks = parks
 
-        if not roads and not buildings:
+        if not roads and not buildings and not trees:
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", "No OSM elements found in current bounding box.")
             return
 
-        # 1. Create Roads Layer
-        if roads:
-            road_layer = QgsVectorLayer("LineString?crs=EPSG:4326", "OSM Road Network", "memory")
-            r_pr = road_layer.dataProvider()
-            r_pr.addAttributes([
-                QgsField("name", QVariant.String),
-                QgsField("highway", QVariant.String),
-                QgsField("oneway", QVariant.Int),
-            ])
-            road_layer.updateFields()
-            r_feats = []
-            for r in roads:
-                f = QgsFeature()
-                pts = [QgsPointXY(p[0], p[1]) for p in r.geometry]
-                f.setGeometry(QgsGeometry.fromPolylineXY(pts))
-                f.setAttributes([r.name, r.highway_type, 1 if r.oneway else 0])
-                r_feats.append(f)
-            r_pr.addFeatures(r_feats)
-            road_layer.updateExtents()
-            road_layer.setCustomProperty("zero2route3d/source", "osm")
-            apply_osm_atlas_style(road_layer)
-            QgsProject.instance().addMapLayer(road_layer)
-            self.cmb_route_road_layer.setLayer(road_layer)
-
-        # 2. Create Buildings Layer
-        if buildings:
-            bld_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "OSM Buildings 3D", "memory")
-            b_pr = bld_layer.dataProvider()
-            b_pr.addAttributes([
-                QgsField("height_m", QVariant.Double),
-                QgsField("levels", QVariant.Int),
-                QgsField("type", QVariant.String),
-            ])
-            bld_layer.updateFields()
-            b_feats = []
-            for b in buildings:
-                f = QgsFeature()
-                pts = [QgsPointXY(p[0], p[1]) for p in b.polygon]
-                f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
-                f.setAttributes([b.height_m, b.levels, b.building_type])
-                b_feats.append(f)
-            b_pr.addFeatures(b_feats)
-            bld_layer.updateExtents()
-            bld_layer.setCustomProperty("zero2route3d/source", "osm")
-            apply_osm_atlas_style(bld_layer)
-            QgsProject.instance().addMapLayer(bld_layer)
-            self.cmb_route_building_layer.setLayer(bld_layer)
+        self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
 
         if self.iface:
-            self.iface.messageBar().pushSuccess("02Route 3D", f"Acquired {len(roads)} OSM roads and {len(buildings)} building footprints!")
+            self.iface.messageBar().pushSuccess(
+                "02Route 3D",
+                f"Acquired {len(roads)} OSM roads, {len(buildings)} buildings, {len(trees)} trees, and {len(parks)} parks!",
+            )
 
     def _on_fetch_global_dem_clicked(self) -> None:
         """Acquire and corridor-clip Copernicus DEM, NDVI, LST, and NDBI environmental stack."""
@@ -1726,9 +1852,19 @@ class Route3DStudioDock(QDockWidget):
         # Load 2D canvas animator with all calculated routes
         self.canvas_animator.load_routes(list(self.multi_route_results.values()))
 
-        # 30m Linear Corridor Building Filter & 3D WebGL data sync
+        # 30m Linear Corridor Building & Tree Filter & 3D WebGL data sync
         if selected_building_layer is not None and selected_building_layer.isValid():
             self.cached_osm_buildings = self._extract_buildings_from_layer(selected_building_layer)
+        elif not self.cached_osm_buildings:
+            roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
+            if buildings:
+                self.cached_osm_buildings = buildings
+            if trees:
+                self.cached_osm_trees = trees
+            if parks:
+                self.cached_osm_parks = parks
+            self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
+
         geojson_data = self._build_web_route_payload(result)
 
         with contextlib.suppress(Exception):
@@ -1739,8 +1875,6 @@ class Route3DStudioDock(QDockWidget):
         self.canvas_animator.bring_avatar_layer_to_top()
 
         # Enable Export Buttons & Canvas Animator Controls
-        self.btn_add_layer.setEnabled(True)
-        # Enable Export Buttons & Canvas Animator Controls in both tabs
         self.btn_add_layer.setEnabled(True)
         self.btn_export_gpx.setEnabled(True)
         self.btn_export_geojson.setEnabled(True)
@@ -1974,6 +2108,8 @@ class Route3DStudioDock(QDockWidget):
             self.cached_osm_buildings,
             buffer_meters=30.0,
             green_sampler=sampler,
+            osm_trees=self.cached_osm_trees,
+            osm_parks=self.cached_osm_parks,
         )
 
         features = []

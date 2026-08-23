@@ -674,5 +674,74 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertTrue(math.isfinite(r.max_val))
 
 
+    def test_osm_full_urban_environment_and_corridor_trees(self) -> None:
+        from ..core.osm_downloader import OsmBuilding, OsmDataFetcher, OsmPark, OsmTree
+        from ..core.route_corridor_3d import filter_corridor_assets_multi_route
+
+        # 1. Test empty / invalid bbox handling
+        nan = float("nan")
+        roads, blds, trees, parks = OsmDataFetcher.fetch_full_urban_environment((nan, 38.0, 27.0, 38.0))
+        self.assertEqual(roads, [])
+        self.assertEqual(blds, [])
+        self.assertEqual(trees, [])
+        self.assertEqual(parks, [])
+
+        # 2. Test filter_corridor_assets_multi_route with real OSM buildings, trees, and parks
+        routes_coords = [
+            [(27.1400, 38.4200, 10.0), (27.1420, 38.4220, 15.0), (27.1440, 38.4240, 20.0)]
+        ]
+        sample_blds = [
+            OsmBuilding(
+                building_id="b1",
+                polygon=[(27.1405, 38.4205), (27.1407, 38.4205), (27.1407, 38.4207), (27.1405, 38.4207)],
+                height_m=18.0,
+                levels=6,
+                building_type="apartments",
+            )
+        ]
+        sample_trees = [
+            OsmTree(
+                tree_id="t1",
+                lon=27.1410,
+                lat=38.4211,
+                species="Quercus robur",
+                height_m=9.5,
+                canopy_radius_m=3.5,
+                tree_type="broadleaf",
+            )
+        ]
+        sample_parks = [
+            OsmPark(
+                park_id="p1",
+                polygon=[(27.1415, 38.4215), (27.1418, 38.4215), (27.1418, 38.4218), (27.1415, 38.4218)],
+                park_type="park",
+                name="Central Green Park",
+            )
+        ]
+
+        c_blds, c_trees = filter_corridor_assets_multi_route(
+            routes_coords=routes_coords,
+            buildings=sample_blds,
+            buffer_meters=30.0,
+            osm_trees=sample_trees,
+            osm_parks=sample_parks,
+        )
+
+        self.assertGreaterEqual(len(c_blds), 1)
+        self.assertEqual(c_blds[0]["id"], "b1")
+        self.assertEqual(c_blds[0]["height_m"], 18.0)
+        self.assertEqual(c_blds[0]["levels"], 6)
+
+        self.assertGreaterEqual(len(c_trees), 1)
+        tree_ids = [t["id"] for t in c_trees]
+        self.assertTrue(any("osm_tree_t1" in tid for tid in tree_ids))
+        for t in c_trees:
+            self.assertIn("coordinates", t)
+            self.assertIn("base_elevation_m", t)
+            self.assertIn("height_m", t)
+            self.assertIn("canopy_radius_m", t)
+            self.assertIn("tree_type", t)
+
+
 if __name__ == "__main__":
     unittest.main()
