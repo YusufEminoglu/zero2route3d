@@ -742,6 +742,117 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertIn("canopy_radius_m", t)
             self.assertIn("tree_type", t)
 
+    def test_accessibility_equity_2sfca_and_gini(self) -> None:
+        facilities = [
+            SupplyFacility(facility_id="hosp1", name="Hospital Central", lon=27.12, lat=38.42, capacity=100.0),
+            SupplyFacility(facility_id="clinic1", name="Community Clinic", lon=27.14, lat=38.44, capacity=40.0),
+        ]
+        zones = [
+            ZoneAccessibilityRecord(zone_id="z1", name="Zone 1", lon=27.115, lat=38.415, population=500),
+            ZoneAccessibilityRecord(zone_id="z2", name="Zone 2", lon=27.135, lat=38.435, population=1200),
+            ZoneAccessibilityRecord(zone_id="z3", name="Zone 3", lon=27.150, lat=38.450, population=300),
+        ]
+        engine = AccessibilityEquityEngine(catchment_radius_m=5000.0)
+        report = engine.compute_e2sfca(demand_zones=zones, supply_facilities=facilities)
+
+        self.assertEqual(len(report.zones), 3)
+        self.assertGreater(report.mean_accessibility, 0.0)
+        self.assertTrue(0.0 <= report.gini_coefficient <= 1.0)
+        self.assertGreaterEqual(len(report.lorenz_curve), 2)
+        self.assertTrue(math.isfinite(report.theil_index))
+
+    def test_solar_shadow_and_exposure_calculator(self) -> None:
+        from ..core.solar_shadow import calculate_solar_position, compute_shade_exposure_along_route
+
+        # Solar position morning vs noon
+        sun_morning = calculate_solar_position(38.4, solar_hour=8.0)
+        sun_noon = calculate_solar_position(38.4, solar_hour=12.0)
+        sun_evening = calculate_solar_position(38.4, solar_hour=19.0)
+
+        self.assertGreater(sun_noon.elevation_deg, sun_morning.elevation_deg)
+        self.assertGreater(sun_noon.elevation_deg, sun_evening.elevation_deg)
+        self.assertGreater(sun_noon.direct_irradiance_w_m2, sun_morning.direct_irradiance_w_m2)
+
+        # Route shade exposure
+        coords_3d = [(27.14, 38.42, 10.0), (27.145, 38.425, 12.0), (27.15, 38.43, 15.0)]
+        shade_rep = compute_shade_exposure_along_route(coords_3d, solar_hour=13.0, building_density_factor=0.8)
+        self.assertTrue(0.0 <= shade_rep.direct_sun_pct <= 100.0)
+        self.assertTrue(0.0 <= shade_rep.shaded_pct <= 100.0)
+        self.assertAlmostEqual(shade_rep.direct_sun_pct + shade_rep.shaded_pct, 100.0, places=1)
+        self.assertIn("comfort_category", shade_rep.to_dict())
+
+    def test_all_mobility_profiles_kinematics_sweep(self) -> None:
+        from ..core.mobility_profiles import PROFILES
+
+        slopes = [-20.0, -10.0, -5.0, 0.0, 5.0, 10.0, 20.0]
+        for key, prof in PROFILES.items():
+            self.assertGreater(prof.base_speed_kmh, 0.0)
+            self.assertGreater(prof.max_slope_pct, 0.0)
+            for slope in slopes:
+                t_sec = prof.travel_time_seconds(length_m=100.0, slope_pct=slope)
+                self.assertTrue(math.isfinite(t_sec))
+                self.assertGreater(t_sec, 0.0)
+
+    def test_evacuation_multi_destination_routing(self) -> None:
+        segments = fixture_network_segments()
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+
+        router = EvacuationRouter(engine)
+        origin = Waypoint(lon=27.11, lat=38.41, name="Evacuee Home")
+        shelters = [
+            Waypoint(lon=27.13, lat=38.43, name="Shelter East"),
+            Waypoint(lon=27.15, lat=38.45, name="Shelter North"),
+        ]
+
+        evac_res = router.calculate_evacuation_route(origin, shelters, profile_key="adult")
+        self.assertGreater(len(evac_res.route_result.coordinates_3d), 2)
+        self.assertIn(evac_res.muster_point.name, ("Shelter East", "Shelter North"))
+        self.assertGreater(evac_res.egress_time_min, 0.0)
+
+    def test_environmental_surface_sampler_bilinear_and_mcda(self) -> None:
+        from ..core.environmental_raster import MCDAWeights
+
+        weights = MCDAWeights(weight_slope=0.5, weight_heat=0.3, weight_green=0.2)
+        sampler = EnvironmentalSurfaceSampler(weights=weights)
+        slope_pct, aspect_deg, solar = sampler.sample_slope_and_aspect((27.140, 38.420), (27.145, 38.425))
+        self.assertTrue(math.isfinite(slope_pct))
+        self.assertTrue(0.0 <= aspect_deg <= 360.0)
+        self.assertTrue(math.isfinite(solar))
+
+    def test_pareto_router_three_objective_frontier(self) -> None:
+        segments = fixture_network_segments()
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+
+        start_n = list(engine.nodes.keys())[0]
+        end_n = list(engine.nodes.keys())[-1]
+        pareto = ParetoMultiObjectiveRouter(engine.nodes, engine.adj, engine.sampler)
+        res = pareto.solve_pareto_frontier(start_n, end_n, profile_key="adult")
+        self.assertGreaterEqual(len(res.solutions), 1)
+        for sol in res.solutions:
+            self.assertGreater(len(sol.coordinates_3d), 1)
+            self.assertGreater(sol.statistics.total_distance_m, 0.0)
+
+    def test_cartographic_osm_themes_catalog(self) -> None:
+        from ..core.osm_styling import OSM_THEMES, get_theme_palette, list_osm_themes
+
+        themes = list_osm_themes()
+        self.assertGreaterEqual(len(themes), 8)
+        theme_keys = [k for k, _ in themes]
+        expected_keys = ["atlas", "cyber", "paper", "frost", "noir", "mediterranean", "nightprint", "default"]
+        for ek in expected_keys:
+            self.assertIn(ek, theme_keys)
+
+        for key in expected_keys:
+            pal = get_theme_palette(key)
+            self.assertIn("label", pal)
+            self.assertIn("roads_major", pal)
+            self.assertIn("roads_minor", pal)
+            self.assertIn("greens", pal)
+            self.assertIn("buildings", pal)
+            self.assertGreaterEqual(len(pal["buildings"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,20 @@ class _Canvas(QgsMapCanvas):
         super().__init__(parent)
 
 
+class _MessageBar:
+    def pushInfo(self, title: str, msg: str) -> None:
+        pass
+
+    def pushSuccess(self, title: str, msg: str) -> None:
+        pass
+
+    def pushWarning(self, title: str, msg: str) -> None:
+        pass
+
+    def pushCritical(self, title: str, msg: str) -> None:
+        pass
+
+
 class _Iface(QObject):
     currentLayerChanged = pyqtSignal(object)
 
@@ -43,6 +57,7 @@ class _Iface(QObject):
         super().__init__()
         self._main = QMainWindow()
         self._canvas = _Canvas(self._main)
+        self._msg_bar = _MessageBar()
         self.toolbar_icons = []
         self.menu_entries = []
         self.docks = []
@@ -52,6 +67,9 @@ class _Iface(QObject):
 
     def mapCanvas(self):
         return self._canvas
+
+    def messageBar(self):
+        return self._msg_bar
 
     def addToolBarIcon(self, action):
         self.toolbar_icons.append(action)
@@ -303,6 +321,99 @@ def test_dock_animation_playback(iface):
     return _ok("Route3DStudioDock unified start/pause animation toggle", True)
 
 
+def test_dock_quick_mode_and_scenarios(iface):
+    from zero2route3d.core.mobility_profiles import get_profile
+    from zero2route3d.core.profile_stats import compute_route_statistics
+    from zero2route3d.core.routing_engine import RouteResult3D, Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+    from qgis.core import QgsProject
+
+    dock = Route3DStudioDock(iface=iface)
+    dock.point_a = Waypoint(lon=27.1428, lat=38.4237, name="Point A (Origin)")
+    dock.point_b = Waypoint(lon=27.1450, lat=38.4250, name="Point B (Destination)")
+    dock._update_point_labels()
+
+    coords = [(27.1428, 38.4237, 10.0), (27.1440, 38.4245, 12.0), (27.1450, 38.4250, 15.0)]
+    stats = compute_route_statistics(coords, profile=get_profile("adult"))
+    res = RouteResult3D(coordinates_3d=coords, statistics=stats, profile=get_profile("adult"), status_message="OK")
+    dock.multi_route_results = {"adult": res}
+    dock.current_route_result = res
+    dock.add_route_layer_to_qgis()
+
+    proj = QgsProject.instance()
+    root = proj.layerTreeRoot()
+    scenarios_group = root.findGroup("🛣️ 02Route 3D Scenarios & Runs") if root else None
+    has_group = scenarios_group is not None
+
+    dock.teardown()
+    return _ok("Route3DStudioDock Quick Mode & Persistent Scenario Group creation", has_group)
+
+
+def test_cartographic_themes_in_qgis(iface):
+    from zero2route3d.core.osm_styling import apply_osm_theme_style, list_osm_themes
+    from qgis.core import QgsVectorLayer
+
+    themes = list_osm_themes()
+    if len(themes) < 8:
+        return _ok("8 Cartographic themes catalog in QGIS", False)
+
+    line_layer = QgsVectorLayer("LineString?crs=EPSG:4326", "Test Roads", "memory")
+    poly_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "Test Buildings", "memory")
+    point_layer = QgsVectorLayer("Point?crs=EPSG:4326", "Test Trees", "memory")
+
+    ok_all = True
+    for key, _ in themes:
+        ok_all = ok_all and apply_osm_theme_style(line_layer, key)
+        ok_all = ok_all and apply_osm_theme_style(poly_layer, key)
+        ok_all = ok_all and apply_osm_theme_style(point_layer, key)
+
+    return _ok("8 Cartographic themes applied cleanly to vector layers", ok_all)
+
+
+def test_standalone_html_bundler_qgis(iface):
+    from zero2route3d.core.html_bundler import StandaloneHtmlBundler
+
+    bundler = StandaloneHtmlBundler()
+    geojson_payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[27.14, 38.42, 10.0], [27.15, 38.43, 20.0]],
+                },
+                "properties": {
+                    "distance_km": 1.2,
+                    "duration_min": 15.0,
+                    "elevation_gain_m": 10.0,
+                    "profile_name": "Adult Pedestrian",
+                    "corridor_buildings": [{"id": "b1", "coordinates": [[27.141, 38.421], [27.142, 38.421], [27.142, 38.422], [27.141, 38.422]], "height_m": 12.0}],
+                    "corridor_trees": [{"id": "t1", "coordinates": [27.1415, 38.4215], "height_m": 8.0, "tree_type": "deciduous"}],
+                },
+            }
+        ],
+        "properties": {"route_count": 1},
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_html = Path(tmpdir) / "test_report.html"
+        bundler.bundle_to_file(geojson_payload, out_html)
+        is_ok = out_html.exists() and out_html.stat().st_size > 500
+        return _ok("StandaloneHtmlBundler self-contained 3D report bundling", is_ok)
+
+
+def test_processing_algorithms_load():
+    from zero2route3d.processing.provider import Route3DProcessingProvider
+
+    provider = Route3DProcessingProvider()
+    provider.loadAlgorithms()
+    algs = provider.algorithms()
+    names = [alg.name() for alg in algs]
+    display_names = [alg.displayName() for alg in algs]
+    valid = len(algs) >= 14 and all(len(n) > 0 for n in names) and all(len(dn) > 0 for dn in display_names)
+    return _ok(f"All {len(algs)} Processing algorithm definitions verified", valid)
+
+
 def run_all(iface):
     print("=" * 60)
     print(" zero2route3d - lifecycle & GUI component audit tests")
@@ -318,6 +429,10 @@ def run_all(iface):
         test_gui_map_tools(iface),
         test_gui_canvas_animator(iface),
         test_dock_animation_playback(iface),
+        test_dock_quick_mode_and_scenarios(iface),
+        test_cartographic_themes_in_qgis(iface),
+        test_standalone_html_bundler_qgis(iface),
+        test_processing_algorithms_load(),
     ]
     passed = sum(1 for r in results if r)
     print("-" * 60)

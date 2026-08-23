@@ -194,9 +194,13 @@ class Route2DCanvasAnimator(QObject):
 
     def bring_avatar_layer_to_top(self) -> None:
         """Ensure the SVG avatar layer stays at the topmost position in the QGIS layer tree."""
-        if self.avatar_layer is None or not self.avatar_layer.isValid():
+        if self.avatar_layer is None:
             return
         with contextlib.suppress(Exception):
+            import sip
+            if sip.isdeleted(self.avatar_layer) or not self.avatar_layer.isValid():
+                self.avatar_layer = None
+                return
             root = QgsProject.instance().layerTreeRoot()
             layer_node = root.findLayer(self.avatar_layer.id())
             if layer_node is not None and root.children() and root.children()[0] != layer_node:
@@ -207,14 +211,15 @@ class Route2DCanvasAnimator(QObject):
 
     def _remove_avatar_layer(self) -> None:
         """Remove the transient SVG avatar layer without touching user layers."""
-        if self.avatar_layer is not None:
-            layer_id = self.avatar_layer.id()
-            self.avatar_layer = None
-            self._avatar_feature_ids = []
-            with contextlib.suppress(Exception):
-                QgsProject.instance().removeMapLayer(layer_id)
+        layer = self.avatar_layer
         self.avatar_layer = None
         self._avatar_feature_ids = []
+        if layer is not None:
+            with contextlib.suppress(Exception):
+                import sip
+                if not sip.isdeleted(layer):
+                    layer_id = layer.id()
+                    QgsProject.instance().removeMapLayer(layer_id)
 
     def play(self) -> None:
         """Start or resume animation."""
@@ -322,22 +327,30 @@ class Route2DCanvasAnimator(QObject):
                     pt_canvas = transform.transform(pt_wgs84)
 
             if self.avatar_layer is not None and idx < len(self._avatar_feature_ids):
-                with contextlib.suppress(Exception):
-                    feature_id = self._avatar_feature_ids[idx]
-                    geometry = QgsGeometry.fromPointXY(QgsPointXY(lon, lat))
-                    self.avatar_layer.dataProvider().changeGeometryValues({feature_id: geometry})
-                    look_ahead = min(self.current_time_s + 0.2, avatar.total_duration_s)
-                    next_lon, next_lat, _next_ele = avatar.interpolate_position(look_ahead)
-                    heading = math.degrees(math.atan2(next_lon - lon, next_lat - lat))
-                    self.avatar_layer.dataProvider().changeAttributeValues({feature_id: {2: heading}})
+                with contextlib.suppress(Exception, RuntimeError):
+                    import sip
+                    if not sip.isdeleted(self.avatar_layer):
+                        feature_id = self._avatar_feature_ids[idx]
+                        geometry = QgsGeometry.fromPointXY(QgsPointXY(lon, lat))
+                        self.avatar_layer.dataProvider().changeGeometryValues({feature_id: geometry})
+                        look_ahead = min(self.current_time_s + 0.2, avatar.total_duration_s)
+                        next_lon, next_lat, _next_ele = avatar.interpolate_position(look_ahead)
+                        heading = math.degrees(math.atan2(next_lon - lon, next_lat - lat))
+                        self.avatar_layer.dataProvider().changeAttributeValues({feature_id: {2: heading}})
+                    else:
+                        self.avatar_layer = None
 
             if idx == 0:
                 leader_canvas_pt = pt_canvas
 
         if self.avatar_layer is not None:
-            with contextlib.suppress(Exception):
-                self.avatar_layer.updateExtents()
-                self.avatar_layer.triggerRepaint()
+            with contextlib.suppress(Exception, RuntimeError):
+                import sip
+                if not sip.isdeleted(self.avatar_layer):
+                    self.avatar_layer.updateExtents()
+                    self.avatar_layer.triggerRepaint()
+                else:
+                    self.avatar_layer = None
         if self.canvas is not None:
             with contextlib.suppress(Exception):
                 self.canvas.refresh()

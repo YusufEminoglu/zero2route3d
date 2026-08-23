@@ -64,7 +64,12 @@ from ..core.mobility_profiles import (
 )
 from ..core.network_source import NetworkSourceError, NetworkSourceManager
 from ..core.osm_downloader import OsmBuilding, OsmDataFetcher, OsmPark, OsmTree
-from ..core.osm_styling import apply_osm_atlas_style
+from ..core.osm_styling import (
+    OSM_THEMES,
+    apply_osm_atlas_style,
+    apply_osm_theme_style,
+    list_osm_themes,
+)
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
 from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
@@ -483,9 +488,30 @@ class Route3DStudioDock(QDockWidget):
         self.cmb_route_building_layer.setAllowEmptyLayer(True)
         self.cmb_route_building_layer.setToolTip("Use this polygon layer for QGIS styling and WebGL corridor buildings.")
         source_grid.addWidget(self.cmb_route_building_layer, 1, 1)
-        btn_style_sources = QPushButton("Apply Civic Atlas style")
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("Cartographic Style:"))
+        self.cmb_carto_theme = QComboBox()
+        self.cmb_carto_theme.setToolTip("Select a cartographic palette for OSM roads, 3D buildings, and trees (inspired by 02Agent OSM Downloader).")
+        theme_icons = {
+            "atlas": "🎨",
+            "cyber": "⚡",
+            "paper": "📜",
+            "frost": "❄️",
+            "noir": "🖤",
+            "mediterranean": "🏖️",
+            "nightprint": "🌌",
+            "default": "🌿",
+        }
+        for key, label in list_osm_themes():
+            self.cmb_carto_theme.addItem(f"{theme_icons.get(key, '🎨')} {label}", key)
+        theme_row.addWidget(self.cmb_carto_theme, 1)
+
+        btn_style_sources = QPushButton("Apply Style")
+        btn_style_sources.setToolTip("Apply chosen cartographic theme to road, building, and tree layers in QGIS.")
         btn_style_sources.clicked.connect(self._style_selected_source_layers)
-        source_grid.addWidget(btn_style_sources, 2, 0, 1, 2)
+        theme_row.addWidget(btn_style_sources)
+        source_grid.addLayout(theme_row, 2, 0, 1, 2)
         osm_layout.addLayout(source_grid)
         source_note = QLabel("If selected, external road/building layers replace the corresponding OSM source.")
         source_note.setStyleSheet("color: #64748b; font-size: 11px;")
@@ -925,17 +951,29 @@ class Route3DStudioDock(QDockWidget):
                 self.iface.messageBar().pushWarning("02Route 3D", f"Could not load OSM basemap: {e}")
 
     def _style_selected_source_layers(self) -> None:
-        """Apply the sibling downloader's Civic Atlas style to selected sources."""
+        """Apply selected cartographic palette (8 themes) to road, building, and tree layers."""
+        theme_key = self.cmb_carto_theme.currentData() or "atlas"
+        theme_name = self.cmb_carto_theme.currentText()
         styled = 0
+        proj = QgsProject.instance()
+
+        # 1. Combo-selected layers
         for combo in (self.cmb_route_road_layer, self.cmb_route_building_layer):
             layer = combo.currentLayer()
-            if layer is not None and apply_osm_atlas_style(layer):
+            if layer is not None and apply_osm_theme_style(layer, theme_key):
                 styled += 1
+
+        # 2. Managed OSM layers in project
+        for name in ("OSM Road Network", "OSM Buildings 3D", "OSM Trees & Greenery"):
+            for lyr in proj.mapLayersByName(name):
+                if lyr.isValid() and apply_osm_theme_style(lyr, theme_key):
+                    styled += 1
+
         if self.iface:
             if styled:
-                self.iface.messageBar().pushSuccess("02Route 3D", f"Applied Civic Atlas styling to {styled} source layer(s).")
+                self.iface.messageBar().pushSuccess("02Route 3D", f"Applied '{theme_name}' style to {styled} layer(s).")
             else:
-                self.iface.messageBar().pushWarning("02Route 3D", "Select a road or building layer first.")
+                self.iface.messageBar().pushWarning("02Route 3D", "Select or download a road/building layer first.")
 
     def _update_point_labels(self) -> None:
         """Synchronize Point A and B coordinate labels across Quick Mode and Advanced Lab."""
@@ -1489,6 +1527,7 @@ class Route3DStudioDock(QDockWidget):
     ) -> None:
         """Create or update dedicated OSM Road Network, 3D Buildings, and Parks/Trees layers in QGIS."""
         proj = QgsProject.instance()
+        theme_key = getattr(self, "cmb_carto_theme", None).currentData() if hasattr(self, "cmb_carto_theme") and self.cmb_carto_theme else "atlas"
 
         # 1. Roads Layer
         if roads:
@@ -1508,7 +1547,7 @@ class Route3DStudioDock(QDockWidget):
                     road_layer.addFeatures(r_feats)
                     road_layer.commitChanges()
                     road_layer.updateExtents()
-                    road_layer.triggerRepaint()
+                    apply_osm_theme_style(road_layer, theme_key)
             else:
                 road_layer = QgsVectorLayer("LineString?crs=EPSG:4326", "OSM Road Network", "memory")
                 r_pr = road_layer.dataProvider()
@@ -1528,7 +1567,7 @@ class Route3DStudioDock(QDockWidget):
                 r_pr.addFeatures(r_feats)
                 road_layer.updateExtents()
                 road_layer.setCustomProperty("zero2route3d/source", "osm")
-                apply_osm_atlas_style(road_layer)
+                apply_osm_theme_style(road_layer, theme_key)
                 proj.addMapLayer(road_layer)
             self.cmb_route_road_layer.setLayer(road_layer)
 
@@ -1550,7 +1589,7 @@ class Route3DStudioDock(QDockWidget):
                     bld_layer.addFeatures(b_feats)
                     bld_layer.commitChanges()
                     bld_layer.updateExtents()
-                    bld_layer.triggerRepaint()
+                    apply_osm_theme_style(bld_layer, theme_key)
             else:
                 bld_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "OSM Buildings 3D", "memory")
                 b_pr = bld_layer.dataProvider()
@@ -1570,7 +1609,7 @@ class Route3DStudioDock(QDockWidget):
                 b_pr.addFeatures(b_feats)
                 bld_layer.updateExtents()
                 bld_layer.setCustomProperty("zero2route3d/source", "osm")
-                apply_osm_atlas_style(bld_layer)
+                apply_osm_theme_style(bld_layer, theme_key)
                 proj.addMapLayer(bld_layer)
             self.cmb_route_building_layer.setLayer(bld_layer)
 
@@ -1591,7 +1630,7 @@ class Route3DStudioDock(QDockWidget):
                     tree_layer.addFeatures(t_feats)
                     tree_layer.commitChanges()
                     tree_layer.updateExtents()
-                    tree_layer.triggerRepaint()
+                    apply_osm_theme_style(tree_layer, theme_key)
             else:
                 tree_layer = QgsVectorLayer("Point?crs=EPSG:4326", "OSM Trees & Greenery", "memory")
                 t_pr = tree_layer.dataProvider()
@@ -1610,14 +1649,7 @@ class Route3DStudioDock(QDockWidget):
                     t_feats.append(f)
                 t_pr.addFeatures(t_feats)
                 tree_layer.updateExtents()
-                tree_sym = QgsMarkerSymbol.createSimple({
-                    "name": "circle",
-                    "color": "#16a34a",
-                    "outline_color": "#ffffff",
-                    "outline_width": "0.4",
-                    "size": "3.5",
-                })
-                tree_layer.setRenderer(QgsSingleSymbolRenderer(tree_sym))
+                apply_osm_theme_style(tree_layer, theme_key)
                 proj.addMapLayer(tree_layer)
 
     def _fetch_osm_layers_for_extent(self) -> None:
