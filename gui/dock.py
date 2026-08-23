@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -121,6 +122,7 @@ class Route3DStudioDock(QDockWidget):
         self.copernicus_dem_layers: List[Any] = []
         self._managed_route_layer_ids: set[str] = set()
         self._handling_layer_removal = False
+        self._run_counter: int = 0
 
         self.point_a: Optional[Waypoint] = None
         self.point_b: Optional[Waypoint] = None
@@ -153,20 +155,20 @@ class Route3DStudioDock(QDockWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
 
         # -------------------------------------------------------------
-        # 5-Tab Multi-Studio Panel
+        # 5-Tab Multi-Studio Panel (Quick Mode First)
         # -------------------------------------------------------------
         self.tab_widget = QTabWidget(self.root_widget)
         self.tab_widget.setObjectName("route3dTabs")
 
-        # Tab 1: Route Planner
-        self.tab_planner = QWidget()
-        self._build_tab_planner(self.tab_planner)
-        self.tab_widget.addTab(self.tab_planner, "🗺️ Planner")
+        # Tab 1: Quick Mode
+        self.tab_quick = QWidget()
+        self._build_tab_quick(self.tab_quick)
+        self.tab_widget.addTab(self.tab_quick, "⚡ Quick Mode")
 
-        # Tab 2: AHP & MCDA Matrix
-        self.tab_mcda = QWidget()
-        self._build_tab_mcda(self.tab_mcda)
-        self.tab_widget.addTab(self.tab_mcda, "⚖️ MCDA Lab")
+        # Tab 2: Advanced Lab
+        self.tab_advanced = QWidget()
+        self._build_tab_advanced(self.tab_advanced)
+        self.tab_widget.addTab(self.tab_advanced, "🔬 Advanced Lab")
 
         # Tab 3: Turn-by-Turn Cue Sheet
         self.cue_widget = CueSheetWidget()
@@ -184,7 +186,259 @@ class Route3DStudioDock(QDockWidget):
 
         main_layout.addWidget(self.tab_widget)
 
-    def _build_tab_planner(self, parent: QWidget) -> None:
+    def _build_tab_quick(self, parent: QWidget) -> None:
+        scroll = QScrollArea(parent)
+        scroll.setWidgetResizable(True)
+        _ScrollBarAlwaysOff = getattr(getattr(Qt, "ScrollBarPolicy", Qt), "ScrollBarAlwaysOff", 1)
+        scroll.setHorizontalScrollBarPolicy(_ScrollBarAlwaysOff)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        # Quick Banner Card
+        card_header = QFrame()
+        card_header.setProperty("class", "route3dCard")
+        h_box = QVBoxLayout(card_header)
+        h_title = QLabel("<b>⚡ Quick 3D Route Studio</b>")
+        h_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #0284c7;")
+        h_sub = QLabel("1-Click Instant 3D Route Planning & Simulation. Pick 2 points on the map, choose your transport mode, and launch.")
+        h_sub.setStyleSheet("color: #64748b; font-size: 11px;")
+        h_sub.setWordWrap(True)
+        h_box.addWidget(h_title)
+        h_box.addWidget(h_sub)
+        layout.addWidget(card_header)
+
+        # 1. Point A & Point B Pickers Card
+        card_ab = QFrame()
+        card_ab.setProperty("class", "route3dCard")
+        ab_layout = QVBoxLayout(card_ab)
+        ab_layout.addWidget(QLabel("<b>1. Route Points (A ➔ B)</b>"))
+
+        # Point A
+        row_a = QHBoxLayout()
+        row_a.addWidget(QLabel("📍 <b>Origin (A):</b>"))
+        self.lbl_quick_coord_a = QLabel("Not selected")
+        self.lbl_quick_coord_a.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+        row_a.addWidget(self.lbl_quick_coord_a, 1)
+        self.btn_quick_pick_a = QPushButton("📍 Pick on Map")
+        self.btn_quick_pick_a.setCheckable(True)
+        self.btn_quick_pick_a.clicked.connect(lambda chk: self._toggle_specific_picker("A", chk))
+        row_a.addWidget(self.btn_quick_pick_a)
+        btn_quick_clear_a = QPushButton("Clear")
+        btn_quick_clear_a.clicked.connect(lambda: self._clear_route_point("A"))
+        row_a.addWidget(btn_quick_clear_a)
+        ab_layout.addLayout(row_a)
+
+        # Point B
+        row_b = QHBoxLayout()
+        row_b.addWidget(QLabel("🎯 <b>Dest (B):</b>"))
+        self.lbl_quick_coord_b = QLabel("Not selected")
+        self.lbl_quick_coord_b.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+        row_b.addWidget(self.lbl_quick_coord_b, 1)
+        self.btn_quick_pick_b = QPushButton("🎯 Pick on Map")
+        self.btn_quick_pick_b.setCheckable(True)
+        self.btn_quick_pick_b.clicked.connect(lambda chk: self._toggle_specific_picker("B", chk))
+        row_b.addWidget(self.btn_quick_pick_b)
+        btn_quick_clear_b = QPushButton("Clear")
+        btn_quick_clear_b.clicked.connect(lambda: self._clear_route_point("B"))
+        row_b.addWidget(btn_quick_clear_b)
+        ab_layout.addLayout(row_b)
+
+        # Action row
+        act_pts_row = QHBoxLayout()
+        btn_swap = QPushButton("⇄ Swap A ↔ B")
+        btn_swap.clicked.connect(self._reverse_waypoints)
+        act_pts_row.addWidget(btn_swap)
+        btn_clear_all = QPushButton("🗑️ Clear Points")
+        btn_clear_all.clicked.connect(self._reset_route_session)
+        act_pts_row.addWidget(btn_clear_all)
+        ab_layout.addLayout(act_pts_row)
+        layout.addWidget(card_ab)
+
+        # 2. Mode Scope & Focus Profile Card
+        card_prof = QFrame()
+        card_prof.setProperty("class", "route3dCard")
+        prof_layout = QVBoxLayout(card_prof)
+        prof_layout.addWidget(QLabel("<b>2. Mode Scope & Transport Profile</b>"))
+
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(QLabel("Mode Scope:"))
+        self.cmb_quick_mode_scope = QComboBox()
+        self.cmb_quick_mode_scope.addItem("🔘 Single Profile Only", "single")
+        self.cmb_quick_mode_scope.addItem("🌐 All 15 Profiles (Full Suite)", "all")
+        self.cmb_quick_mode_scope.addItem("🚶 Pedestrian Modes (6 Profiles)", "pedestrian")
+        self.cmb_quick_mode_scope.addItem("♿ Accessibility Modes (2 Profiles)", "accessibility")
+        self.cmb_quick_mode_scope.addItem("🚲 Micromobility Modes (3 Profiles)", "micromobility")
+        self.cmb_quick_mode_scope.addItem("🚗 Vehicle Modes (4 Profiles)", "vehicle")
+        scope_row.addWidget(self.cmb_quick_mode_scope)
+        self.cmb_quick_mode_scope.currentIndexChanged.connect(self._on_quick_mode_scope_changed)
+        prof_layout.addLayout(scope_row)
+
+        prof_row = QHBoxLayout()
+        prof_row.addWidget(QLabel("Focus Profile:"))
+        self.cmb_quick_profile = QComboBox()
+        for key in list_profile_keys():
+            p = get_profile(key)
+            self.cmb_quick_profile.addItem(p.name, key)
+        self.cmb_quick_profile.currentIndexChanged.connect(self._on_quick_profile_changed)
+        prof_row.addWidget(self.cmb_quick_profile)
+        prof_layout.addLayout(prof_row)
+
+        self.lbl_quick_profile_info = QLabel("Speed: 5.0 km/h | Max Slope: 25.0% | Stairs: Allowed")
+        self.lbl_quick_profile_info.setProperty("class", "route3dBadgeInfo")
+        prof_layout.addWidget(self.lbl_quick_profile_info)
+        layout.addWidget(card_prof)
+
+        # 3. Quick Action Launch Card
+        card_act = QFrame()
+        card_act.setProperty("class", "route3dCard")
+        act_layout = QVBoxLayout(card_act)
+
+        self.btn_quick_compute = QPushButton("🚀 Quick Compute Route & 3D Studio")
+        self.btn_quick_compute.setObjectName("primaryButton")
+        self.btn_quick_compute.setStyleSheet("""
+            QPushButton#primaryButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284c7, stop:1 #2563eb);
+                color: #ffffff;
+                font-weight: 800;
+                font-size: 13px;
+                padding: 12px;
+                border-radius: 6px;
+            }
+            QPushButton#primaryButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0369a1, stop:1 #1d4ed8);
+            }
+        """)
+        self.btn_quick_compute.clicked.connect(self.quick_compute_route)
+        act_layout.addWidget(self.btn_quick_compute)
+
+        self.quick_progress_bar = QProgressBar()
+        self.quick_progress_bar.setVisible(False)
+        act_layout.addWidget(self.quick_progress_bar)
+
+        # Quick KPIs
+        kpi_grid = QGridLayout()
+        self.quick_kpi_dist = QLabel("—")
+        self.quick_kpi_time = QLabel("—")
+        self.quick_kpi_climb = QLabel("—")
+        self.quick_kpi_slope = QLabel("—")
+        self.quick_kpi_kcal = QLabel("—")
+
+        for lbl in (self.quick_kpi_dist, self.quick_kpi_time, self.quick_kpi_climb, self.quick_kpi_slope, self.quick_kpi_kcal):
+            lbl.setProperty("class", "route3dKpi")
+
+        kpi_grid.addWidget(QLabel("Distance:"), 0, 0)
+        kpi_grid.addWidget(self.quick_kpi_dist, 0, 1)
+        kpi_grid.addWidget(QLabel("Duration:"), 0, 2)
+        kpi_grid.addWidget(self.quick_kpi_time, 0, 3)
+        kpi_grid.addWidget(QLabel("Climb:"), 1, 0)
+        kpi_grid.addWidget(self.quick_kpi_climb, 1, 1)
+        kpi_grid.addWidget(QLabel("Max Slope:"), 1, 2)
+        kpi_grid.addWidget(self.quick_kpi_slope, 1, 3)
+        kpi_grid.addWidget(QLabel("Calories:"), 2, 0)
+        kpi_grid.addWidget(self.quick_kpi_kcal, 2, 1)
+        act_layout.addLayout(kpi_grid)
+        layout.addWidget(card_act)
+
+        # 4. Canvas Playback & 3D Web Studio Card
+        card_play = QFrame()
+        card_play.setProperty("class", "route3dCard")
+        play_layout = QVBoxLayout(card_play)
+        play_layout.addWidget(QLabel("<b>3. Canvas Animation & 3D WebGL Studio</b>"))
+
+        ctrl_row = QHBoxLayout()
+        self.btn_quick_play = QPushButton("▶️ Play")
+        self.btn_quick_play.setEnabled(False)
+        self.btn_quick_play.clicked.connect(self.canvas_animator.toggle_play)
+        ctrl_row.addWidget(self.btn_quick_play)
+
+        self.btn_quick_stop = QPushButton("⏹️ Reset")
+        self.btn_quick_stop.setEnabled(False)
+        self.btn_quick_stop.clicked.connect(self.canvas_animator.stop)
+        ctrl_row.addWidget(self.btn_quick_stop)
+
+        ctrl_row.addWidget(QLabel("Speed:"))
+        self.cmb_quick_speed = QComboBox()
+        self.cmb_quick_speed.addItems(["1x", "2x", "5x", "10x", "25x", "50x", "100x"])
+        self.cmb_quick_speed.setCurrentIndex(3)
+        self.cmb_quick_speed.currentIndexChanged.connect(self._on_anim_speed_changed)
+        ctrl_row.addWidget(self.cmb_quick_speed)
+        play_layout.addLayout(ctrl_row)
+
+        _Horizontal = getattr(getattr(Qt, "Orientation", Qt), "Horizontal", 1)
+        self.sld_quick_progress = QSlider(_Horizontal)
+        self.sld_quick_progress.setRange(0, 1000)
+        self.sld_quick_progress.setValue(0)
+        self.sld_quick_progress.setEnabled(False)
+        self.sld_quick_progress.sliderMoved.connect(self._on_anim_slider_moved)
+        play_layout.addWidget(self.sld_quick_progress)
+
+        status_row = QHBoxLayout()
+        self.chk_quick_autopan = QCheckBox("🎯 Auto-pan")
+        self.chk_quick_autopan.toggled.connect(self.canvas_animator.set_auto_pan)
+        status_row.addWidget(self.chk_quick_autopan)
+        self.lbl_quick_anim_status = QLabel("Ready to animate")
+        self.lbl_quick_anim_status.setStyleSheet("color: #64748b; font-size: 11px;")
+        status_row.addWidget(self.lbl_quick_anim_status)
+        status_row.addStretch()
+        play_layout.addLayout(status_row)
+
+        self.btn_quick_open_3d = QPushButton("🎬 Open 3D WebGL Studio & Diorama (60 FPS)")
+        self.btn_quick_open_3d.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 12px;
+                padding: 10px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #047857, stop:1 #059669);
+            }
+        """)
+        self.btn_quick_open_3d.clicked.connect(self.open_3d_studio)
+        play_layout.addWidget(self.btn_quick_open_3d)
+        layout.addWidget(card_play)
+
+        # 5. Quick Export Card
+        card_exp = QFrame()
+        card_exp.setProperty("class", "route3dCard")
+        exp_layout = QVBoxLayout(card_exp)
+        exp_layout.addWidget(QLabel("<b>4. Export Formats</b>"))
+        exp_row = QHBoxLayout()
+
+        self.btn_quick_export_gpx = QPushButton("💾 GPX")
+        self.btn_quick_export_gpx.clicked.connect(self.export_gpx)
+        self.btn_quick_export_gpx.setEnabled(False)
+        exp_row.addWidget(self.btn_quick_export_gpx)
+
+        self.btn_quick_export_geojson = QPushButton("💾 GeoJSON")
+        self.btn_quick_export_geojson.clicked.connect(self.export_geojson)
+        self.btn_quick_export_geojson.setEnabled(False)
+        exp_row.addWidget(self.btn_quick_export_geojson)
+
+        self.btn_quick_export_html = QPushButton("🌐 3D HTML")
+        self.btn_quick_export_html.clicked.connect(self.export_standalone_html)
+        self.btn_quick_export_html.setEnabled(False)
+        exp_row.addWidget(self.btn_quick_export_html)
+
+        self.btn_quick_export_dxf = QPushButton("📐 3D DXF")
+        self.btn_quick_export_dxf.clicked.connect(self.export_dxf)
+        self.btn_quick_export_dxf.setEnabled(False)
+        exp_row.addWidget(self.btn_quick_export_dxf)
+        exp_layout.addLayout(exp_row)
+        layout.addWidget(card_exp)
+        layout.addStretch()
+
+        scroll.setWidget(container)
+        parent_layout = QVBoxLayout(parent)
+        parent_layout.setContentsMargins(0, 0, 0, 0)
+        parent_layout.addWidget(scroll)
+
+    def _build_tab_advanced(self, parent: QWidget) -> None:
         scroll = QScrollArea(parent)
         scroll.setWidgetResizable(True)
         _ScrollBarAlwaysOff = getattr(getattr(Qt, "ScrollBarPolicy", Qt), "ScrollBarAlwaysOff", 1)
@@ -199,7 +453,7 @@ class Route3DStudioDock(QDockWidget):
         card_osm = QFrame()
         card_osm.setProperty("class", "route3dCard")
         osm_layout = QVBoxLayout(card_osm)
-        osm_header = QLabel("<b>1. OpenStreetMap Basemap & Layers</b>")
+        osm_header = QLabel("<b>1. OpenStreetMap Basemap & Vector Sources</b>")
         osm_layout.addWidget(osm_header)
 
         osm_btn_row = QHBoxLayout()
@@ -237,11 +491,63 @@ class Route3DStudioDock(QDockWidget):
         osm_layout.addWidget(source_note)
         layout.addWidget(card_osm)
 
-        # 2. Point A & Point B Dual Origin/Destination Card
+        # 2. Copernicus Multi-Spectral Raster Stack Card
+        card_copernicus = QFrame()
+        card_copernicus.setProperty("class", "route3dCard")
+        cop_layout = QVBoxLayout(card_copernicus)
+        cop_layout.addWidget(QLabel("<b>2. Copernicus Multi-Spectral Environmental Stack & Clipping</b>"))
+
+        cop_grid = QGridLayout()
+        cop_grid.addWidget(QLabel("Elevation DEM:"), 0, 0)
+        self.cmb_dem_layer = QgsMapLayerComboBox()
+        self.cmb_dem_layer.setFilters(_raster_filters())
+        cop_grid.addWidget(self.cmb_dem_layer, 0, 1)
+
+        cop_grid.addWidget(QLabel("Thermal Heat LST:"), 1, 0)
+        self.cmb_lst_layer = QgsMapLayerComboBox()
+        self.cmb_lst_layer.setFilters(_raster_filters())
+        cop_grid.addWidget(self.cmb_lst_layer, 1, 1)
+
+        cop_grid.addWidget(QLabel("Tree Canopy / Greenery:"), 2, 0)
+        self.cmb_green_layer = QgsMapLayerComboBox()
+        self.cmb_green_layer.setFilters(_raster_filters())
+        cop_grid.addWidget(self.cmb_green_layer, 2, 1)
+
+        cop_grid.addWidget(QLabel("Additional MCDA rasters:"), 3, 0)
+        extra_row = QHBoxLayout()
+        self.cmb_extra_raster = QgsMapLayerComboBox()
+        self.cmb_extra_raster.setFilters(_raster_filters())
+        extra_row.addWidget(self.cmb_extra_raster, 1)
+        btn_add_extra = QPushButton("Add")
+        btn_add_extra.clicked.connect(self._add_extra_raster_layer)
+        extra_row.addWidget(btn_add_extra)
+        btn_remove_extra = QPushButton("Remove")
+        btn_remove_extra.clicked.connect(self._remove_extra_raster_layer)
+        extra_row.addWidget(btn_remove_extra)
+        cop_grid.addLayout(extra_row, 3, 1)
+
+        self.lst_extra_rasters = QListWidget()
+        self.lst_extra_rasters.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.lst_extra_rasters.setMaximumHeight(92)
+        cop_grid.addWidget(self.lst_extra_rasters, 4, 1)
+
+        btn_fetch_dem = QPushButton("🛰️ Fetch & Clip Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)")
+        btn_fetch_dem.setToolTip("Acquire Copernicus GLO-30 DEM, Sentinel-2 NDVI, Land Surface Temperature (LST), and NDBI Built-up Density in one pass, automatically clipped to the route corridor buffer.")
+        btn_fetch_dem.clicked.connect(self._on_fetch_global_dem_clicked)
+        cop_grid.addWidget(btn_fetch_dem, 5, 0, 1, 2)
+
+        lbl_dem_note = QLabel("ℹ️ <i>Acquires official Copernicus GLO-30 DEM, Sentinel-2 NDVI Greenery, LST Thermal Comfort, and NDBI Built-up Density in a single click, automatically clipped and georeferenced to the route corridor.</i>")
+        lbl_dem_note.setStyleSheet("color: #64748b; font-size: 11px;")
+        lbl_dem_note.setWordWrap(True)
+        cop_grid.addWidget(lbl_dem_note, 6, 0, 1, 2)
+        cop_layout.addLayout(cop_grid)
+        layout.addWidget(card_copernicus)
+
+        # 3. Point A & Point B Dual Origin/Destination Card
         card_ab = QFrame()
         card_ab.setProperty("class", "route3dCard")
         ab_layout = QVBoxLayout(card_ab)
-        ab_layout.addWidget(QLabel("<b>2. Route Points (A & B)</b>"))
+        ab_layout.addWidget(QLabel("<b>3. Route Points (A & B)</b>"))
 
         # Point A Box
         grp_a = QGroupBox("📍 Point A (Origin)")
@@ -301,20 +607,17 @@ class Route3DStudioDock(QDockWidget):
         b_vbox.addLayout(b_layer_row)
         ab_layout.addWidget(grp_b)
 
-        # Reverse A & B Button
         btn_rev_ab = QPushButton("⇄ Swap Origin & Destination")
         btn_rev_ab.clicked.connect(self._reverse_waypoints)
         ab_layout.addWidget(btn_rev_ab)
-
         layout.addWidget(card_ab)
 
-        # 3. Mobility Profile Selector & Multi-Modal Mode Scope Card
+        # 4. Mobility Profile Selector & Multi-Modal Mode Scope Card
         card_prof = QFrame()
         card_prof.setProperty("class", "route3dCard")
         prof_layout = QVBoxLayout(card_prof)
-        prof_layout.addWidget(QLabel("<b>3. User Mobility Profile & Mode Scope</b>"))
+        prof_layout.addWidget(QLabel("<b>4. User Mobility Profile & Mode Scope</b>"))
 
-        # Mode Scope Selector (Single vs Category vs All)
         scope_row = QHBoxLayout()
         scope_row.addWidget(QLabel("Mode Scope:"))
         self.cmb_mode_scope = QComboBox()
@@ -343,13 +646,53 @@ class Route3DStudioDock(QDockWidget):
         prof_layout.addWidget(self.lbl_profile_info)
         layout.addWidget(card_prof)
 
-        # 4. Action Card (Compute + 3D Corridor Animation)
+        # 5. AHP Sliders Card
+        grp_weights = QGroupBox("5. MCDA Resistance Weights (AHP)")
+        w_layout = QVBoxLayout(grp_weights)
+        _Horizontal = getattr(getattr(Qt, "Orientation", Qt), "Horizontal", 1)
+
+        row_slope = QHBoxLayout()
+        row_slope.addWidget(QLabel("Slope Incline Penalty:"))
+        self.sld_slope = QSlider(_Horizontal)
+        self.sld_slope.setRange(0, 100)
+        self.sld_slope.setValue(45)
+        self.lbl_val_slope = QLabel("45%")
+        self.sld_slope.valueChanged.connect(lambda v: self.lbl_val_slope.setText(f"{v}%"))
+        row_slope.addWidget(self.sld_slope)
+        row_slope.addWidget(self.lbl_val_slope)
+        w_layout.addLayout(row_slope)
+
+        row_heat = QHBoxLayout()
+        row_heat.addWidget(QLabel("Heat Stress Avoidance:"))
+        self.sld_heat = QSlider(_Horizontal)
+        self.sld_heat.setRange(0, 100)
+        self.sld_heat.setValue(30)
+        self.lbl_val_heat = QLabel("30%")
+        self.sld_heat.valueChanged.connect(lambda v: self.lbl_val_heat.setText(f"{v}%"))
+        row_heat.addWidget(self.sld_heat)
+        row_heat.addWidget(self.lbl_val_heat)
+        w_layout.addLayout(row_heat)
+
+        row_green = QHBoxLayout()
+        row_green.addWidget(QLabel("Shade / Green Preference:"))
+        self.sld_green = QSlider(_Horizontal)
+        self.sld_green.setRange(0, 100)
+        self.sld_green.setValue(25)
+        self.lbl_val_green = QLabel("25%")
+        self.sld_green.valueChanged.connect(lambda v: self.lbl_val_green.setText(f"{v}%"))
+        row_green.addWidget(self.sld_green)
+        row_green.addWidget(self.lbl_val_green)
+        w_layout.addLayout(row_green)
+        layout.addWidget(grp_weights)
+
+        # 6. Action Card (Compute + 3D Corridor Animation)
         card_act = QFrame()
         card_act.setProperty("class", "route3dCard")
         act_layout = QVBoxLayout(card_act)
+        act_layout.addWidget(QLabel("<b>6. Multi-Criteria 3D Compute & Actions</b>"))
 
         # Primary Compute 3D Route
-        self.btn_compute = QPushButton("⚡ Compute 3D Shortest Path(s)")
+        self.btn_compute = QPushButton("⚡ Compute Multi-Criteria 3D Path(s)")
         self.btn_compute.setObjectName("primaryButton")
         self.btn_compute.setStyleSheet("""
             QPushButton#primaryButton {
@@ -446,13 +789,12 @@ class Route3DStudioDock(QDockWidget):
         act_layout.addLayout(exp_row)
         layout.addWidget(card_act)
 
-        # 5. Real-Time 2D QGIS Canvas Animation Card
+        # 7. Real-Time 2D QGIS Canvas Animation Card
         card_anim = QFrame()
         card_anim.setProperty("class", "route3dCard")
         anim_layout = QVBoxLayout(card_anim)
-        anim_layout.addWidget(QLabel("<b>5. Real-Time 2D Canvas Animation (QGIS Tuvali)</b>"))
+        anim_layout.addWidget(QLabel("<b>7. Real-Time 2D Canvas Animation (QGIS Tuvali)</b>"))
 
-        # Row 1: Playback Controls + Speed
         anim_ctrl_row = QHBoxLayout()
         self.btn_anim_play = QPushButton("▶️ Play")
         self.btn_anim_play.setEnabled(False)
@@ -467,7 +809,7 @@ class Route3DStudioDock(QDockWidget):
         anim_ctrl_row.addWidget(self.btn_anim_stop)
 
         self.btn_reset_session = QPushButton("🧹 New Route")
-        self.btn_reset_session.setToolTip("Clear animation, Web Guide payload, output layers, and A/B pins")
+        self.btn_reset_session.setToolTip("Reset current origin/destination points for a new run (keeps all previous layers in QGIS)")
         self.btn_reset_session.clicked.connect(self._reset_route_session)
         anim_ctrl_row.addWidget(self.btn_reset_session)
 
@@ -479,7 +821,6 @@ class Route3DStudioDock(QDockWidget):
         anim_ctrl_row.addWidget(self.cmb_anim_speed)
         anim_layout.addLayout(anim_ctrl_row)
 
-        # Row 2: Interactive Progress Scrubber Slider
         _Horizontal = getattr(getattr(Qt, "Orientation", Qt), "Horizontal", 1)
         self.sld_anim_progress = QSlider(_Horizontal)
         self.sld_anim_progress.setRange(0, 1000)
@@ -488,7 +829,6 @@ class Route3DStudioDock(QDockWidget):
         self.sld_anim_progress.sliderMoved.connect(self._on_anim_slider_moved)
         anim_layout.addWidget(self.sld_anim_progress)
 
-        # Row 3: Status & Auto-Pan
         anim_status_row = QHBoxLayout()
         self.chk_anim_autopan = QCheckBox("🎯 Auto-pan canvas")
         self.chk_anim_autopan.setChecked(False)
@@ -502,129 +842,26 @@ class Route3DStudioDock(QDockWidget):
         anim_layout.addLayout(anim_status_row)
         layout.addWidget(card_anim)
 
-        # 6. Multi-Profile Comparison & Benchmarking Table Card
+        # 8. Multi-Profile Comparison & Benchmarking Table Card
         card_comp = QFrame()
         card_comp.setProperty("class", "route3dCard")
         comp_layout = QVBoxLayout(card_comp)
-        comp_layout.addWidget(QLabel("<b>6. Multi-Profile Comparison & Benchmarking</b>"))
+        comp_layout.addWidget(QLabel("<b>8. Multi-Profile Comparison & Benchmarking</b>"))
 
         self.table_comparison = QTableWidget(0, 7)
         self.table_comparison.setHorizontalHeaderLabels([
             "Mode", "Category", "Distance", "Duration", "Climb", "Max Slope", "Energy / Status"
         ])
-        _ResizeToContents = getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "ResizeToContents", 3)
-        self.table_comparison.horizontalHeader().setSectionResizeMode(_ResizeToContents)
-        _SelectRows = getattr(getattr(QTableWidget, "SelectionBehavior", QTableWidget), "SelectRows", 1)
-        self.table_comparison.setSelectionBehavior(_SelectRows)
+        resize_mode_enum = getattr(QHeaderView, "ResizeMode", QHeaderView)
+        resize_contents = getattr(resize_mode_enum, "ResizeToContents", 3)
+        self.table_comparison.horizontalHeader().setSectionResizeMode(resize_contents)
+        select_behavior_enum = getattr(QAbstractItemView, "SelectionBehavior", getattr(QTableWidget, "SelectionBehavior", QTableWidget))
+        select_rows = getattr(select_behavior_enum, "SelectRows", 1)
+        self.table_comparison.setSelectionBehavior(select_rows)
         self.table_comparison.cellClicked.connect(self._on_comparison_row_clicked)
         self.table_comparison.setMinimumHeight(160)
         comp_layout.addWidget(self.table_comparison)
         layout.addWidget(card_comp)
-        layout.addStretch()
-
-        scroll.setWidget(container)
-        parent_layout = QVBoxLayout(parent)
-        parent_layout.setContentsMargins(0, 0, 0, 0)
-        parent_layout.addWidget(scroll)
-
-    def _build_tab_mcda(self, parent: QWidget) -> None:
-        scroll = QScrollArea(parent)
-        scroll.setWidgetResizable(True)
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
-
-        # Layer bindings
-        grp_layers = QGroupBox("Environmental Raster Surfaces")
-        lay_grid = QGridLayout(grp_layers)
-
-        lay_grid.addWidget(QLabel("Elevation DEM:"), 0, 0)
-        self.cmb_dem_layer = QgsMapLayerComboBox()
-        self.cmb_dem_layer.setFilters(_raster_filters())
-        lay_grid.addWidget(self.cmb_dem_layer, 0, 1)
-
-        lay_grid.addWidget(QLabel("Thermal Heat LST:"), 1, 0)
-        self.cmb_lst_layer = QgsMapLayerComboBox()
-        self.cmb_lst_layer.setFilters(_raster_filters())
-        lay_grid.addWidget(self.cmb_lst_layer, 1, 1)
-
-        lay_grid.addWidget(QLabel("Tree Canopy / Greenery:"), 2, 0)
-        self.cmb_green_layer = QgsMapLayerComboBox()
-        self.cmb_green_layer.setFilters(_raster_filters())
-        lay_grid.addWidget(self.cmb_green_layer, 2, 1)
-
-        lay_grid.addWidget(QLabel("Additional MCDA rasters:"), 3, 0)
-        extra_row = QHBoxLayout()
-        self.cmb_extra_raster = QgsMapLayerComboBox()
-        self.cmb_extra_raster.setFilters(_raster_filters())
-        extra_row.addWidget(self.cmb_extra_raster, 1)
-        btn_add_extra = QPushButton("Add")
-        btn_add_extra.clicked.connect(self._add_extra_raster_layer)
-        extra_row.addWidget(btn_add_extra)
-        btn_remove_extra = QPushButton("Remove")
-        btn_remove_extra.clicked.connect(self._remove_extra_raster_layer)
-        extra_row.addWidget(btn_remove_extra)
-        lay_grid.addLayout(extra_row, 3, 1)
-
-        self.lst_extra_rasters = QListWidget()
-        self.lst_extra_rasters.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.lst_extra_rasters.setMaximumHeight(92)
-        lay_grid.addWidget(self.lst_extra_rasters, 4, 1)
-
-        btn_fetch_dem = QPushButton("🛰️ Fetch & Clip Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)")
-        btn_fetch_dem.setToolTip("Acquire Copernicus GLO-30 DEM, Sentinel-2 NDVI, Land Surface Temperature (LST), and NDBI Built-up Density in one pass, automatically clipped to the route corridor buffer.")
-        btn_fetch_dem.clicked.connect(self._on_fetch_global_dem_clicked)
-        lay_grid.addWidget(btn_fetch_dem, 5, 0, 1, 2)
-
-        lbl_dem_note = QLabel("ℹ️ <i>Acquires official Copernicus GLO-30 DEM, Sentinel-2 NDVI Greenery, LST Thermal Comfort, and NDBI Built-up Density in a single click, automatically clipped and georeferenced to the route corridor.</i>")
-        lbl_dem_note.setStyleSheet("color: #64748b; font-size: 11px;")
-        lbl_dem_note.setWordWrap(True)
-        lay_grid.addWidget(lbl_dem_note, 6, 0, 1, 2)
-        layout.addWidget(grp_layers)
-
-        # AHP Sliders
-        grp_weights = QGroupBox("MCDA Resistance Weights (AHP)")
-        w_layout = QVBoxLayout(grp_weights)
-        _Horizontal = getattr(getattr(Qt, "Orientation", Qt), "Horizontal", 1)
-
-        # Slope slider
-        row_slope = QHBoxLayout()
-        row_slope.addWidget(QLabel("Slope Incline Penalty:"))
-        self.sld_slope = QSlider(_Horizontal)
-        self.sld_slope.setRange(0, 100)
-        self.sld_slope.setValue(45)
-        self.lbl_val_slope = QLabel("45%")
-        self.sld_slope.valueChanged.connect(lambda v: self.lbl_val_slope.setText(f"{v}%"))
-        row_slope.addWidget(self.sld_slope)
-        row_slope.addWidget(self.lbl_val_slope)
-        w_layout.addLayout(row_slope)
-
-        # Thermal slider
-        row_heat = QHBoxLayout()
-        row_heat.addWidget(QLabel("Heat Stress Avoidance:"))
-        self.sld_heat = QSlider(_Horizontal)
-        self.sld_heat.setRange(0, 100)
-        self.sld_heat.setValue(30)
-        self.lbl_val_heat = QLabel("30%")
-        self.sld_heat.valueChanged.connect(lambda v: self.lbl_val_heat.setText(f"{v}%"))
-        row_heat.addWidget(self.sld_heat)
-        row_heat.addWidget(self.lbl_val_heat)
-        w_layout.addLayout(row_heat)
-
-        # Greenery slider
-        row_green = QHBoxLayout()
-        row_green.addWidget(QLabel("Shade / Green Preference:"))
-        self.sld_green = QSlider(_Horizontal)
-        self.sld_green.setRange(0, 100)
-        self.sld_green.setValue(25)
-        self.lbl_val_green = QLabel("25%")
-        self.sld_green.valueChanged.connect(lambda v: self.lbl_val_green.setText(f"{v}%"))
-        row_green.addWidget(self.sld_green)
-        row_green.addWidget(self.lbl_val_green)
-        w_layout.addLayout(row_green)
-
-        layout.addWidget(grp_weights)
         layout.addStretch()
 
         scroll.setWidget(container)
@@ -640,8 +877,9 @@ class Route3DStudioDock(QDockWidget):
         self.table_od = QTableWidget()
         self.table_od.setColumnCount(5)
         self.table_od.setHorizontalHeaderLabels(["Origin", "Destination", "Dist (km)", "Time (min)", "Climb (m)"])
-        _Stretch = getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "Stretch", 1)
-        self.table_od.horizontalHeader().setSectionResizeMode(_Stretch)
+        resize_mode_enum = getattr(QHeaderView, "ResizeMode", QHeaderView)
+        stretch_mode = getattr(resize_mode_enum, "Stretch", 1)
+        self.table_od.horizontalHeader().setSectionResizeMode(stretch_mode)
         layout.addWidget(self.table_od)
 
         btn_run_od = QPushButton("📊 Compute Full OD Matrix")
@@ -697,23 +935,54 @@ class Route3DStudioDock(QDockWidget):
             else:
                 self.iface.messageBar().pushWarning("02Route 3D", "Select a road or building layer first.")
 
+    def _update_point_labels(self) -> None:
+        """Synchronize Point A and B coordinate labels across Quick Mode and Advanced Lab."""
+        if self.point_a is not None:
+            txt_a = f"{self.point_a.lon:.5f}, {self.point_a.lat:.5f}"
+            self.lbl_coord_a.setText(txt_a)
+            self.lbl_coord_a.setStyleSheet("font-weight: bold; color: #059669; font-size: 11px;")
+            if hasattr(self, "lbl_quick_coord_a"):
+                self.lbl_quick_coord_a.setText(txt_a)
+                self.lbl_quick_coord_a.setStyleSheet("font-weight: bold; color: #059669; font-size: 11px;")
+        else:
+            self.lbl_coord_a.setText("📍 Not selected (Pick on map or choose layer)")
+            self.lbl_coord_a.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+            if hasattr(self, "lbl_quick_coord_a"):
+                self.lbl_quick_coord_a.setText("Not selected")
+                self.lbl_quick_coord_a.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+
+        if self.point_b is not None:
+            txt_b = f"{self.point_b.lon:.5f}, {self.point_b.lat:.5f}"
+            self.lbl_coord_b.setText(txt_b)
+            self.lbl_coord_b.setStyleSheet("font-weight: bold; color: #dc2626; font-size: 11px;")
+            if hasattr(self, "lbl_quick_coord_b"):
+                self.lbl_quick_coord_b.setText(txt_b)
+                self.lbl_quick_coord_b.setStyleSheet("font-weight: bold; color: #dc2626; font-size: 11px;")
+        else:
+            self.lbl_coord_b.setText("🎯 Not selected (Pick on map or choose layer)")
+            self.lbl_coord_b.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+            if hasattr(self, "lbl_quick_coord_b"):
+                self.lbl_quick_coord_b.setText("Not selected")
+                self.lbl_quick_coord_b.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
+
     def _clear_route_point(self, target: str) -> None:
         """Clear one endpoint and remove its managed QGIS pin immediately."""
         if target == "A":
             self.point_a = None
-            self.lbl_coord_a.setText("📍 Not selected (Pick on map or choose layer)")
-            self.lbl_coord_a.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
             self.btn_pick_a.setChecked(False)
+            if hasattr(self, "btn_quick_pick_a"):
+                self.btn_quick_pick_a.setChecked(False)
         else:
             self.point_b = None
-            self.lbl_coord_b.setText("🎯 Not selected (Pick on map or choose layer)")
-            self.lbl_coord_b.setStyleSheet("font-style: italic; color: #64748b; font-size: 11px;")
             self.btn_pick_b.setChecked(False)
+            if hasattr(self, "btn_quick_pick_b"):
+                self.btn_quick_pick_b.setChecked(False)
         if self.active_tool is not None and self.canvas is not None:
             with contextlib.suppress(Exception):
                 self.canvas.unsetMapTool(self.active_tool)
         self.active_tool = None
         self.waypoints = [point for point in (self.point_a, self.point_b) if point is not None]
+        self._update_point_labels()
         self._update_point_vector_layers()
 
     def _extract_buildings_from_layer(self, layer: Any) -> List[OsmBuilding]:
@@ -876,20 +1145,21 @@ class Route3DStudioDock(QDockWidget):
         lat = float(point.y())
         if self.picking_target == "A":
             self.point_a = Waypoint(lon=lon, lat=lat, name="Point A (Origin)")
-            self.lbl_coord_a.setText(f"{lon:.5f}, {lat:.5f}")
-            self.lbl_coord_a.setStyleSheet("font-weight: bold; color: #059669; font-size: 11px;")
             self.btn_pick_a.setChecked(False)
+            if hasattr(self, "btn_quick_pick_a"):
+                self.btn_quick_pick_a.setChecked(False)
         else:
             self.point_b = Waypoint(lon=lon, lat=lat, name="Point B (Destination)")
-            self.lbl_coord_b.setText(f"{lon:.5f}, {lat:.5f}")
-            self.lbl_coord_b.setStyleSheet("font-weight: bold; color: #dc2626; font-size: 11px;")
             self.btn_pick_b.setChecked(False)
+            if hasattr(self, "btn_quick_pick_b"):
+                self.btn_quick_pick_b.setChecked(False)
 
         if self.active_tool:
             self.canvas.unsetMapTool(self.active_tool)
             self.active_tool = None
 
         self.waypoints = [w for w in (self.point_a, self.point_b) if w is not None]
+        self._update_point_labels()
         self._update_point_vector_layers()
 
         if self.iface:
@@ -941,14 +1211,11 @@ class Route3DStudioDock(QDockWidget):
 
         if target == "A":
             self.point_a = Waypoint(lon=lon, lat=lat, name=f"Point A ({layer.name()})")
-            self.lbl_coord_a.setText(f"{lon:.5f}, {lat:.5f} ({layer.name()})")
-            self.lbl_coord_a.setStyleSheet("font-weight: bold; color: #059669; font-size: 11px;")
         else:
             self.point_b = Waypoint(lon=lon, lat=lat, name=f"Point B ({layer.name()})")
-            self.lbl_coord_b.setText(f"{lon:.5f}, {lat:.5f} ({layer.name()})")
-            self.lbl_coord_b.setStyleSheet("font-weight: bold; color: #dc2626; font-size: 11px;")
 
         self.waypoints = [w for w in (self.point_a, self.point_b) if w is not None]
+        self._update_point_labels()
         self._update_point_vector_layers()
 
         if self.iface:
@@ -1053,18 +1320,24 @@ class Route3DStudioDock(QDockWidget):
                 self.iface.messageBar().pushInfo("02Route 3D", "Please select both Point A and Point B first to swap them.")
             return
         self.point_a, self.point_b = self.point_b, self.point_a
-        self.lbl_coord_a.setText(f"{self.point_a.lon:.5f}, {self.point_a.lat:.5f}")
-        self.lbl_coord_a.setStyleSheet("font-weight: bold; color: #059669; font-size: 11px;")
-        self.lbl_coord_b.setText(f"{self.point_b.lon:.5f}, {self.point_b.lat:.5f}")
-        self.lbl_coord_b.setStyleSheet("font-weight: bold; color: #dc2626; font-size: 11px;")
         self.waypoints = [self.point_a, self.point_b]
+        self._update_point_labels()
         self._update_point_vector_layers()
 
     def _on_profile_changed(self, index: int) -> None:
         key = self.cmb_profile.itemData(index) or "adult"
         p = get_profile(key)
         stairs = "Allowed" if p.stair_allowed else "Prohibited"
-        self.lbl_profile_info.setText(f"Speed: {p.base_speed_kmh:.1f} km/h | Max Slope: {p.max_slope_pct:.1f}% | Stairs: {stairs}")
+        info_txt = f"Speed: {p.base_speed_kmh:.1f} km/h | Max Slope: {p.max_slope_pct:.1f}% | Stairs: {stairs}"
+        self.lbl_profile_info.setText(info_txt)
+
+        if hasattr(self, "cmb_quick_profile") and self.cmb_quick_profile.currentIndex() != index:
+            self.cmb_quick_profile.blockSignals(True)
+            self.cmb_quick_profile.setCurrentIndex(index)
+            self.cmb_quick_profile.blockSignals(False)
+
+        if hasattr(self, "lbl_quick_profile_info"):
+            self.lbl_quick_profile_info.setText(info_txt)
 
     def _on_mode_scope_changed(self, index: int) -> None:
         """Restrict Focus Profile to the selected mode scope."""
@@ -1084,7 +1357,45 @@ class Route3DStudioDock(QDockWidget):
             self.cmb_profile.setCurrentIndex(max(0, target_index))
         finally:
             self.cmb_profile.blockSignals(False)
+
+        if hasattr(self, "cmb_quick_mode_scope") and self.cmb_quick_mode_scope.currentIndex() != index:
+            self.cmb_quick_mode_scope.blockSignals(True)
+            self.cmb_quick_mode_scope.setCurrentIndex(index)
+            self.cmb_quick_mode_scope.blockSignals(False)
+
+        if hasattr(self, "cmb_quick_profile"):
+            self.cmb_quick_profile.blockSignals(True)
+            self.cmb_quick_profile.clear()
+            for key in allowed:
+                profile = get_profile(key)
+                self.cmb_quick_profile.addItem(profile.name, key)
+            target_idx_q = self.cmb_quick_profile.findData(selected_key)
+            self.cmb_quick_profile.setCurrentIndex(max(0, target_idx_q))
+            self.cmb_quick_profile.blockSignals(False)
+
         self._on_profile_changed(self.cmb_profile.currentIndex())
+
+    def _on_quick_mode_scope_changed(self, index: int) -> None:
+        self.cmb_mode_scope.setCurrentIndex(index)
+
+    def _on_quick_profile_changed(self, index: int) -> None:
+        self.cmb_profile.setCurrentIndex(index)
+
+    def quick_compute_route(self) -> None:
+        """1-Click streamlined workflow: auto-load basemap, auto-fetch network/DEM if missing, compute 3D route, enable 2D animation, and ready 3D Studio."""
+        if not self.point_a or not self.point_b:
+            msg = "Please select both Point A (Origin) and Point B (Destination) first using 'Pick on Map'."
+            if self.iface:
+                self.iface.messageBar().pushWarning("02Route 3D", msg)
+            else:
+                QMessageBox.warning(self, "02Route 3D", msg)
+            return
+
+        # 1. Ensure OSM Basemap exists in project
+        self._on_add_osm_basemap()
+
+        # 2. Compute route
+        self.compute_route()
 
     def _selected_extra_raster_layers(self) -> List[Any]:
         """Return the current unlimited MCDA raster stack in list-widget order."""
@@ -1429,17 +1740,34 @@ class Route3DStudioDock(QDockWidget):
 
         # Enable Export Buttons & Canvas Animator Controls
         self.btn_add_layer.setEnabled(True)
+        # Enable Export Buttons & Canvas Animator Controls in both tabs
+        self.btn_add_layer.setEnabled(True)
         self.btn_export_gpx.setEnabled(True)
         self.btn_export_geojson.setEnabled(True)
         self.btn_export_html.setEnabled(True)
         self.btn_export_dxf.setEnabled(True)
+        if hasattr(self, "btn_quick_export_gpx"):
+            self.btn_quick_export_gpx.setEnabled(True)
+            self.btn_quick_export_geojson.setEnabled(True)
+            self.btn_quick_export_html.setEnabled(True)
+            self.btn_quick_export_dxf.setEnabled(True)
+
         self.btn_anim_play.setText("▶️ Play")
         self.btn_anim_play.setEnabled(True)
         self.btn_anim_stop.setEnabled(True)
         self.sld_anim_progress.setEnabled(True)
 
+        if hasattr(self, "btn_quick_play"):
+            self.btn_quick_play.setText("▶️ Play")
+            self.btn_quick_play.setEnabled(True)
+            self.btn_quick_stop.setEnabled(True)
+            self.sld_quick_progress.setEnabled(True)
+
         self.progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
+        if hasattr(self, "quick_progress_bar"):
+            self.quick_progress_bar.setValue(100)
+            self.quick_progress_bar.setVisible(False)
         self.route_calculated.emit(result)
         if self.iface:
             self.iface.messageBar().pushSuccess(
@@ -1455,11 +1783,24 @@ class Route3DStudioDock(QDockWidget):
             QMessageBox.critical(self, "02Route 3D", message)
 
     def _update_kpi_display(self, result: RouteResult3D) -> None:
-        self.kpi_dist.setText(f"{result.statistics.total_distance_km} km")
-        self.kpi_time.setText(f"{result.statistics.total_duration_min} min")
-        self.kpi_climb.setText(f"+{result.statistics.elevation_gain_m:.1f} m")
-        self.kpi_slope.setText(f"{result.statistics.max_slope_pct:.1f}%")
-        self.kpi_kcal.setText(f"{result.statistics.total_calories_kcal:.0f} kcal")
+        dist_str = f"{result.statistics.total_distance_km} km"
+        time_str = f"{result.statistics.total_duration_min} min"
+        climb_str = f"+{result.statistics.elevation_gain_m:.1f} m"
+        slope_str = f"{result.statistics.max_slope_pct:.1f}%"
+        kcal_str = f"{result.statistics.total_calories_kcal:.0f} kcal"
+
+        self.kpi_dist.setText(dist_str)
+        self.kpi_time.setText(time_str)
+        self.kpi_climb.setText(climb_str)
+        self.kpi_slope.setText(slope_str)
+        self.kpi_kcal.setText(kcal_str)
+
+        if hasattr(self, "quick_kpi_dist"):
+            self.quick_kpi_dist.setText(dist_str)
+            self.quick_kpi_time.setText(time_str)
+            self.quick_kpi_climb.setText(climb_str)
+            self.quick_kpi_slope.setText(slope_str)
+            self.quick_kpi_kcal.setText(kcal_str)
 
     def _update_comparison_table(self) -> None:
         if not self.multi_route_results:
@@ -1503,22 +1844,40 @@ class Route3DStudioDock(QDockWidget):
         self.sld_anim_progress.setValue(int(progress * 1000))
         self.sld_anim_progress.blockSignals(False)
 
+        if hasattr(self, "sld_quick_progress"):
+            self.sld_quick_progress.blockSignals(True)
+            self.sld_quick_progress.setValue(int(progress * 1000))
+            self.sld_quick_progress.blockSignals(False)
+
         cur_min, cur_sec = divmod(int(current_time_s), 60)
         tot_min, tot_sec = divmod(int(max_time_s), 60)
         pct = int(progress * 100)
         mode_count = len(self.canvas_animator.avatars)
-        self.lbl_anim_status.setText(f"{cur_min:02d}:{cur_sec:02d} / {tot_min:02d}:{tot_sec:02d} ({pct}%) | 🚗 {mode_count} Modes Active")
+        msg = f"{cur_min:02d}:{cur_sec:02d} / {tot_min:02d}:{tot_sec:02d} ({pct}%) | 🚗 {mode_count} Modes Active"
+        self.lbl_anim_status.setText(msg)
+        if hasattr(self, "lbl_quick_anim_status"):
+            self.lbl_quick_anim_status.setText(msg)
 
     def _on_anim_state_changed(self, is_playing: bool) -> None:
-        self.btn_anim_play.setText("⏸️ Pause" if is_playing else "▶️ Play")
-        self.btn_anim_play.setEnabled(bool(self.canvas_animator.avatars) or bool(self.multi_route_results))
+        txt = "⏸️ Pause" if is_playing else "▶️ Play"
+        has_routes = bool(self.canvas_animator.avatars) or bool(self.multi_route_results)
+        self.btn_anim_play.setText(txt)
+        self.btn_anim_play.setEnabled(has_routes)
+        if hasattr(self, "btn_quick_play"):
+            self.btn_quick_play.setText(txt)
+            self.btn_quick_play.setEnabled(has_routes)
+        if hasattr(self, "btn_quick_stop"):
+            self.btn_quick_stop.setEnabled(has_routes)
+        if hasattr(self, "sld_quick_progress"):
+            self.sld_quick_progress.setEnabled(has_routes)
 
     def _on_anim_slider_moved(self, val: int) -> None:
         fraction = val / 1000.0
         self.canvas_animator.seek_progress(fraction)
 
     def _on_anim_speed_changed(self, _index: int) -> None:
-        speed_str = self.cmb_anim_speed.currentText().replace("x", "")
+        sender = self.sender()
+        speed_str = sender.currentText().replace("x", "") if sender else "10"
         with contextlib.suppress(ValueError):
             self.canvas_animator.set_speed_multiplier(float(speed_str))
 
@@ -1639,47 +1998,49 @@ class Route3DStudioDock(QDockWidget):
         if not self.multi_route_results and not self.current_route_result:
             return
 
+        self._run_counter += 1
         proj = QgsProject.instance()
-        layer_name = "🛣️ 02Route 3D - Multi-Profile Routes"
-        layers = proj.mapLayersByName(layer_name)
-
-        if layers:
-            layer = layers[0]
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+        routes_to_add = list(self.multi_route_results.values()) if self.multi_route_results else [self.current_route_result]
+        mode_count = len(routes_to_add)
+        primary_name = routes_to_add[0].profile.name if routes_to_add and routes_to_add[0] and routes_to_add[0].profile else "Route"
+        if mode_count > 1:
+            layer_name = f"🛣️ 02Route 3D — Run #{self._run_counter} ({primary_name} +{mode_count-1} modes, {now_str})"
         else:
-            layer = QgsVectorLayer(
-                "LineStringZ?crs=EPSG:4326&field=mode_key:string&field=mode_name:string&field=category:string"
-                "&field=dist_km:double&field=dist_m:double&field=time_min:double&field=climb_m:double"
-                "&field=loss_m:double&field=max_slope:double&field=avg_slope:double&field=calories:double"
-                "&field=ada_ok:int&field=status:string",
-                layer_name,
-                "memory",
-            )
-            layer.setCustomProperty("zero2route3d/route_layer", True)
-            self._managed_route_layer_ids.add(layer.id())
-            if layer.fields().isEmpty():
-                pr = layer.dataProvider()
-                pr.addAttributes([
-                    QgsField("mode_key", QVariant.String),
-                    QgsField("mode_name", QVariant.String),
-                    QgsField("category", QVariant.String),
-                    QgsField("dist_km", QVariant.Double),
-                    QgsField("dist_m", QVariant.Double),
-                    QgsField("time_min", QVariant.Double),
-                    QgsField("climb_m", QVariant.Double),
-                    QgsField("loss_m", QVariant.Double),
-                    QgsField("max_slope", QVariant.Double),
-                    QgsField("avg_slope", QVariant.Double),
-                    QgsField("calories", QVariant.Double),
-                    QgsField("ada_ok", QVariant.Int),
-                    QgsField("status", QVariant.String),
-                ])
-                layer.updateFields()
+            layer_name = f"🛣️ 02Route 3D — Run #{self._run_counter} ({primary_name}, {now_str})"
+
+        layer = QgsVectorLayer(
+            "LineStringZ?crs=EPSG:4326&field=mode_key:string&field=mode_name:string&field=category:string"
+            "&field=dist_km:double&field=dist_m:double&field=time_min:double&field=climb_m:double"
+            "&field=loss_m:double&field=max_slope:double&field=avg_slope:double&field=calories:double"
+            "&field=ada_ok:int&field=status:string",
+            layer_name,
+            "memory",
+        )
         layer.setCustomProperty("zero2route3d/route_layer", True)
+        layer.setCustomProperty("zero2route3d/run_id", self._run_counter)
         self._managed_route_layer_ids.add(layer.id())
 
-        feats = []
-        routes_to_add = list(self.multi_route_results.values()) if self.multi_route_results else [self.current_route_result]
+        if layer.fields().isEmpty():
+            pr = layer.dataProvider()
+            pr.addAttributes([
+                QgsField("mode_key", QVariant.String),
+                QgsField("mode_name", QVariant.String),
+                QgsField("category", QVariant.String),
+                QgsField("dist_km", QVariant.Double),
+                QgsField("dist_m", QVariant.Double),
+                QgsField("time_min", QVariant.Double),
+                QgsField("climb_m", QVariant.Double),
+                QgsField("loss_m", QVariant.Double),
+                QgsField("max_slope", QVariant.Double),
+                QgsField("avg_slope", QVariant.Double),
+                QgsField("calories", QVariant.Double),
+                QgsField("ada_ok", QVariant.Int),
+                QgsField("status", QVariant.String),
+            ])
+            layer.updateFields()
 
+        feats = []
         for r in routes_to_add:
             if not r or not r.coordinates_3d:
                 continue
@@ -1705,25 +2066,26 @@ class Route3DStudioDock(QDockWidget):
             feats.append(feat)
 
         active_keys = [r.profile.key for r in routes_to_add if r and r.profile]
+        pr = layer.dataProvider()
+        pr.addFeatures(feats)
+        layer.updateExtents()
+        apply_multiprofile_categorized_renderer(layer, field_name="mode_key", active_keys=active_keys)
 
-        if layers:
-            with contextlib.suppress(Exception):
-                layer.startEditing()
-                layer.deleteFeatures(layer.allFeatureIds())
-                layer.addFeatures(feats)
-                layer.commitChanges()
-            layer.updateExtents()
-            apply_multiprofile_categorized_renderer(layer, field_name="mode_key", active_keys=active_keys)
-            layer.triggerRepaint()
+        # Place into dedicated scenarios group in QGIS Layer Tree
+        root = proj.layerTreeRoot()
+        scenarios_group_name = "🛣️ 02Route 3D Scenarios & Runs"
+        scenarios_group = root.findGroup(scenarios_group_name) if root is not None else None
+        if scenarios_group is None and root is not None:
+            scenarios_group = root.insertGroup(1, scenarios_group_name)
+
+        proj.addMapLayer(layer, False)
+        if scenarios_group is not None:
+            scenarios_group.insertLayer(0, layer)
         else:
-            pr = layer.dataProvider()
-            pr.addFeatures(feats)
-            layer.updateExtents()
-            apply_multiprofile_categorized_renderer(layer, field_name="mode_key", active_keys=active_keys)
-            proj.addMapLayer(layer)
+            proj.addMapLayer(layer, True)
 
         if self.iface:
-            self.iface.messageBar().pushSuccess("02Route 3D", f"Added '{layer.name()}' ({len(feats)} modes) to project.")
+            self.iface.messageBar().pushSuccess("02Route 3D", f"Added '{layer.name()}' ({len(feats)} modes) to QGIS project.")
 
     def export_gpx(self) -> None:
         if not self.current_route_result:
