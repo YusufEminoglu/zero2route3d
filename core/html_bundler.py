@@ -7,6 +7,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from .js_bundle import JsBundleError, module_to_classic, module_to_namespace
 from .routing_engine import RouteResult3D
 
 
@@ -77,42 +78,38 @@ class StandaloneHtmlBundler:
         if css_file.exists():
             css_content = css_file.read_text(encoding="utf-8")
 
-        three_js = ""
+        # Three.js and OrbitControls are ES modules; rewrite them so they run in a
+        # classic <script>. A missing file is fatal: an export that silently omits
+        # the 3D engine produces a blank page reported as success.
         three_file = self.web_dir / "js" / "three.module.js"
-        if three_file.exists():
-            three_js = three_file.read_text(encoding="utf-8")
+        if not three_file.exists():
+            raise JsBundleError(f"missing bundled asset: {three_file}")
+        three_js = module_to_namespace(three_file.read_text(encoding="utf-8"), "THREE")
 
-        controls_js = ""
         controls_file = self.web_dir / "js" / "OrbitControls.js"
-        if controls_file.exists():
-            controls_js = controls_file.read_text(encoding="utf-8")
+        if not controls_file.exists():
+            raise JsBundleError(f"missing bundled asset: {controls_file}")
+        controls_js = module_to_classic(
+            controls_file.read_text(encoding="utf-8"),
+            preamble=(
+                "const { EventDispatcher, MOUSE, Quaternion, Spherical, TOUCH, "
+                "Vector2, Vector3, Plane, Ray, MathUtils } = THREE;" + chr(10)
+            ),
+        )
 
-        rig_js = ""
-        rig_file = self.web_dir / "js" / "KinematicAvatarRig.js"
-        if rig_file.exists():
-            rig_js = rig_file.read_text(encoding="utf-8").replace("import * as THREE from './three.module.js';", "").replace("export class KinematicAvatarRig", "class KinematicAvatarRig")
+        # First-party viewer modules: same treatment, one shared helper instead of
+        # per-file string surgery that silently no-ops when a name changes.
+        def _classic(filename: str) -> str:
+            path = self.web_dir / "js" / filename
+            if not path.exists():
+                raise JsBundleError(f"missing bundled asset: {path}")
+            return module_to_classic(path.read_text(encoding="utf-8"))
 
-        slicer_js = ""
-        slicer_file = self.web_dir / "js" / "TerrainSlicerSystem.js"
-        if slicer_file.exists():
-            slicer_js = slicer_file.read_text(encoding="utf-8").replace("import * as THREE from './three.module.js';", "").replace("export class TerrainSlicerSystem", "class TerrainSlicerSystem")
+        rig_js = _classic("KinematicAvatarRig.js")
+        slicer_js = _classic("TerrainSlicerSystem.js")
+        voice_js = _classic("VoiceCueSystem.js")
 
-        voice_js = ""
-        voice_file = self.web_dir / "js" / "VoiceCueSystem.js"
-        if voice_file.exists():
-            voice_js = voice_file.read_text(encoding="utf-8").replace("export class VoiceCueSystem", "class VoiceCueSystem")
-
-        app_js = ""
-        app_file = self.web_dir / "js" / "app3d.js"
-        if app_file.exists():
-            app_js = app_file.read_text(encoding="utf-8")
-
-        # Strip module imports from app_js for standalone script
-        app_js_clean = app_js.replace("import * as THREE from './three.module.js';", "")
-        app_js_clean = app_js_clean.replace("import { OrbitControls } from './OrbitControls.js';", "")
-        app_js_clean = app_js_clean.replace("import { KinematicAvatarRig } from './KinematicAvatarRig.js';", "")
-        app_js_clean = app_js_clean.replace("import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';", "")
-        app_js_clean = app_js_clean.replace("import { VoiceCueSystem } from './VoiceCueSystem.js';", "")
+        app_js_clean = _classic("app3d.js")
 
         html_template = f"""<!DOCTYPE html>
 <html lang="en">

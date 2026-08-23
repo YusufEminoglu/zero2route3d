@@ -65,48 +65,6 @@ class NetworkSourceManager:
             return 4
         return 5
 
-    def search_place_photon(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Geocode place name using Photon API (HTTPS)."""
-        if not query or len(query.strip()) < 2:
-            return []
-
-        results = []
-        with contextlib.suppress(Exception):
-            encoded = urllib.parse.quote(query.strip())
-            try:
-                lim = max(1, min(50, int(limit)))
-            except (TypeError, ValueError, OverflowError):
-                lim = 5
-            conn = http.client.HTTPSConnection("photon.komoot.io", timeout=8)
-            try:
-                conn.request("GET", f"/api/?q={encoded}&limit={lim}", headers={"User-Agent": "02Route3D-Plugin/0.1.0"})
-                resp = conn.getresponse()
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    if isinstance(data, dict):
-                        for feat in data.get("features", []):
-                            geom = feat.get("geometry", {})
-                            props = feat.get("properties", {})
-                            coords = geom.get("coordinates", [])
-                            if len(coords) >= 2:
-                                try:
-                                    lon_val = float(coords[0])
-                                    lat_val = float(coords[1])
-                                    if math.isfinite(lon_val) and math.isfinite(lat_val):
-                                        name = props.get("name") or props.get("street") or query
-                                        city = props.get("city") or props.get("state") or props.get("country") or ""
-                                        label = f"{name} ({city})" if city else name
-                                        results.append({
-                                            "label": str(label),
-                                            "lon": lon_val,
-                                            "lat": lat_val,
-                                        })
-                                except (ValueError, TypeError):
-                                    continue
-            finally:
-                conn.close()
-        return results
-
     def fetch_osm_network_bbox(
         self,
         bbox: Tuple[float, float, float, float],

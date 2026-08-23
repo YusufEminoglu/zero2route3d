@@ -48,7 +48,6 @@ from .mobility_profiles import (
     load_custom_profile_json,
     save_custom_profile_json,
 )
-from .multimodal import MultiModalJourney, MultiModalLeg, MultiModalRouter
 from .network_source import NetworkSourceError, NetworkSourceManager, RoadSegment
 from .osm_downloader import OsmBuilding, OsmDataFetcher
 from .pareto_router import (
@@ -103,9 +102,6 @@ __all__ = [
     "IDWSurfaceInterpolator",
     "MicroElevationEngine",
     "SurfaceGradient3D",
-    "MultiModalJourney",
-    "MultiModalLeg",
-    "MultiModalRouter",
     "ParetoCostVector",
     "ParetoFrontierResult",
     "ParetoMultiObjectiveRouter",

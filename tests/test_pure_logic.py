@@ -45,7 +45,6 @@ from zero2route3d.core.mobility_profiles import (
     get_profile,
     list_profile_keys,
 )
-from zero2route3d.core.multimodal import MultiModalRouter
 from zero2route3d.core.network_source import NetworkSourceError, NetworkSourceManager, RoadSegment
 from zero2route3d.core.pareto_router import ParetoMultiObjectiveRouter
 from zero2route3d.core.profile_dxf import export_route_to_dxf_3d
@@ -82,7 +81,7 @@ def fixture_network_segments() -> list[RoadSegment]:
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
-    """Test suite covering core physics, graph routing, AHP, TSP, multimodal, DXF, AI, and Pareto logic."""
+    """Test suite covering core physics, graph routing, AHP, TSP, DXF, and Pareto logic."""
 
     def test_haversine_2d_and_3d(self) -> None:
         p1 = (27.1428, 38.4237, 10.0)
@@ -177,7 +176,6 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(cues[-1].direction, "arrive")
 
     def test_routing_graph_and_od_matrix(self) -> None:
-        net_mgr = NetworkSourceManager()
         segments = fixture_network_segments()
 
         engine = RoutingEngine3D()
@@ -195,27 +193,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(len(matrix), 1)
         self.assertGreater(matrix[0]["distance_m"], 100.0)
 
-    def test_multimodal_router(self) -> None:
-        net_mgr = NetworkSourceManager()
-        segments = fixture_network_segments()
-        engine = RoutingEngine3D()
-        engine.build_graph(segments)
-
-        router = MultiModalRouter(engine)
-        w_orig = Waypoint(lon=27.11, lat=38.41, name="Home")
-        w_dest = Waypoint(lon=27.14, lat=38.44, name="Office")
-        hubs = [
-            Waypoint(lon=27.12, lat=38.42, name="Station 1"),
-            Waypoint(lon=27.13, lat=38.43, name="Station 2"),
-        ]
-
-        journey = router.calculate_multimodal_trip(w_orig, w_dest, hubs, access_mode="adult", main_mode="bicycle", egress_mode="adult")
-        self.assertEqual(len(journey.legs), 3)
-        self.assertGreater(journey.total_distance_km, 0.5)
-        self.assertGreater(journey.transfer_count, 1)
-
     def test_isochrone_engine(self) -> None:
-        net_mgr = NetworkSourceManager()
         segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
@@ -245,7 +223,6 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertLess(z_mid, 28.0)
 
     def test_pareto_multi_objective_router(self) -> None:
-        net_mgr = NetworkSourceManager()
         segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
@@ -273,7 +250,6 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertGreater(len(eq_res.lorenz_curve), 2)
 
     def test_map_matching_3d(self) -> None:
-        net_mgr = NetworkSourceManager()
         segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
@@ -291,7 +267,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_corridor_building_filter(self) -> None:
         from ..core.osm_downloader import OsmBuilding
-        from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
+        from ..core.route_corridor_3d import filter_buildings_in_corridor
 
         route_coords = [
             (27.1400, 38.4200, 10.0),
@@ -308,9 +284,9 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(corridor[0]["height_m"], 16.0)
 
     def test_multi_route_corridor_assets_and_3d_trees(self) -> None:
+        from ..core.route_corridor_3d import filter_corridor_assets_multi_route
         from ..core.environmental_raster import EnvironmentalSurfaceSampler
         from ..core.osm_downloader import OsmBuilding
-        from ..core.route_corridor_3d import filter_corridor_assets_multi_route
 
         route_1 = [
             (27.1400, 38.4200, 10.0),
@@ -344,20 +320,35 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertIn("b_near_2", bld_ids)
         self.assertNotIn("b_distant", bld_ids)
 
-        # 3D Trees generated along 30m corridor
-        self.assertGreater(len(corridor_trees), 0)
-        first_tree = corridor_trees[0]
-        self.assertIn("id", first_tree)
-        self.assertIn("coordinates", first_tree)
-        self.assertIn("base_elevation_m", first_tree)
-        self.assertIn("height_m", first_tree)
-        self.assertIn("canopy_radius_m", first_tree)
-        self.assertIn("trunk_height_m", first_tree)
-        self.assertIn("trunk_radius_m", first_tree)
-        self.assertIn("tree_type", first_tree)
-        self.assertIn("greenery_index", first_tree)
-        self.assertGreaterEqual(first_tree["height_m"], 4.0)
-        self.assertGreaterEqual(first_tree["canopy_radius_m"], 1.5)
+        # No OSM trees were supplied, so no trees may be produced. Trees used to be
+        # generated procedurally every 18 m from abs(hash(coordinate)) and returned
+        # alongside real ones; that must never come back.
+        self.assertEqual(
+            corridor_trees,
+            [],
+            "trees must come from OSM data only, never from procedural placement",
+        )
+
+    def test_corridor_trees_come_only_from_real_osm_nodes(self) -> None:
+        """Trees in the corridor mirror real OSM nodes, one for one."""
+        from ..core.osm_downloader import OsmTree
+        from ..core.route_corridor_3d import filter_corridor_assets_multi_route
+
+        route = [(27.1400, 38.4200, 10.0), (27.1430, 38.4230, 12.0)]
+        # One tree beside the route, one far outside the corridor.
+        near = OsmTree(tree_id="t_near", lon=27.14112, lat=38.42088, species="Tilia")
+        far = OsmTree(tree_id="t_far", lon=27.2000, lat=38.5000, species="Tilia")
+
+        _blds, trees = filter_corridor_assets_multi_route(
+            [route], [], buffer_meters=30.0, osm_trees=[near, far]
+        )
+        ids = {t["id"] for t in trees}
+        self.assertIn("osm_tree_t_near", ids)
+        self.assertNotIn("osm_tree_t_far", ids)
+        # Untagged dimensions must be declared as estimates, not passed off as survey.
+        for tree in trees:
+            self.assertIn("dimensions_estimated", tree)
+            self.assertTrue(tree["dimensions_estimated"])
 
     def test_multi_profile_groups_and_colors(self) -> None:
         from ..core.mobility_profiles import get_profile_color, list_profile_keys_for_group
@@ -589,7 +580,6 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertFalse(res_single.is_network_matched)
 
         # Use the deterministic road fixture and route with identical start/end.
-        net_mgr = NetworkSourceManager()
         segments = fixture_network_segments()
         engine.build_graph(segments)
 
@@ -880,7 +870,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertGreater(sol.statistics.total_distance_m, 0.0)
 
     def test_cartographic_osm_themes_catalog(self) -> None:
-        from ..core.osm_styling import OSM_THEMES, get_theme_palette, list_osm_themes
+        from ..core.osm_styling import get_theme_palette, list_osm_themes
 
         themes = list_osm_themes()
         self.assertGreaterEqual(len(themes), 8)

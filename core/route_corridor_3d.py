@@ -237,6 +237,7 @@ def filter_corridor_assets_multi_route(
                 "levels": lvls,
                 "type": b.building_type,
                 "base_elevation_m": round(base_z, 2),
+                "dimensions_estimated": bool(getattr(b, "dimensions_estimated", True)),
             })
 
     # -------------------------------------------------------------
@@ -274,144 +275,21 @@ def filter_corridor_assets_multi_route(
                 "trunk_radius_m": round(max(0.18, t.canopy_radius_m * 0.08), 2),
                 "tree_type": t.tree_type,
                 "species": t.species,
-                "greenery_index": 0.85,
+                # height/canopy are tagged values when OSM had them and typical
+                # defaults otherwise; say which, rather than implying a survey.
+                "dimensions_estimated": bool(getattr(t, "dimensions_estimated", True)),
             })
             placed_tree_positions.append((t.lon, t.lat))
 
-    # 2.2 Place trees inside real OSM park/greenery polygons in corridor
-    if osm_parks:
-        for p in osm_parks:
-            if not p.polygon or len(p.polygon) < 3:
-                continue
-            poly_lons = [pt[0] for pt in p.polygon]
-            poly_lats = [pt[1] for pt in p.polygon]
-            c_lon = sum(poly_lons) / len(poly_lons)
-            c_lat = sum(poly_lats) / len(poly_lats)
-            d = point_to_multi_linestrings_distance_meters(c_lon, c_lat, all_lines_2d)
-            if d <= buf_m + 10.0:
-                # Add park trees
-                for pt in p.polygon:
-                    pt_lon, pt_lat = pt[0], pt[1]
-                    dist_to_route = point_to_multi_linestrings_distance_meters(pt_lon, pt_lat, all_lines_2d)
-                    if 4.0 <= dist_to_route <= buf_m:
-                        if not any(haversine_distance_2d((pt_lon, pt_lat), pos) < 8.0 for pos in placed_tree_positions):
-                            if not any(haversine_distance_2d((pt_lon, pt_lat), (b_lon, b_lat)) < b_rad for b_lon, b_lat, b_rad in building_centroids):
-                                tree_z = get_closest_multi_route_elevation(pt_lon, pt_lat, cleaned_routes, green_sampler)
-                                corridor_trees.append({
-                                    "id": f"park_tree_{len(corridor_trees)+1}",
-                                    "coordinates": [round(pt_lon, 6), round(pt_lat, 6)],
-                                    "base_elevation_m": round(tree_z, 2),
-                                    "height_m": 9.0,
-                                    "canopy_radius_m": 3.8,
-                                    "trunk_height_m": 2.2,
-                                    "trunk_radius_m": 0.32,
-                                    "tree_type": "broadleaf",
-                                    "species": p.name or "park",
-                                    "greenery_index": 0.9,
-                                })
-                                placed_tree_positions.append((pt_lon, pt_lat))
+    # 2.2 Park polygons are carried as park geometry only. A previous revision
+    # emitted a 9.0 m tree with a 3.8 m canopy at every park *boundary vertex*;
+    # boundary vertices are not tree locations and those dimensions were invented.
 
-    # 2.3 Lateral procedural corridor greenery where trees are sparse
-    lateral_offsets = [-24.0, -16.0, -9.0, 9.0, 16.0, 24.0]
-    step_interval_m = 18.0
-
-    for route in cleaned_routes:
-        for i in range(len(route) - 1):
-            p1 = route[i]
-            p2 = route[i + 1]
-            seg_dist = haversine_distance_2d((p1[0], p1[1]), (p2[0], p2[1]))
-            if seg_dist < 2.0:
-                continue
-
-            num_steps = max(1, int(round(seg_dist / step_interval_m)))
-            cos_mid_lat = math.cos(math.radians((p1[1] + p2[1]) * 0.5))
-
-            # Direction vector in approximate meters
-            dx_m = (p2[0] - p1[0]) * 111320.0 * cos_mid_lat
-            dy_m = (p2[1] - p1[1]) * 110540.0
-            seg_len = math.sqrt(dx_m * dx_m + dy_m * dy_m)
-            if seg_len < 1e-6:
-                continue
-
-            # Unit normal vector (perpendicular to road direction)
-            nx = -dy_m / seg_len
-            ny = dx_m / seg_len
-
-            for s in range(num_steps):
-                t = (s + 0.5) / num_steps
-                center_lon = p1[0] + t * (p2[0] - p1[0])
-                center_lat = p1[1] + t * (p2[1] - p1[1])
-
-                for offset_m in lateral_offsets:
-                    if abs(offset_m) > buf_m:
-                        continue
-
-                    # Offset in degrees
-                    cand_lon = center_lon + (nx * offset_m) / (111320.0 * math.cos(math.radians(center_lat)))
-                    cand_lat = center_lat + (ny * offset_m) / 110540.0
-
-                    # 1. Check distance to route paths: must be >= 4.5m and <= 30m
-                    dist_to_route = point_to_multi_linestrings_distance_meters(cand_lon, cand_lat, all_lines_2d)
-                    if dist_to_route < 4.5 or dist_to_route > buf_m + 2.0:
-                        continue
-
-                    # 2. Check collision with building footprints
-                    collides_building = False
-                    for b_lon, b_lat, b_rad in building_centroids:
-                        if haversine_distance_2d((cand_lon, cand_lat), (b_lon, b_lat)) < b_rad:
-                            collides_building = True
-                            break
-                    if collides_building:
-                        continue
-
-                    # 3. Check spacing against already placed trees (min 9m spacing)
-                    collides_tree = False
-                    for t_pos in placed_tree_positions:
-                        if haversine_distance_2d((cand_lon, cand_lat), t_pos) < 9.0:
-                            collides_tree = True
-                            break
-                    if collides_tree:
-                        continue
-
-                    # 4. Greenery sampling (if green_sampler is available)
-                    green_val = 0.55
-                    if green_sampler is not None and hasattr(green_sampler, "sample_greenery"):
-                        try:
-                            green_val = float(green_sampler.sample_greenery(cand_lon, cand_lat))
-                        except Exception:
-                            green_val = 0.55
-
-                    if green_val < 0.15:
-                        continue
-
-                    # 5. Deterministic hash variation for realistic tree morphology
-                    coord_key = (round(cand_lon, 5), round(cand_lat, 5))
-                    h_val = abs(hash(coord_key))
-
-                    # Tree dimensions modulated by greenery and hash
-                    height_m = round(5.5 + (h_val % 45) * 0.12 + green_val * 2.8, 1)
-                    canopy_radius_m = round(2.0 + (h_val % 25) * 0.09 + green_val * 1.3, 1)
-                    trunk_height_m = round(1.5 + (h_val % 18) * 0.08, 1)
-                    trunk_radius_m = round(0.20 + (h_val % 12) * 0.015, 2)
-                    tree_types = ["deciduous", "broadleaf", "conifer", "pine"]
-                    tree_type = tree_types[h_val % len(tree_types)]
-
-                    tree_z = get_closest_multi_route_elevation(cand_lon, cand_lat, cleaned_routes, green_sampler)
-
-                    tree_id = f"tree_{len(corridor_trees) + 1}"
-                    placed_tree_positions.append((cand_lon, cand_lat))
-
-                    corridor_trees.append({
-                        "id": tree_id,
-                        "coordinates": [round(cand_lon, 6), round(cand_lat, 6)],
-                        "base_elevation_m": round(tree_z, 2),
-                        "height_m": height_m,
-                        "canopy_radius_m": canopy_radius_m,
-                        "trunk_height_m": trunk_height_m,
-                        "trunk_radius_m": trunk_radius_m,
-                        "tree_type": tree_type,
-                        "greenery_index": round(green_val, 2),
-                    })
+    # No procedural greenery is generated. A previous revision placed a tree every
+    # 18 m at six fixed lateral offsets, with height, canopy, trunk and species
+    # derived from abs(hash(coordinate)), and returned them in the same list as
+    # real OSM trees -- indistinguishable from surveyed data in the 3D scene and in
+    # every export. Only trees that actually exist in OSM are returned.
 
     return corridor_buildings, corridor_trees
 

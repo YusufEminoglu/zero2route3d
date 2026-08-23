@@ -16,13 +16,12 @@ Supply real NDVI / LST rasters through the plugin's own raster selectors instead
 from __future__ import annotations
 
 import contextlib
-import json
 import math
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 from .dem_fetcher import NODATA, GlobalDemFetcher
 from .kinematics import haversine_distance_2d

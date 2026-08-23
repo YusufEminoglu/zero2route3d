@@ -220,22 +220,6 @@ def test_gui_cue_sheet_widget():
     return _ok("CueSheetWidget rendering and data loading", True)
 
 
-def test_gui_canvas_overlay(iface):
-    from zero2route3d.gui.canvas_overlay import CanvasRouteOverlay
-
-    canvas = iface.mapCanvas()
-    overlay = CanvasRouteOverlay(canvas)
-    coords = [
-        (27.1428, 38.4237, 10.0),
-        (27.1450, 38.4250, 15.0),
-        (27.1500, 38.4300, 20.0),
-    ]
-    overlay.display_route(coords)
-    overlay.update_tracker_position(0.5)
-    overlay.clear()
-    return _ok("CanvasRouteOverlay lifecycle (display, update, clear)", True)
-
-
 def test_gui_map_tools(iface):
     from zero2route3d.gui.map_tools import RoutePointMapTool
 
@@ -425,7 +409,6 @@ def run_all(iface):
         test_processing_provider(),
         test_gui_profile_editor(),
         test_gui_cue_sheet_widget(),
-        test_gui_canvas_overlay(iface),
         test_gui_map_tools(iface),
         test_gui_canvas_animator(iface),
         test_dock_animation_playback(iface),

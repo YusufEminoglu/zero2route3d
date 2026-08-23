@@ -21,6 +21,10 @@ class OsmBuilding:
     height_m: float = 12.0
     levels: int = 4
     building_type: str = "yes"
+    # True when height/levels came from a typical default rather than an OSM tag.
+    # Most OSM buildings carry neither tag, so this distinction matters: without
+    # it a default 12 m is indistinguishable from a surveyed height.
+    dimensions_estimated: bool = True
 
 
 @dataclass
@@ -46,6 +50,8 @@ class OsmTree:
     height_m: float = 8.0
     canopy_radius_m: float = 3.0
     tree_type: str = "deciduous"  # 'deciduous', 'broadleaf', 'conifer', 'pine'
+    # True when height/canopy came from a typical default rather than an OSM tag.
+    dimensions_estimated: bool = True
 
 
 @dataclass
@@ -172,6 +178,7 @@ class OsmDataFetcher:
                             if len(coords) >= 3:
                                 levels = 4
                                 height_m = 12.0
+                                estimated = "building:levels" not in tags and "height" not in tags
                                 if "building:levels" in tags:
                                     with contextlib.suppress(ValueError, TypeError):
                                         levels = max(1, int(float(tags["building:levels"])))
@@ -189,6 +196,7 @@ class OsmDataFetcher:
                                         height_m=height_m,
                                         levels=levels,
                                         building_type=str(tags.get("building", "yes")),
+                                        dimensions_estimated=estimated,
                                     )
                                 )
 
@@ -205,6 +213,7 @@ class OsmDataFetcher:
                                 t_leaf = tags.get("leaf_type", "").lower()
                                 t_type = "conifer" if ("needle" in t_leaf or "conifer" in t_leaf or "pine" in t_species.lower()) else "deciduous"
                                 t_height = 8.0
+                                t_estimated = "height" not in tags and "diameter_crown" not in tags
                                 if "height" in tags:
                                     with contextlib.suppress(ValueError, TypeError):
                                         t_height = max(3.0, min(35.0, float(str(tags["height"]).replace("m", "").strip())))
@@ -222,6 +231,7 @@ class OsmDataFetcher:
                                         height_m=t_height,
                                         canopy_radius_m=t_radius,
                                         tree_type=t_type,
+                                        dimensions_estimated=t_estimated,
                                     )
                                 )
 

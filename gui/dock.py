@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from qgis.PyQt.QtCore import Qt, QUrl, QVariant, pyqtSignal
+from qgis.PyQt.QtCore import Qt, QUrl, QVariant
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
@@ -67,13 +67,12 @@ from ..core.mobility_profiles import (
 from ..core.network_source import NetworkSourceError, NetworkSourceManager
 from ..core.osm_downloader import OsmBuilding, OsmDataFetcher, OsmPark, OsmTree
 from ..core.osm_styling import (
-    OSM_THEMES,
     apply_osm_atlas_style,
     apply_osm_theme_style,
     list_osm_themes,
 )
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
-from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
+from ..core.route_corridor_3d import filter_corridor_assets_multi_route
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .canvas_animator import Route2DCanvasAnimator
 from .cue_sheet_widget import CueSheetWidget
@@ -112,8 +111,6 @@ def _polygon_filters() -> Any:
 class Route3DStudioDock(QDockWidget):
     """Next-generation 3D Mobility & Route Planning Studio Dock."""
 
-    route_calculated = pyqtSignal(object)
-
     def __init__(self, iface: Any, parent: Optional[QWidget] = None) -> None:
         super().__init__("02Route 3D Studio", parent)
         self.iface = iface
@@ -128,7 +125,6 @@ class Route3DStudioDock(QDockWidget):
         self.cached_osm_buildings: List[OsmBuilding] = []
         self.cached_osm_trees: List[OsmTree] = []
         self.cached_osm_parks: List[OsmPark] = []
-        self.copernicus_dem_layers: List[Any] = []
         self._managed_route_layer_ids: set[str] = set()
         self._handling_layer_removal = False
         self._run_counter: int = 0
@@ -1832,7 +1828,6 @@ class Route3DStudioDock(QDockWidget):
         )
         sampler = EnvironmentalSurfaceSampler(
             dem_layer=self.cmb_dem_layer.currentLayer(),
-            dem_layers=self.copernicus_dem_layers,
             lst_layer=self.cmb_lst_layer.currentLayer(),
             green_layer=self.cmb_green_layer.currentLayer(),
             additional_layers=self._selected_extra_raster_layers(),
@@ -1960,7 +1955,6 @@ class Route3DStudioDock(QDockWidget):
         if hasattr(self, "quick_progress_bar"):
             self.quick_progress_bar.setValue(100)
             self.quick_progress_bar.setVisible(False)
-        self.route_calculated.emit(result)
         if self.iface:
             self.iface.messageBar().pushSuccess(
                 "02Route 3D",
@@ -2104,7 +2098,6 @@ class Route3DStudioDock(QDockWidget):
             return
         sampler = EnvironmentalSurfaceSampler(
             dem_layer=self.cmb_dem_layer.currentLayer(),
-            dem_layers=self.copernicus_dem_layers,
             lst_layer=self.cmb_lst_layer.currentLayer(),
             green_layer=self.cmb_green_layer.currentLayer(),
             additional_layers=self._selected_extra_raster_layers(),
@@ -2142,7 +2135,6 @@ class Route3DStudioDock(QDockWidget):
         )
         return EnvironmentalSurfaceSampler(
             dem_layer=self.cmb_dem_layer.currentLayer() if hasattr(self, "cmb_dem_layer") else None,
-            dem_layers=getattr(self, "copernicus_dem_layers", []),
             lst_layer=self.cmb_lst_layer.currentLayer() if hasattr(self, "cmb_lst_layer") else None,
             green_layer=self.cmb_green_layer.currentLayer() if hasattr(self, "cmb_green_layer") else None,
             additional_layers=self._selected_extra_raster_layers() if hasattr(self, "_selected_extra_raster_layers") else [],

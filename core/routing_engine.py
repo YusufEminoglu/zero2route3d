@@ -347,7 +347,6 @@ class RoutingEngine3D:
 
         if start_node == end_node:
             z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
-            z2 = self.sampler.sample_elevation(end_pt[0], end_pt[1]) or 0.0
             dist_d = haversine_distance_2d(start_pt, end_pt)
             if dist_d < 0.1:
                 return [(start_pt[0], start_pt[1], z1)], True
@@ -380,8 +379,6 @@ class RoutingEngine3D:
 
             if u == end_node:
                 break
-
-            u_coord = self.nodes[u]
 
             for v, seg_len, slope_pct, meta in self.adj.get(u, []):
                 if v in visited:

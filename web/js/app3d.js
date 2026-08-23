@@ -4,21 +4,41 @@ import { KinematicAvatarRig } from './KinematicAvatarRig.js';
 import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';
 import { VoiceCueSystem } from './VoiceCueSystem.js';
 
+// Accepts #rgb, #rrggbb, and the CSS colour keywords the profiles actually use.
+const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/;
+
+// Every texture slot a material can hold. Disposing only `.map` leaked the rest.
+const TEXTURE_SLOTS = [
+  'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap',
+  'bumpMap', 'displacementMap', 'alphaMap', 'envMap', 'lightMap', 'specularMap',
+];
+
+function disposeMaterial(material, seen) {
+  if (!material || seen.has(material)) return;
+  // Materials are shared between meshes (the building palette, for one), so
+  // disposing per-mesh double-disposed them.
+  seen.add(material);
+  TEXTURE_SLOTS.forEach((slot) => {
+    const tex = material[slot];
+    if (tex && typeof tex.dispose === 'function') tex.dispose();
+  });
+  material.dispose();
+}
+
 function disposeHierarchy(obj) {
   if (!obj) return;
+  const seenMaterials = new Set();
+  const seenGeometries = new Set();
   obj.traverse((child) => {
-    if (child.geometry) {
+    if (child.geometry && !seenGeometries.has(child.geometry)) {
+      seenGeometries.add(child.geometry);
       child.geometry.dispose();
     }
     if (child.material) {
       if (Array.isArray(child.material)) {
-        child.material.forEach((m) => {
-          if (m.map) m.map.dispose();
-          m.dispose();
-        });
+        child.material.forEach((m) => disposeMaterial(m, seenMaterials));
       } else {
-        if (child.material.map) child.material.map.dispose();
-        child.material.dispose();
+        disposeMaterial(child.material, seenMaterials);
       }
     }
   });
@@ -159,6 +179,8 @@ class Studio3DApp {
     this.elScrubber = document.getElementById('scrubber');
     this.elNeedle = document.getElementById('profileNeedle');
     this.elSvg = document.getElementById('profileSvg');
+    this.elBasemapCredit = document.getElementById('basemapCredit');
+    this.elBasemapNote = document.getElementById('basemapNote');
     this.lblExag = document.getElementById('lblExag');
     this.elMetricLiveVal = document.getElementById('metricLiveVal');
     this.elMetricReadout = document.getElementById('metricReadout');
@@ -222,6 +244,7 @@ class Studio3DApp {
         document.querySelectorAll('.bmap-btn').forEach((b) => b.classList.remove('active'));
         e.currentTarget.classList.add('active');
         this.basemapProvider = e.currentTarget.dataset.provider || 'osm';
+        this.updateBasemapAttribution();
         this.updateBasemapTexture();
       });
     });
@@ -580,6 +603,8 @@ class Studio3DApp {
   }
 
   clearSceneObjects() {
+    // Stop any basemap tiles still in flight before their target texture goes.
+    this.cancelPendingTiles();
     const removeAndDispose = (mesh) => {
       if (!mesh) return;
       this.scene.remove(mesh);
@@ -952,11 +977,20 @@ class Studio3DApp {
     const lonSpan = maxLon - minLon || 1.0;
     const latSpan = maxLat - minLat || 1.0;
 
+    // Tiles requested for a previous scene must not write into a texture that
+    // rebuildScene() has already disposed. Track this build and abort the old one.
+    this.cancelPendingTiles();
+    const buildToken = { cancelled: false, images: [] };
+    this.pendingTileBuild = buildToken;
+    let failedTiles = 0;
+
     for (let tx = minTileX; tx <= minTileX + spanX; tx++) {
       for (let ty = minTileY; ty <= minTileY + spanY; ty++) {
         const img = new Image();
+        buildToken.images.push(img);
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          if (buildToken.cancelled) return;
           const tMinLon = tile2lon(tx, zoom);
           const tMaxLon = tile2lon(tx + 1, zoom);
           const tMaxLat = tile2lat(ty, zoom);
@@ -971,13 +1005,45 @@ class Studio3DApp {
           tex.needsUpdate = true;
         };
         img.onerror = () => {
-          // Fallback gracefully on tile fetch error
+          if (buildToken.cancelled) return;
+          failedTiles += 1;
+          // Silent tile failures left a blank basemap with no explanation.
+          if (this.elBasemapNote) {
+            this.elBasemapNote.textContent =
+              `${failedTiles} basemap tile(s) failed to load.`;
+          }
         };
         img.src = getTileUrl(tx, ty, zoom);
       }
     }
 
     return tex;
+  }
+
+  updateBasemapAttribution() {
+    if (!this.elBasemapCredit) return;
+    // Each provider requires its own credit line to be displayed.
+    const credits = {
+      osm: '© OpenStreetMap contributors',
+      voyager: '© OpenStreetMap contributors · © CARTO',
+      dark: '© OpenStreetMap contributors · © CARTO',
+      satellite: 'Imagery © Esri, Maxar, Earthstar Geographics',
+    };
+    this.elBasemapCredit.textContent = credits[this.basemapProvider] || credits.osm;
+    if (this.elBasemapNote) this.elBasemapNote.textContent = '';
+  }
+
+  cancelPendingTiles() {
+    const pending = this.pendingTileBuild;
+    if (!pending) return;
+    pending.cancelled = true;
+    // Dropping the src aborts the in-flight request in every current browser.
+    pending.images.forEach((img) => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
+    });
+    this.pendingTileBuild = null;
   }
 
   buildClassyRoadRibbon() {
@@ -1280,7 +1346,11 @@ class Studio3DApp {
     );
     const elapsedSimTimeSec = safeProgress * maxDurationSec;
 
-    const animDelta = this.isPlaying ? 0.016 * Math.max(0.2, this.playbackSpeed) : 0.0;
+    // Real frame delta, not a fixed 16 ms step: gait cadence and wheel spin were
+    // running twice as fast on a 120 Hz display and stalling when this was called
+    // from the scrubber rather than the render loop.
+    const frameDelta = Number.isFinite(this.lastFrameDelta) ? this.lastFrameDelta : 0.016;
+    const animDelta = this.isPlaying ? frameDelta * Math.max(0.2, this.playbackSpeed) : 0.0;
     this.routeVisuals.forEach((visual) => {
       if (!visual.rig || !visual.curve) return;
       const props = visual.feature?.properties || {};
@@ -1366,12 +1436,16 @@ class Studio3DApp {
       this.elMetricLiveVal.textContent = `${slopeVal >= 0 ? '+' : ''}${slopeVal.toFixed(1)}%`;
       if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Slope: ';
     } else if (this.activeChartMetric === 'lst') {
-      const lstVal = 24.0 + (pData.thermal_comfort !== undefined ? (1.0 - pData.thermal_comfort) * 16.0 : 6.0);
-      this.elMetricLiveVal.textContent = `${lstVal.toFixed(1)} °C`;
+      // Only a real LST raster produces lst_normalized. Showing a constant here
+      // meant every route on Earth displayed exactly 30.0 degrees C.
+      this.elMetricLiveVal.textContent = pData.lst_normalized !== undefined
+        ? `${(pData.lst_normalized * 100.0).toFixed(0)}%`
+        : 'no data';
       if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Heat (LST): ';
     } else if (this.activeChartMetric === 'greenery') {
-      const greenVal = pData.ndvi !== undefined ? pData.ndvi * 100.0 : 65.0;
-      this.elMetricLiveVal.textContent = `${greenVal.toFixed(0)}%`;
+      this.elMetricLiveVal.textContent = pData.ndvi_normalized !== undefined
+        ? `${(pData.ndvi_normalized * 100.0).toFixed(0)}%`
+        : 'no data';
       if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Greenery: ';
     } else {
       const eleVal = coords[idx] && coords[idx][2] !== undefined ? coords[idx][2] : 0.0;
@@ -1514,11 +1588,19 @@ class Studio3DApp {
       strokeColor = '#f59e0b';
       gradColor = '#f59e0b';
     } else if (this.activeChartMetric === 'lst') {
-      values = coords.map((_, i) => 24.0 + (profList[i] && profList[i].thermal_comfort !== undefined ? (1.0 - profList[i].thermal_comfort) * 16.0 : 6.0));
+      values = coords.map((_, i) => (
+        profList[i] && profList[i].lst_normalized !== undefined
+          ? profList[i].lst_normalized * 100.0
+          : null
+      ));
       strokeColor = '#ef4444';
       gradColor = '#ef4444';
     } else if (this.activeChartMetric === 'greenery') {
-      values = coords.map((_, i) => (profList[i] && profList[i].ndvi !== undefined ? profList[i].ndvi * 100.0 : 65.0));
+      values = coords.map((_, i) => (
+        profList[i] && profList[i].ndvi_normalized !== undefined
+          ? profList[i].ndvi_normalized * 100.0
+          : null
+      ));
       strokeColor = '#10b981';
       gradColor = '#10b981';
     } else {
@@ -1532,37 +1614,62 @@ class Studio3DApp {
       return;
     }
 
-    const minVal = Math.min(...values);
-    const maxVal = Math.max(...values);
+    // A null entry means "no raster covered this vertex". Draw nothing rather
+    // than a flat line that reads as a measurement.
+    const known = values.filter((v) => v !== null && v !== undefined && !isNaN(v));
+    if (!known.length) {
+      this.elSvg.innerHTML = '';
+      if (this.elMetricLiveVal) this.elMetricLiveVal.textContent = 'no data';
+      return;
+    }
+
+    const minVal = Math.min(...known);
+    const maxVal = Math.max(...known);
     const valRange = Math.max(0.001, maxVal - minVal);
     const count = values.length;
     const denom = Math.max(1, count - 1);
 
-    const points = values.map((v, i) => {
-      const x = (i / denom) * width;
-      const y = height - 8 - ((v - minVal) / valRange) * (height - 16);
-      const safeY = isNaN(y) ? height / 2 : y;
-      return `${x.toFixed(1)},${safeY.toFixed(1)}`;
+    // Break the polyline across gaps instead of interpolating through them.
+    let pathD = '';
+    let penDown = false;
+    values.forEach((v, i) => {
+      if (v === null || v === undefined || isNaN(v)) {
+        penDown = false;
+        return;
+      }
+      const x = ((i / denom) * width).toFixed(1);
+      const y = (height - 8 - ((v - minVal) / valRange) * (height - 16)).toFixed(1);
+      pathD += `${penDown ? 'L' : 'M'} ${x},${y} `;
+      penDown = true;
     });
-
-    const pathD = `M ${points[0]} ` + points.slice(1).map((p) => `L ${p}`).join(' ');
+    pathD = pathD.trim();
+    if (!pathD) {
+      this.elSvg.innerHTML = '';
+      return;
+    }
     const fillD = `${pathD} L ${width.toFixed(1)},${height.toFixed(1)} L 0,${height.toFixed(1)} Z`;
 
+    // profile_color arrives from the route payload; only accept a literal colour
+    // so it cannot break out of the attribute and inject markup.
+    const safeStroke = SAFE_COLOR.test(strokeColor) ? strokeColor : '#0284c7';
+    const safeGrad = SAFE_COLOR.test(gradColor) ? gradColor : '#0284c7';
     this.elSvg.innerHTML = `
       <defs>
         <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${gradColor}" stop-opacity="0.38"/>
-          <stop offset="100%" stop-color="${gradColor}" stop-opacity="0.0"/>
+          <stop offset="0%" stop-color="${safeGrad}" stop-opacity="0.38"/>
+          <stop offset="100%" stop-color="${safeGrad}" stop-opacity="0.0"/>
         </linearGradient>
       </defs>
       <path d="${fillD}" fill="url(#chartGrad)"/>
-      <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.5"/>
+      <path d="${pathD}" fill="none" stroke="${safeStroke}" stroke-width="2.5"/>
     `;
   }
 
   animate() {
-    requestAnimationFrame(this.animate);
+    this.rafHandle = requestAnimationFrame(this.animate);
     const delta = this.clock.getDelta();
+    // Clamped so a backgrounded tab does not resume with one huge jump.
+    this.lastFrameDelta = Math.min(0.1, delta);
 
     if (this.isPlaying && this.curve && this.scenePoints.length >= 2) {
       this.progress += delta * 0.04 * this.playbackSpeed;
