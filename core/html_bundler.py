@@ -87,6 +87,21 @@ class StandaloneHtmlBundler:
         if controls_file.exists():
             controls_js = controls_file.read_text(encoding="utf-8")
 
+        rig_js = ""
+        rig_file = self.web_dir / "js" / "KinematicAvatarRig.js"
+        if rig_file.exists():
+            rig_js = rig_file.read_text(encoding="utf-8").replace("import * as THREE from './three.module.js';", "").replace("export class KinematicAvatarRig", "class KinematicAvatarRig")
+
+        slicer_js = ""
+        slicer_file = self.web_dir / "js" / "TerrainSlicerSystem.js"
+        if slicer_file.exists():
+            slicer_js = slicer_file.read_text(encoding="utf-8").replace("import * as THREE from './three.module.js';", "").replace("export class TerrainSlicerSystem", "class TerrainSlicerSystem")
+
+        voice_js = ""
+        voice_file = self.web_dir / "js" / "VoiceCueSystem.js"
+        if voice_file.exists():
+            voice_js = voice_file.read_text(encoding="utf-8").replace("export class VoiceCueSystem", "class VoiceCueSystem")
+
         app_js = ""
         app_file = self.web_dir / "js" / "app3d.js"
         if app_file.exists():
@@ -146,6 +161,15 @@ class StandaloneHtmlBundler:
   </script>
   <script type="text/javascript">
 {controls_js}
+  </script>
+  <script type="text/javascript">
+{rig_js}
+  </script>
+  <script type="text/javascript">
+{slicer_js}
+  </script>
+  <script type="text/javascript">
+{voice_js}
   </script>
   <script type="text/javascript">
 {app_js_clean}

@@ -60,9 +60,11 @@ export class TerrainSlicerSystem {
     this.scene.add(this.capMesh);
   }
 
-  attachToTerrain(terrainMesh, buildingsGroup) {
+  attachToTerrain(terrainMesh, buildingsGroup, treesGroup = null, skirtMesh = null) {
     this.terrainMesh = terrainMesh;
     this.buildingsGroup = buildingsGroup;
+    this.treesGroup = treesGroup;
+    this.skirtMesh = skirtMesh;
   }
 
   setSliceHeight(height) {
@@ -86,8 +88,23 @@ export class TerrainSlicerSystem {
       this.terrainMesh.material.needsUpdate = true;
     }
 
+    if (this.skirtMesh && this.skirtMesh.material) {
+      this.skirtMesh.material.clippingPlanes = planes;
+      this.skirtMesh.material.clipShadows = true;
+      this.skirtMesh.material.needsUpdate = true;
+    }
+
     if (this.buildingsGroup) {
       this.buildingsGroup.traverse((child) => {
+        if (child.isMesh && child.material) {
+          child.material.clippingPlanes = planes;
+          child.material.needsUpdate = true;
+        }
+      });
+    }
+
+    if (this.treesGroup) {
+      this.treesGroup.traverse((child) => {
         if (child.isMesh && child.material) {
           child.material.clippingPlanes = planes;
           child.material.needsUpdate = true;

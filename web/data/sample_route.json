@@ -52,6 +52,24 @@
             "type": "office"
           }
         ],
+        "corridor_trees": [
+          {"id": "tree_1", "coordinates": [27.1377, 38.4227], "base_elevation_m": 4.2, "height_m": 7.5, "canopy_radius_m": 3.2, "trunk_height_m": 2.2, "trunk_radius_m": 0.28, "tree_type": "deciduous", "greenery_index": 0.65},
+          {"id": "tree_2", "coordinates": [27.1373, 38.4228], "base_elevation_m": 4.1, "height_m": 8.2, "canopy_radius_m": 3.5, "trunk_height_m": 2.4, "trunk_radius_m": 0.30, "tree_type": "broadleaf", "greenery_index": 0.70},
+          {"id": "tree_3", "coordinates": [27.1384, 38.4237], "base_elevation_m": 5.0, "height_m": 9.0, "canopy_radius_m": 3.8, "trunk_height_m": 2.5, "trunk_radius_m": 0.32, "tree_type": "conifer", "greenery_index": 0.80},
+          {"id": "tree_4", "coordinates": [27.1388, 38.4235], "base_elevation_m": 5.2, "height_m": 7.0, "canopy_radius_m": 3.0, "trunk_height_m": 2.0, "trunk_radius_m": 0.26, "tree_type": "deciduous", "greenery_index": 0.60},
+          {"id": "tree_5", "coordinates": [27.1393, 38.4248], "base_elevation_m": 6.8, "height_m": 9.5, "canopy_radius_m": 4.0, "trunk_height_m": 2.6, "trunk_radius_m": 0.34, "tree_type": "pine", "greenery_index": 0.85},
+          {"id": "tree_6", "coordinates": [27.1397, 38.4242], "base_elevation_m": 6.5, "height_m": 8.0, "canopy_radius_m": 3.4, "trunk_height_m": 2.3, "trunk_radius_m": 0.30, "tree_type": "broadleaf", "greenery_index": 0.72},
+          {"id": "tree_7", "coordinates": [27.1405, 38.4262], "base_elevation_m": 9.2, "height_m": 10.0, "canopy_radius_m": 4.2, "trunk_height_m": 2.8, "trunk_radius_m": 0.36, "tree_type": "deciduous", "greenery_index": 0.88},
+          {"id": "tree_8", "coordinates": [27.1408, 38.4255], "base_elevation_m": 8.8, "height_m": 8.5, "canopy_radius_m": 3.6, "trunk_height_m": 2.4, "trunk_radius_m": 0.31, "tree_type": "conifer", "greenery_index": 0.78},
+          {"id": "tree_9", "coordinates": [27.1418, 38.4274], "base_elevation_m": 13.0, "height_m": 9.2, "canopy_radius_m": 3.8, "trunk_height_m": 2.5, "trunk_radius_m": 0.33, "tree_type": "broadleaf", "greenery_index": 0.82},
+          {"id": "tree_10", "coordinates": [27.1420, 38.4267], "base_elevation_m": 12.5, "height_m": 7.8, "canopy_radius_m": 3.2, "trunk_height_m": 2.1, "trunk_radius_m": 0.28, "tree_type": "deciduous", "greenery_index": 0.68},
+          {"id": "tree_11", "coordinates": [27.1432, 38.4286], "base_elevation_m": 17.5, "height_m": 10.5, "canopy_radius_m": 4.5, "trunk_height_m": 2.9, "trunk_radius_m": 0.38, "tree_type": "pine", "greenery_index": 0.90},
+          {"id": "tree_12", "coordinates": [27.1435, 38.4278], "base_elevation_m": 17.0, "height_m": 8.8, "canopy_radius_m": 3.7, "trunk_height_m": 2.4, "trunk_radius_m": 0.32, "tree_type": "conifer", "greenery_index": 0.84},
+          {"id": "tree_13", "coordinates": [27.1444, 38.4299], "base_elevation_m": 22.0, "height_m": 9.0, "canopy_radius_m": 3.9, "trunk_height_m": 2.5, "trunk_radius_m": 0.34, "tree_type": "deciduous", "greenery_index": 0.76},
+          {"id": "tree_14", "coordinates": [27.1448, 38.4291], "base_elevation_m": 21.5, "height_m": 8.2, "canopy_radius_m": 3.4, "trunk_height_m": 2.2, "trunk_radius_m": 0.30, "tree_type": "broadleaf", "greenery_index": 0.74},
+          {"id": "tree_15", "coordinates": [27.1458, 38.4312], "base_elevation_m": 26.2, "height_m": 9.8, "canopy_radius_m": 4.1, "trunk_height_m": 2.7, "trunk_radius_m": 0.35, "tree_type": "pine", "greenery_index": 0.86},
+          {"id": "tree_16", "coordinates": [27.1462, 38.4304], "base_elevation_m": 25.8, "height_m": 8.6, "canopy_radius_m": 3.6, "trunk_height_m": 2.4, "trunk_radius_m": 0.31, "tree_type": "conifer", "greenery_index": 0.80}
+        ],
         "cue_sheet": [
           {"step_number": 1, "instruction": "Head North on Waterfront Promenade", "direction": "depart", "distance_m": 320.0, "elevation_delta_m": 2.0, "slope_pct": 0.6, "street_name": "Promenade", "warning": ""},
           {"step_number": 2, "instruction": "Turn slight right onto Coastal Boulevard", "direction": "slight_right", "distance_m": 450.0, "elevation_delta_m": 6.5, "slope_pct": 1.4, "street_name": "Coastal Blvd", "warning": ""},

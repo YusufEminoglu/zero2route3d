@@ -63,6 +63,7 @@ class Studio3DApp {
 
     // Meshes and Groups
     this.terrainMesh = null;
+    this.skirtMesh = null;
     this.roadMesh = null;
     this.centerlineMesh = null;
     this.glowTubeMesh = null;
@@ -279,6 +280,9 @@ class Studio3DApp {
         this.showBasemap = !this.showBasemap;
         if (this.terrainMesh) {
           this.terrainMesh.visible = this.showBasemap;
+        }
+        if (this.skirtMesh) {
+          this.skirtMesh.visible = this.showBasemap;
         }
         btnBasemap.classList.toggle('active', this.showBasemap);
         const b = btnBasemap.querySelector('b');
@@ -584,6 +588,8 @@ class Studio3DApp {
 
     removeAndDispose(this.terrainMesh);
     this.terrainMesh = null;
+    removeAndDispose(this.skirtMesh);
+    this.skirtMesh = null;
     removeAndDispose(this.roadMesh);
     this.roadMesh = null;
     removeAndDispose(this.centerlineMesh);
@@ -629,7 +635,7 @@ class Studio3DApp {
     this.buildPinMarkers();
     this.buildAvatar();
     this.buildUrbanEnvironment();
-    this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup);
+    this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup, this.treesGroup, this.skirtMesh);
 
     this.progress = 0.0;
     this.updateAvatarPosition();
@@ -654,17 +660,26 @@ class Studio3DApp {
 
   buildTerrain() {
     if (!this.scenePoints.length) return;
-    const box = new THREE.Box3().setFromPoints(this.scenePoints);
+
+    // Collect all active route points for unified tight corridor bounds
+    const allRoutePoints = [];
+    if (this.routeVisuals && this.routeVisuals.length) {
+      this.routeVisuals.forEach((v) => {
+        if (v.points) allRoutePoints.push(...v.points);
+      });
+    }
+    if (!allRoutePoints.length) allRoutePoints.push(...this.scenePoints);
+
+    const box = new THREE.Box3().setFromPoints(allRoutePoints);
     const size = new THREE.Vector3();
     box.getSize(size);
     const center = new THREE.Vector3();
     box.getCenter(center);
 
-    // Keep the WebGL ground close to the real route extent. The previous
-    // 60% + 500 m padding made short routes look lost in an empty ocean.
-    const pad = Math.max(80, Math.min(220, Math.max(size.x, size.z) * 0.18));
-    const width = Math.max(size.x + pad * 2, 260);
-    const depth = Math.max(size.z + pad * 2, 260);
+    // Tight 30m architectural corridor diorama framing
+    const pad = Math.max(35, Math.min(60, Math.max(size.x, size.z) * 0.08));
+    const width = Math.max(size.x + pad * 2, 80);
+    const depth = Math.max(size.z + pad * 2, 80);
 
     const segments = 96;
     const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
@@ -699,6 +714,9 @@ class Studio3DApp {
     const gradZ = Math.abs(denom) > 1e-4 ? (sumZY * sumXX - sumXY * sumXZ) / denom : 0;
     const meanY = sumY / Math.max(1, n);
 
+    let minTerrainY = Infinity;
+    let maxTerrainY = -Infinity;
+
     for (let i = 0; i < count; i++) {
       const vx = posAttr.getX(i);
       const vz = posAttr.getZ(i);
@@ -722,11 +740,13 @@ class Studio3DApp {
       const localRouteEle = totalWeight > 0 ? (weightedY / totalWeight) : meanY;
       const regionalEle = meanY + gradX * (vx - center.x) + gradZ * (vz - center.z);
 
-      const corridorRadius = 140.0;
-      const blend = Math.max(0.0, Math.min(1.0, (minDist - 25.0) / corridorRadius));
-      const finalY = (1.0 - blend) * localRouteEle + blend * regionalEle - 0.4;
+      const corridorRadius = 60.0;
+      const blend = Math.max(0.0, Math.min(1.0, (minDist - 20.0) / corridorRadius));
+      const finalY = (1.0 - blend) * localRouteEle + blend * regionalEle - 0.35;
 
       posAttr.setY(i, finalY);
+      if (finalY < minTerrainY) minTerrainY = finalY;
+      if (finalY > maxTerrainY) maxTerrainY = finalY;
     }
 
     posAttr.needsUpdate = true;
@@ -736,7 +756,7 @@ class Studio3DApp {
     this.terrainDepth = depth;
     this.terrainCenter = center;
 
-    // Load real Slippy Map basemap tiles (OSM, Satellite, Carto)
+    // Load real Slippy Map basemap tiles (OSM, Satellite, Voyager, Dark)
     const basemapTexture = this.loadRealBasemapTiles(width, depth, center);
 
     const mat = new THREE.MeshStandardMaterial({
@@ -749,6 +769,99 @@ class Studio3DApp {
     this.terrainMesh.receiveShadow = true;
     this.terrainMesh.visible = this.showBasemap;
     this.scene.add(this.terrainMesh);
+
+    // -------------------------------------------------------------
+    // Tight Architectural Diorama Plinth Skirt (with beveled base)
+    // -------------------------------------------------------------
+    const baseSkirtY = minTerrainY - Math.max(12.0, (maxTerrainY - minTerrainY) * 0.35 + 8.0);
+    const N = segments;
+    const stride = N + 1;
+    const skirtVerts = [];
+    const skirtNorms = [];
+
+    const addSkirtQuad = (x1, y1, z1, x2, y2, z2) => {
+      const dx = x2 - x1;
+      const dz = z2 - z1;
+      const len = Math.sqrt(dx * dx + dz * dz) || 1.0;
+      const nx = dz / len;
+      const nz = -dx / len;
+
+      skirtVerts.push(
+        x1, y1, z1,        x1, baseSkirtY, z1,  x2, baseSkirtY, z2,
+        x1, y1, z1,        x2, baseSkirtY, z2,  x2, y2, z2
+      );
+      for (let k = 0; k < 6; k++) {
+        skirtNorms.push(nx, 0, nz);
+      }
+    };
+
+    // North Edge (row 0: ix from 0 to N-1)
+    for (let ix = 0; ix < N; ix++) {
+      const i1 = ix;
+      const i2 = ix + 1;
+      addSkirtQuad(
+        posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
+        posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
+      );
+    }
+    // East Edge (col N: iy from 0 to N-1)
+    for (let iy = 0; iy < N; iy++) {
+      const i1 = iy * stride + N;
+      const i2 = (iy + 1) * stride + N;
+      addSkirtQuad(
+        posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
+        posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
+      );
+    }
+    // South Edge (row N: ix from N down to 1)
+    for (let ix = N; ix > 0; ix--) {
+      const i1 = N * stride + ix;
+      const i2 = N * stride + (ix - 1);
+      addSkirtQuad(
+        posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
+        posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
+      );
+    }
+    // West Edge (col 0: iy from N down to 1)
+    for (let iy = N; iy > 0; iy--) {
+      const i1 = iy * stride;
+      const i2 = (iy - 1) * stride;
+      addSkirtQuad(
+        posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
+        posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
+      );
+    }
+
+    // Bottom Base Plinth Cap
+    const nwX = posAttr.getX(0), nwZ = posAttr.getZ(0);
+    const neX = posAttr.getX(N), neZ = posAttr.getZ(N);
+    const seX = posAttr.getX(stride * stride - 1), seZ = posAttr.getZ(stride * stride - 1);
+    const swX = posAttr.getX(N * stride), swZ = posAttr.getZ(N * stride);
+
+    skirtVerts.push(
+      nwX, baseSkirtY, nwZ,  swX, baseSkirtY, swZ,  seX, baseSkirtY, seZ,
+      nwX, baseSkirtY, nwZ,  seX, baseSkirtY, seZ,  neX, baseSkirtY, neZ
+    );
+    for (let k = 0; k < 6; k++) {
+      skirtNorms.push(0, -1, 0);
+    }
+
+    const skirtGeo = new THREE.BufferGeometry();
+    skirtGeo.setAttribute('position', new THREE.Float32BufferAttribute(skirtVerts, 3));
+    skirtGeo.setAttribute('normal', new THREE.Float32BufferAttribute(skirtNorms, 3));
+
+    const skirtMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.85,
+      metalness: 0.15,
+      side: THREE.DoubleSide,
+    });
+
+    this.skirtMesh = new THREE.Mesh(skirtGeo, skirtMat);
+    this.skirtMesh.receiveShadow = true;
+    this.skirtMesh.castShadow = true;
+    this.skirtMesh.visible = this.showBasemap;
+    this.scene.add(this.skirtMesh);
   }
 
   updateBasemapTexture() {
@@ -1006,7 +1119,8 @@ class Studio3DApp {
   }
 
   buildUrbanEnvironment() {
-    const buildings = this.routeData?.properties?.corridor_buildings || [];
+    const buildings = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings || [];
+    const trees = this.routeData?.properties?.corridor_trees || this.routeCollection?.properties?.corridor_trees || [];
 
     const bldMats = [
       new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7, metalness: 0.08 }),
@@ -1016,8 +1130,8 @@ class Studio3DApp {
       new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8, metalness: 0.05 }),
     ];
 
+    // 1. Render real OSM polygon buildings
     if (buildings.length > 0) {
-      // 1. Render real OSM polygon buildings
       buildings.forEach((bld, idx) => {
         const coords = bld.polygon || bld.coordinates || [];
         if (coords.length < 3) return;
@@ -1059,6 +1173,91 @@ class Studio3DApp {
         this.buildingsGroup.add(bldMesh);
       });
     }
+    this.buildingsGroup.visible = this.showBuildings;
+
+    // 2. Render volumetric 3D corridor trees (trunks + lush multi-layer canopies with shadows)
+    if (trees.length > 0) {
+      trees.forEach((tree) => {
+        const coords = tree.coordinates || [];
+        if (coords.length < 2) return;
+        const lon = coords[0];
+        const lat = coords[1];
+        const treeBaseEle = tree.base_elevation_m !== undefined ? tree.base_elevation_m : (this.baseElevation || 0.0);
+        const pos = this.lonLatToSceneMeters(lon, lat, treeBaseEle);
+        const groundY = this.getTerrainElevationAt(pos.x, pos.z);
+        pos.y = Math.max(pos.y, groundY);
+
+        const height = Math.max(4.5, Number(tree.height_m || 8.0));
+        const canopyR = Math.max(1.8, Number(tree.canopy_radius_m || 3.2));
+        const trunkH = Math.max(1.2, Number(tree.trunk_height_m || (height * 0.35)));
+        const trunkR = Math.max(0.18, Number(tree.trunk_radius_m || 0.28));
+        const treeType = tree.tree_type || 'deciduous';
+
+        const treeGroup = new THREE.Group();
+
+        // Architectural Wood Trunk
+        const trunkGeo = new THREE.CylinderGeometry(trunkR * 0.75, trunkR * 1.15, trunkH, 7);
+        const trunkMat = new THREE.MeshStandardMaterial({
+          color: 0x452b19,
+          roughness: 0.92,
+          metalness: 0.05,
+        });
+        const trunkMesh = new THREE.Mesh(trunkGeo, trunkMat);
+        trunkMesh.position.y = trunkH / 2;
+        trunkMesh.castShadow = true;
+        trunkMesh.receiveShadow = true;
+        treeGroup.add(trunkMesh);
+
+        // Volumetric Lush Multi-Layer Canopy
+        if (treeType === 'conifer' || treeType === 'pine') {
+          const pineTiers = [
+            { r: canopyR, h: (height - trunkH) * 0.52, y: trunkH + (height - trunkH) * 0.26, color: 0x14532d },
+            { r: canopyR * 0.78, h: (height - trunkH) * 0.48, y: trunkH + (height - trunkH) * 0.52, color: 0x166534 },
+            { r: canopyR * 0.52, h: (height - trunkH) * 0.42, y: trunkH + (height - trunkH) * 0.78, color: 0x15803d },
+          ];
+          pineTiers.forEach((tier) => {
+            const cGeo = new THREE.ConeGeometry(tier.r, tier.h, 7);
+            const cMat = new THREE.MeshStandardMaterial({
+              color: tier.color,
+              roughness: 0.75,
+              metalness: 0.04,
+              flatShading: true,
+            });
+            const cMesh = new THREE.Mesh(cGeo, cMat);
+            cMesh.position.y = tier.y;
+            cMesh.castShadow = true;
+            cMesh.receiveShadow = true;
+            treeGroup.add(cMesh);
+          });
+        } else {
+          // Lush multi-tier broadleaf / deciduous canopy
+          const decTiers = [
+            { r: canopyR * 0.95, y: trunkH + canopyR * 0.72, scale: [1.1, 0.82, 1.05], color: 0x15803d },
+            { r: canopyR * 0.82, y: trunkH + canopyR * 1.18, scale: [0.96, 0.88, 0.96], color: 0x16a34a },
+            { r: canopyR * 0.58, y: trunkH + canopyR * 1.58, scale: [0.85, 0.95, 0.85], color: 0x22c55e },
+          ];
+          decTiers.forEach((tier) => {
+            const folGeo = new THREE.DodecahedronGeometry(tier.r, 1);
+            folGeo.scale(tier.scale[0], tier.scale[1], tier.scale[2]);
+            const folMat = new THREE.MeshStandardMaterial({
+              color: tier.color,
+              roughness: 0.78,
+              metalness: 0.04,
+              flatShading: true,
+            });
+            const folMesh = new THREE.Mesh(folGeo, folMat);
+            folMesh.position.y = tier.y;
+            folMesh.castShadow = true;
+            folMesh.receiveShadow = true;
+            treeGroup.add(folMesh);
+          });
+        }
+
+        treeGroup.position.copy(pos);
+        this.treesGroup.add(treeGroup);
+      });
+    }
+    this.treesGroup.visible = this.showTrees;
   }
 
   togglePlay() {

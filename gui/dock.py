@@ -64,7 +64,7 @@ from ..core.network_source import NetworkSourceError, NetworkSourceManager
 from ..core.osm_downloader import OsmBuilding, OsmDataFetcher
 from ..core.osm_styling import apply_osm_atlas_style
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
-from ..core.route_corridor_3d import filter_buildings_in_corridor
+from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .canvas_animator import Route2DCanvasAnimator
 from .cue_sheet_widget import CueSheetWidget
@@ -1551,21 +1551,46 @@ class Route3DStudioDock(QDockWidget):
             self.table_od.setItem(idx, 3, QTableWidgetItem(f"{r['duration_min']:.1f}"))
             self.table_od.setItem(idx, 4, QTableWidgetItem(f"{r['climb_m']:.1f}"))
 
+    def _create_surface_sampler(self, weights: Optional[MCDAWeights] = None) -> EnvironmentalSurfaceSampler:
+        """Create surface sampler from active dock raster layers and MCDA weights."""
+        mcda_w = weights or MCDAWeights(
+            weight_slope=self.sld_slope.value() / 100.0 if hasattr(self, "sld_slope") else 1.0,
+            weight_heat=self.sld_heat.value() / 100.0 if hasattr(self, "sld_heat") else 0.5,
+            weight_green=self.sld_green.value() / 100.0 if hasattr(self, "sld_green") else 0.5,
+        )
+        return EnvironmentalSurfaceSampler(
+            dem_layer=self.cmb_dem_layer.currentLayer() if hasattr(self, "cmb_dem_layer") else None,
+            dem_layers=getattr(self, "copernicus_dem_layers", []),
+            lst_layer=self.cmb_lst_layer.currentLayer() if hasattr(self, "cmb_lst_layer") else None,
+            green_layer=self.cmb_green_layer.currentLayer() if hasattr(self, "cmb_green_layer") else None,
+            additional_layers=self._selected_extra_raster_layers() if hasattr(self, "_selected_extra_raster_layers") else [],
+            weights=mcda_w,
+        )
+
     def _build_web_route_payload(self, primary_result: Optional[RouteResult3D] = None) -> Dict[str, Any]:
         """Build the shared multi-profile payload consumed by QGIS and Web Guide."""
         primary = primary_result or self.current_route_result
         route_results = list(self.multi_route_results.values()) or ([primary] if primary else [])
         if not route_results:
             return {"type": "FeatureCollection", "features": [], "properties": {"route_count": 0}}
-        corridor_blds = filter_buildings_in_corridor(
-            primary.coordinates_3d if primary else route_results[0].coordinates_3d,
+
+        routes_coords = [r.coordinates_3d for r in route_results if r and r.coordinates_3d]
+        if not routes_coords and primary and primary.coordinates_3d:
+            routes_coords = [primary.coordinates_3d]
+
+        sampler = self._create_surface_sampler()
+        corridor_blds, corridor_trees = filter_corridor_assets_multi_route(
+            routes_coords,
             self.cached_osm_buildings,
-            buffer_meters=50.0,
+            buffer_meters=30.0,
+            green_sampler=sampler,
         )
+
         features = []
         for route_result in route_results:
             feature = route_result.to_geojson_feature()
             feature["properties"]["corridor_buildings"] = corridor_blds
+            feature["properties"]["corridor_trees"] = corridor_trees
             features.append(feature)
         return {
             "type": "FeatureCollection",
@@ -1574,6 +1599,8 @@ class Route3DStudioDock(QDockWidget):
                 "primary_profile_key": primary.profile.key if primary else features[0]["properties"].get("profile_key"),
                 "route_count": len(features),
                 "source": "02Route 3D QGIS multi-profile result",
+                "corridor_buildings": corridor_blds,
+                "corridor_trees": corridor_trees,
             },
         }
 

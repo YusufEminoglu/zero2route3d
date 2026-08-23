@@ -291,7 +291,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_corridor_building_filter(self) -> None:
         from ..core.osm_downloader import OsmBuilding
-        from ..core.route_corridor_3d import filter_buildings_in_corridor
+        from ..core.route_corridor_3d import filter_buildings_in_corridor, filter_corridor_assets_multi_route
 
         route_coords = [
             (27.1400, 38.4200, 10.0),
@@ -306,6 +306,58 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(len(corridor), 1)
         self.assertEqual(corridor[0]["id"], "b1")
         self.assertEqual(corridor[0]["height_m"], 16.0)
+
+    def test_multi_route_corridor_assets_and_3d_trees(self) -> None:
+        from ..core.environmental_raster import EnvironmentalSurfaceSampler
+        from ..core.osm_downloader import OsmBuilding
+        from ..core.route_corridor_3d import filter_corridor_assets_multi_route
+
+        route_1 = [
+            (27.1400, 38.4200, 10.0),
+            (27.1430, 38.4230, 12.0),
+            (27.1460, 38.4260, 14.0),
+        ]
+        route_2 = [
+            (27.1400, 38.4200, 10.0),
+            (27.1425, 38.4235, 11.5),
+            (27.1460, 38.4260, 14.0),
+        ]
+
+        blds = [
+            OsmBuilding("b_near_1", [(27.1402, 38.4202), (27.1404, 38.4202), (27.1404, 38.4204)], height_m=20.0, levels=6),
+            OsmBuilding("b_near_2", [(27.1426, 38.4236), (27.1428, 38.4236), (27.1428, 38.4238)], height_m=15.0, levels=4),
+            OsmBuilding("b_distant", [(27.1900, 38.4900), (27.1910, 38.4900), (27.1910, 38.4910)], height_m=25.0, levels=7),
+        ]
+
+        sampler = EnvironmentalSurfaceSampler()
+        corridor_blds, corridor_trees = filter_corridor_assets_multi_route(
+            [route_1, route_2],
+            blds,
+            buffer_meters=30.0,
+            green_sampler=sampler,
+        )
+
+        # Buildings within 30m across both routes
+        self.assertEqual(len(corridor_blds), 2)
+        bld_ids = {b["id"] for b in corridor_blds}
+        self.assertIn("b_near_1", bld_ids)
+        self.assertIn("b_near_2", bld_ids)
+        self.assertNotIn("b_distant", bld_ids)
+
+        # 3D Trees generated along 30m corridor
+        self.assertGreater(len(corridor_trees), 0)
+        first_tree = corridor_trees[0]
+        self.assertIn("id", first_tree)
+        self.assertIn("coordinates", first_tree)
+        self.assertIn("base_elevation_m", first_tree)
+        self.assertIn("height_m", first_tree)
+        self.assertIn("canopy_radius_m", first_tree)
+        self.assertIn("trunk_height_m", first_tree)
+        self.assertIn("trunk_radius_m", first_tree)
+        self.assertIn("tree_type", first_tree)
+        self.assertIn("greenery_index", first_tree)
+        self.assertGreaterEqual(first_tree["height_m"], 4.0)
+        self.assertGreaterEqual(first_tree["canopy_radius_m"], 1.5)
 
     def test_multi_profile_groups_and_colors(self) -> None:
         from ..core.mobility_profiles import get_profile_color, list_profile_keys_for_group
