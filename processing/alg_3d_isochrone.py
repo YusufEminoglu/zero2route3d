@@ -8,7 +8,6 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPointXY,
@@ -26,6 +25,8 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .field_utils import DOUBLE, STRING, make_field
+from .post_process import finalize_output
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
 from ..core.isochrone_engine import IsochroneEngine3D
 from ..core.mobility_profiles import list_profile_keys, get_profile
@@ -42,6 +43,19 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
     DEM_LAYER = "DEM_LAYER"
     NETWORK_LAYER = "NETWORK_LAYER"
     OUTPUT = "OUTPUT"
+
+    def shortHelpString(self) -> str:
+        return (
+            "Computes the area reachable from a centre point within a travel-time "
+            "budget, across a real road network and under the selected mobility "
+            "profile.\n\n"
+            "The result is a hull built over the reachable network nodes. It is a "
+            "network-derived approximation of a service area, not a surveyed boundary: "
+            "it cannot represent concavity, and the reported area and equivalent-circle "
+            "radius are approximations.\n\n"
+            "Provide a DEM to have gradient affect travel speed; without one the "
+            "network is treated as flat."
+        )
 
     def initAlgorithm(self, config: Dict[str, Any] = None) -> None:
         self.addParameter(
@@ -136,9 +150,9 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         )
 
         fields = QgsFields()
-        fields.append(QgsField("profile", 10))
-        fields.append(QgsField("time_min", 6))
-        fields.append(QgsField("reach_km", 6))
+        fields.append(make_field("profile", STRING))
+        fields.append(make_field("time_min", DOUBLE))
+        fields.append(make_field("reach_km", DOUBLE))
 
         crs_wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
         sink, dest_id = self.parameterAsSink(
@@ -163,6 +177,8 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             feat.setAttributes([profile.name, band.time_cutoff_min, round(reach_km, 2)])
             sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT: dest_id}
 
     def name(self) -> str:
@@ -175,7 +191,7 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         return "3D Mobility & Routing"
 
     def groupId(self) -> str:
-        return "mobility3d"
+        return "route3d"
 
     def tags(self) -> list[str]:
         return ["isochrone", "service area", "catchment", "travel time", "accessibility", "3d", "wavefront", "tobler", "contour", "15 minute city"]
@@ -183,3 +199,21 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
     def createInstance(self) -> ServiceArea3DAlgorithm:
         return ServiceArea3DAlgorithm()
 
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='3D Isochrone Catchment',
+            abstract='Approximate service area reachable within the given travel time, built as a hull over reachable network nodes. It is a network-derived approximation, not a measured boundary.',
+            aliases={'profile': 'Mobility profile', 'time_min': 'Cutoff (min)', 'area_ha': 'Approx. area (ha)', 'reach_km': 'Equivalent-circle radius (km)'},
+            line_color='#8b5cf6',
+            feedback=feedback,
+        )
+        return {}

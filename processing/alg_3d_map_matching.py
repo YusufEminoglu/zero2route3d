@@ -6,7 +6,6 @@ from typing import Any, Dict
 from qgis.core import (
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPoint,
@@ -22,6 +21,9 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .field_utils import DOUBLE, INT, STRING, make_field
+from .post_process import finalize_output
+from .crs_utils import point_to_wgs84, wgs84, rect_to_wgs84_bbox
 from ..core.map_matching_3d import GPXPoint, HMMMapMatcher3D
 from ..core.micro_elevation import MicroElevationEngine
 from ..core.network_source import NetworkSourceManager
@@ -99,11 +101,11 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
 
         fields = QgsFields()
-        fields.append(QgsField("raw_pts", 2))
-        fields.append(QgsField("dist_km", 6))
-        fields.append(QgsField("climb_m", 6))
-        fields.append(QgsField("mean_err_m", 6))
-        fields.append(QgsField("status", 10))
+        fields.append(make_field("raw_pts", INT))
+        fields.append(make_field("dist_km", DOUBLE))
+        fields.append(make_field("climb_m", DOUBLE))
+        fields.append(make_field("mean_err_m", DOUBLE))
+        fields.append(make_field("status", STRING))
 
         sink, dest_id = self.parameterAsSink(
             parameters,
@@ -111,7 +113,8 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
             context,
             fields,
             QgsWkbTypes.LineStringZ,
-            source_track.sourceCrs(),
+            # The engine emits WGS84 lon/lat, so the sink must declare WGS84.
+            wgs84(),
         )
 
         net_mgr = NetworkSourceManager()
@@ -119,7 +122,7 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
         try:
             segments = net_mgr.require_segments(
                 vector_layer=net_layer,
-                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+                bbox=rect_to_wgs84_bbox(bbox, source_track.sourceCrs(), context),
             )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -132,7 +135,7 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
 
         gpx_pts = []
         for f in source_track.getFeatures():
-            p = f.geometry().asPoint()
+            p = point_to_wgs84(f.geometry().asPoint(), source_track.sourceCrs(), context)
             gpx_pts.append(GPXPoint(lon=p.x(), lat=p.y()))
 
         res = matcher.match_gps_track(gpx_pts)
@@ -151,4 +154,25 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
             ])
             sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT_LINE: dest_id}
+
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='Map-Matched 3D Track',
+            abstract='GPS track snapped onto the road network with elevation sampled from the DEM.',
+            aliases={'points': 'Matched points', 'mean_err_m': 'Mean snapping error (m)'},
+            line_color='#f97316',
+            feedback=feedback,
+        )
+        return {}

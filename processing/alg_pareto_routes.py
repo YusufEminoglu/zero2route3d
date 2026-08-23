@@ -6,7 +6,6 @@ from typing import Any, Dict
 from qgis.core import (
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPoint,
@@ -24,6 +23,9 @@ from qgis.core import (
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
+from .field_utils import DOUBLE, STRING, make_field
+from .post_process import finalize_output
+from .crs_utils import point_to_wgs84, wgs84, rect_to_wgs84_bbox
 from ..core.mobility_profiles import list_profile_keys
 from ..core.network_source import NetworkSourceManager
 from ..core.pareto_router import ParetoMultiObjectiveRouter
@@ -122,11 +124,11 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         profile_key = self.profiles[max(0, min(profile_idx, len(self.profiles) - 1))]
 
         fields = QgsFields()
-        fields.append(QgsField("archetype", 10))
-        fields.append(QgsField("dist_km", 6))
-        fields.append(QgsField("time_min", 6))
-        fields.append(QgsField("ascent_m", 6))
-        fields.append(QgsField("kcal", 6))
+        fields.append(make_field("archetype", STRING))
+        fields.append(make_field("dist_km", DOUBLE))
+        fields.append(make_field("time_min", DOUBLE))
+        fields.append(make_field("ascent_m", DOUBLE))
+        fields.append(make_field("kcal", DOUBLE))
 
         sink, dest_id = self.parameterAsSink(
             parameters,
@@ -134,7 +136,8 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
             context,
             fields,
             QgsWkbTypes.LineStringZ,
-            source_pts.sourceCrs(),
+            # The engine emits WGS84 lon/lat, so the sink must declare WGS84.
+            wgs84(),
         )
 
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer, lst_layer=lst_layer)
@@ -143,7 +146,7 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         try:
             segments = net_mgr.require_segments(
                 vector_layer=net_layer,
-                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+                bbox=rect_to_wgs84_bbox(bbox, source_pts.sourceCrs(), context),
             )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -154,7 +157,11 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         pareto_router = ParetoMultiObjectiveRouter(engine.nodes, engine.adj, sampler)
         node_keys = list(engine.nodes.keys())
         if len(node_keys) >= 2:
-            points = [f.geometry().asPoint() for f in source_pts.getFeatures() if not f.geometry().isNull()]
+            points = [
+                point_to_wgs84(f.geometry().asPoint(), source_pts.sourceCrs(), context)
+                for f in source_pts.getFeatures()
+                if not f.geometry().isNull()
+            ]
             if len(points) < 2:
                 raise QgsProcessingException("The input points layer must contain at least two valid points.")
             start_node = engine.find_nearest_node((points[0].x(), points[0].y()))
@@ -176,4 +183,25 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
                 ])
                 sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT_ROUTES: dest_id}
+
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='Pareto Route Frontier',
+            abstract='Non-dominated route alternatives across travel time, cumulative climb, heat exposure and metabolic energy.',
+            aliases={'archetype': 'Archetype', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)'},
+            line_color='#7c3aed',
+            feedback=feedback,
+        )
+        return {}

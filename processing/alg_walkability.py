@@ -11,7 +11,6 @@ from qgis.core import (
     QgsDistanceArea,
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsProcessing,
     QgsProcessingAlgorithm,
@@ -24,6 +23,8 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .field_utils import BOOL, DOUBLE, make_field
+from .post_process import finalize_output
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
 
 
@@ -95,10 +96,10 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
 
         fields = QgsFields()
-        fields.append(QgsField("length_m", 6))
-        fields.append(QgsField("slope_pct", 6))
-        fields.append(QgsField("is_ada_ok", 1))  # 1 for Yes, 0 for No
-        fields.append(QgsField("walk_score", 6))  # 0 to 100
+        fields.append(make_field("length_m", DOUBLE))
+        fields.append(make_field("slope_pct", DOUBLE))
+        fields.append(make_field("is_ada_ok", BOOL))  # 1 for Yes, 0 for No
+        fields.append(make_field("walk_score", DOUBLE))  # 0 to 100
 
         sink, dest_id = self.parameterAsSink(
             parameters,
@@ -196,4 +197,25 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
                 "0.1 m, or outside the supplied DEM."
             )
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT: dest_id}
+
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='Walkability & Barrier-Free Audit',
+            abstract='Per-segment gradient, ADA compliance and walkability score. Lengths are measured on the ellipsoid; segments outside the DEM are omitted rather than scored.',
+            aliases={'length_m': 'Length (m)', 'slope_pct': 'Gradient (%)', 'is_ada_ok': 'ADA compliant', 'walk_score': 'Walkability score'},
+            line_color='#059669',
+            feedback=feedback,
+        )
+        return {}

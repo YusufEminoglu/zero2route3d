@@ -6,7 +6,6 @@ from typing import Any, Dict
 from qgis.core import (
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPoint,
@@ -24,6 +23,9 @@ from qgis.core import (
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
+from .field_utils import DOUBLE, INT, STRING, make_field
+from .post_process import finalize_output
+from .crs_utils import point_to_wgs84, wgs84, rect_to_wgs84_bbox, require_matching_crs
 from ..core.mobility_profiles import list_profile_keys
 from ..core.network_source import NetworkSourceManager
 from ..core.routing_engine import RoutingEngine3D, Waypoint
@@ -121,11 +123,11 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
         profile_key = self.profiles[max(0, min(profile_idx, len(self.profiles) - 1))]
 
         fields = QgsFields()
-        fields.append(QgsField("pair_id", 2))
-        fields.append(QgsField("profile", 10))
-        fields.append(QgsField("dist_km", 6))
-        fields.append(QgsField("time_min", 6))
-        fields.append(QgsField("climb_m", 6))
+        fields.append(make_field("pair_id", INT))
+        fields.append(make_field("profile", STRING))
+        fields.append(make_field("dist_km", DOUBLE))
+        fields.append(make_field("time_min", DOUBLE))
+        fields.append(make_field("climb_m", DOUBLE))
 
         sink, dest_id = self.parameterAsSink(
             parameters,
@@ -133,18 +135,23 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
             context,
             fields,
             QgsWkbTypes.LineStringZ,
-            source_origins.sourceCrs(),
+            # The engine emits WGS84 lon/lat, so the sink must declare WGS84.
+            wgs84(),
         )
 
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer)
         net_mgr = NetworkSourceManager()
+        # Combining two extents only means anything when both are in the same CRS.
+        require_matching_crs([
+            ("origins", source_origins.sourceCrs()),
+            ("destinations", source_dests.sourceCrs()),
+        ])
         bbox = source_origins.sourceExtent()
-        dest_bbox = source_dests.sourceExtent()
-        bbox.combineExtentWith(dest_bbox)
+        bbox.combineExtentWith(source_dests.sourceExtent())
         try:
             segments = net_mgr.require_segments(
                 vector_layer=net_layer,
-                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+                bbox=rect_to_wgs84_bbox(bbox, source_origins.sourceCrs(), context),
             )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -158,6 +165,18 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
         origins = list(source_origins.getFeatures())
         dests = list(source_dests.getFeatures())
         count = min(len(origins), len(dests))
+        if count == 0:
+            raise QgsProcessingException(
+                "Both the origins and the destinations layer must contain at least "
+                "one point feature."
+            )
+        if len(origins) != len(dests):
+            # Pairing is positional; say so rather than silently truncating.
+            feedback.pushWarning(
+                f"{len(origins)} origin(s) and {len(dests)} destination(s) were "
+                f"supplied. Features are paired in order, so only the first {count} "
+                f"pair(s) will be routed."
+            )
 
         for i in range(count):
             if feedback.isCanceled():
@@ -165,8 +184,8 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
 
             f_orig = origins[i]
             f_dest = dests[i]
-            p1 = f_orig.geometry().asPoint()
-            p2 = f_dest.geometry().asPoint()
+            p1 = point_to_wgs84(f_orig.geometry().asPoint(), source_origins.sourceCrs(), context)
+            p2 = point_to_wgs84(f_dest.geometry().asPoint(), source_dests.sourceCrs(), context)
 
             w1 = Waypoint(lon=p1.x(), lat=p1.y())
             w2 = Waypoint(lon=p2.x(), lat=p2.y())
@@ -190,4 +209,25 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
             if count > 0:
                 feedback.setProgress(int(((i + 1) / count) * 100.0))
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT: dest_id}
+
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='Batch 3D Routes',
+            abstract='One 3D route per origin/destination pair, paired positionally in feature order.',
+            aliases={'pair_id': 'Pair', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)'},
+            line_color='#0ea5e9',
+            feedback=feedback,
+        )
+        return {}

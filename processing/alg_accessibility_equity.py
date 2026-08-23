@@ -6,7 +6,6 @@ from typing import Any, Dict
 from qgis.core import (
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPointXY,
@@ -20,6 +19,9 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .field_utils import DOUBLE, STRING, make_field
+from .post_process import finalize_output
+from .crs_utils import point_to_wgs84, wgs84, require_matching_crs
 from ..core.accessibility_equity import (
     AccessibilityEquityEngine,
     SupplyFacility,
@@ -95,13 +97,17 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
         source_demand = self.parameterAsSource(parameters, self.INPUT_DEMAND, context)
         source_facs = self.parameterAsSource(parameters, self.INPUT_FACILITIES, context)
+        require_matching_crs([
+            ("demand zones", source_demand.sourceCrs() if source_demand else None),
+            ("facilities", source_facs.sourceCrs() if source_facs else None),
+        ])
         radius = self.parameterAsDouble(parameters, self.CATCHMENT_RADIUS, context)
 
         fields = QgsFields()
-        fields.append(QgsField("zone_id", 10))
-        fields.append(QgsField("acc_score", 6))
-        fields.append(QgsField("equity_tier", 10))
-        fields.append(QgsField("pct_rank", 6))
+        fields.append(make_field("zone_id", STRING))
+        fields.append(make_field("acc_score", DOUBLE))
+        fields.append(make_field("equity_tier", STRING))
+        fields.append(make_field("pct_rank", DOUBLE))
 
         sink, dest_id = self.parameterAsSink(
             parameters,
@@ -109,12 +115,13 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
             context,
             fields,
             QgsWkbTypes.Point,
-            source_demand.sourceCrs(),
+            # The engine emits WGS84 lon/lat, so the sink must declare WGS84.
+            wgs84(),
         )
 
         demand_records = []
         for f in source_demand.getFeatures():
-            p = f.geometry().asPoint()
+            p = point_to_wgs84(f.geometry().asPoint(), source_demand.sourceCrs(), context)
             pop = float(f["population"]) if "population" in f.fields().names() else 1000.0
             demand_records.append(
                 ZoneAccessibilityRecord(
@@ -128,7 +135,7 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
 
         facility_records = []
         for f in source_facs.getFeatures():
-            p = f.geometry().asPoint()
+            p = point_to_wgs84(f.geometry().asPoint(), source_facs.sourceCrs(), context)
             cap = float(f["capacity"]) if "capacity" in f.fields().names() else 100.0
             facility_records.append(
                 SupplyFacility(
@@ -155,4 +162,25 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
             ])
             sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT_ZONES: dest_id}
+
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='Accessibility & Equity Scorecard',
+            abstract='Two-step floating catchment accessibility scores per demand zone, with Gini and Palma inequality measures. Population and capacity come from the selected fields.',
+            aliases={'zone_id': 'Zone ID', 'name': 'Zone name', 'population': 'Population', 'access': 'Accessibility score', 'tier': 'Equity tier'},
+            point_color='#16a34a',
+            feedback=feedback,
+        )
+        return {}

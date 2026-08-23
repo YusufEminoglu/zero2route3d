@@ -4,10 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from qgis.core import (
-    QgsCoordinateReferenceSystem,
     QgsFeature,
     QgsFeatureSink,
-    QgsField,
     QgsFields,
     QgsGeometry,
     QgsPoint,
@@ -25,6 +23,9 @@ from qgis.core import (
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
+from .field_utils import DOUBLE, STRING, make_field
+from .post_process import finalize_output
+from .crs_utils import point_to_wgs84, wgs84
 from ..core.mobility_profiles import list_profile_keys, get_profile
 from ..core.network_source import NetworkSourceManager
 from ..core.routing_engine import RoutingEngine3D, Waypoint
@@ -39,6 +40,22 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
     DEM_LAYER = "DEM_LAYER"
     NETWORK_LAYER = "NETWORK_LAYER"
     OUTPUT = "OUTPUT"
+
+    def shortHelpString(self) -> str:
+        return (
+            "Computes the least-cost 3D route between two points across a real road "
+            "network, using the kinematics and constraints of the selected mobility "
+            "profile.\n\n"
+            "The network comes from the supplied line layer, or from OpenStreetMap for "
+            "the extent spanned by the two points when no layer is given. Elevation "
+            "comes from the supplied DEM; where no DEM covers a point the segment is "
+            "treated as flat rather than being assigned an invented height.\n\n"
+            "Travel time uses the Tobler hiking function for pedestrians, a power "
+            "balance for cycling, and road-hierarchy free-flow speeds for vehicles. "
+            "Energy uses the Minetti (2002) metabolic cost of transport.\n\n"
+            "Output is a LineStringZ layer in EPSG:4326 carrying distance, travel "
+            "time, cumulative climb, maximum gradient and energy expenditure."
+        )
 
     def initAlgorithm(self, config: Dict[str, Any] = None) -> None:
         self.addParameter(
@@ -93,8 +110,16 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback,
     ) -> Dict[str, Any]:
-        p1 = self.parameterAsPoint(parameters, self.START_POINT, context)
-        p2 = self.parameterAsPoint(parameters, self.END_POINT, context)
+        # parameterAsPoint returns the point in the *project* CRS. The routing
+        # engine works in WGS84 lon/lat, so convert explicitly instead of feeding
+        # it projected metres as if they were degrees.
+        point_crs = self.parameterAsPointCrs(parameters, self.START_POINT, context)
+        p1 = point_to_wgs84(
+            self.parameterAsPoint(parameters, self.START_POINT, context), point_crs, context
+        )
+        p2 = point_to_wgs84(
+            self.parameterAsPoint(parameters, self.END_POINT, context), point_crs, context
+        )
         prof_idx = self.parameterAsEnum(parameters, self.PROFILE, context)
         dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
         net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
@@ -125,14 +150,15 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
 
         # Output Fields
         fields = QgsFields()
-        fields.append(QgsField("profile", 10))
-        fields.append(QgsField("dist_km", 6))
-        fields.append(QgsField("time_min", 6))
-        fields.append(QgsField("climb_m", 6))
-        fields.append(QgsField("max_slope", 6))
-        fields.append(QgsField("calories", 6))
+        fields.append(make_field("profile", STRING))
+        fields.append(make_field("dist_km", DOUBLE))
+        fields.append(make_field("time_min", DOUBLE))
+        fields.append(make_field("climb_m", DOUBLE))
+        fields.append(make_field("max_slope", DOUBLE))
+        fields.append(make_field("calories", DOUBLE))
 
-        crs_wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+        # The engine emits WGS84 coordinates, so the sink must declare WGS84.
+        crs_wgs84 = wgs84()
         sink, dest_id = self.parameterAsSink(
             parameters,
             self.OUTPUT,
@@ -157,6 +183,8 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         ])
         sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
+        # Remembered so postProcessAlgorithm can resolve and style the layer.
+        self._dest_id = dest_id
         return {self.OUTPUT: dest_id}
 
     def name(self) -> str:
@@ -169,7 +197,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         return "3D Mobility & Routing"
 
     def groupId(self) -> str:
-        return "mobility3d"
+        return "route3d"
 
     def tags(self) -> list[str]:
         return ["routing", "3d", "kinematics", "tobler", "minetti", "least cost path", "elevation", "slope", "profile", "shortest path", "network"]
@@ -177,5 +205,21 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
     def createInstance(self) -> Compute3DRouteAlgorithm:
         return Compute3DRouteAlgorithm()
 
-
-
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        # The destination layer MUST be resolved through context.getMapLayer().
+        # QgsProject.instance().mapLayer() returns None here, which turns every
+        # styling and metadata call below into a silent no-op.
+        finalize_output(
+            context,
+            getattr(self, "_dest_id", ""),
+            title='3D Least-Cost Route',
+            abstract='Least-cost 3D route computed by 02Route 3D from a real network and DEM. Attributes carry distance, travel time, cumulative climb, maximum slope and metabolic energy for the selected mobility profile.',
+            aliases={'profile': 'Mobility profile', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)', 'max_slope': 'Maximum slope (%)', 'calories': 'Energy (kcal)'},
+            line_color='#0ea5e9',
+            feedback=feedback,
+        )
+        return {}
