@@ -115,6 +115,8 @@ class Route2DCanvasAnimator(QObject):
         self.current_time_s = 0.0
         self._init_canvas_markers()
         self._update_avatar_positions()
+        self.playback_state_changed.emit(False)
+        self.frame_updated.emit(0.0, self.max_duration_s, 0.0)
 
     def _init_canvas_markers(self) -> None:
         """Create one QGIS SVG-rendered point layer for all animated avatars."""
@@ -172,7 +174,16 @@ class Route2DCanvasAnimator(QObject):
             provider.addFeatures(features)
             stored_features = list(layer.getFeatures())
             layer.updateExtents()
-            QgsProject.instance().addMapLayer(layer)
+
+            # Insert avatar layer at the very top (index 0) of the QGIS Layer Tree
+            project = QgsProject.instance()
+            project.addMapLayer(layer, False)
+            root = project.layerTreeRoot()
+            if root is not None:
+                root.insertLayer(0, layer)
+            else:
+                project.addMapLayer(layer, True)
+
             self.avatar_layer = layer
             self._avatar_feature_ids = [feature.id() for feature in stored_features]
             for avatar in self.avatars:
@@ -180,6 +191,19 @@ class Route2DCanvasAnimator(QObject):
         except Exception:
             self.avatar_layer = None
             self._avatar_feature_ids = []
+
+    def bring_avatar_layer_to_top(self) -> None:
+        """Ensure the SVG avatar layer stays at the topmost position in the QGIS layer tree."""
+        if self.avatar_layer is None or not self.avatar_layer.isValid():
+            return
+        with contextlib.suppress(Exception):
+            root = QgsProject.instance().layerTreeRoot()
+            layer_node = root.findLayer(self.avatar_layer.id())
+            if layer_node is not None and root.children() and root.children()[0] != layer_node:
+                parent = layer_node.parent() or root
+                clone = layer_node.clone()
+                parent.removeChildNode(layer_node)
+                parent.insertChildNode(0, clone)
 
     def _remove_avatar_layer(self) -> None:
         """Remove the transient SVG avatar layer without touching user layers."""
@@ -200,6 +224,7 @@ class Route2DCanvasAnimator(QObject):
             self.current_time_s = 0.0
         if self.avatar_layer is None or not self.avatar_layer.isValid() or not self._avatar_feature_ids:
             self._init_canvas_markers()
+        self.bring_avatar_layer_to_top()
         self.is_playing = True
         self.timer.start()
         self.playback_state_changed.emit(True)

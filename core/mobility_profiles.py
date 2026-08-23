@@ -123,7 +123,7 @@ class MobilityProfile:
         elif self.key == "scooter":
             speed_kmh = scooter_speed(slope_fraction, self.base_speed_kmh)
         else:
-            speed_kmh = vehicle_free_flow_speed(hierarchy_rank, slope_pct=slope)
+            speed_kmh = vehicle_free_flow_speed(hierarchy_rank, slope_pct=slope, base_vehicle_speed_kmh=self.base_speed_kmh)
         speed_mps = max(0.2, speed_kmh * 1000.0 / 3600.0)
         return length / speed_mps
 

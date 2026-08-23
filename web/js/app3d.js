@@ -1273,13 +1273,22 @@ class Studio3DApp {
     const pt = this.curve.getPointAt(safeProgress);
     const tangent = this.curve.getTangentAt(safeProgress).normalize();
 
+    // Determine simulation elapsed time based on max duration among all active routes
+    const maxDurationSec = Math.max(
+      1.0,
+      ...this.routeFeatures.map((f) => Number(f?.properties?.duration_min || 5.0) * 60.0),
+    );
+    const elapsedSimTimeSec = safeProgress * maxDurationSec;
+
     const animDelta = this.isPlaying ? 0.016 * Math.max(0.2, this.playbackSpeed) : 0.0;
     this.routeVisuals.forEach((visual) => {
       if (!visual.rig || !visual.curve) return;
-      const visualPt = visual.key === this.activeProfileKey ? pt : visual.curve.getPointAt(safeProgress);
-      const visualTangent = visual.key === this.activeProfileKey
-        ? tangent
-        : visual.curve.getTangentAt(safeProgress).normalize();
+      const props = visual.feature?.properties || {};
+      const visualDurationSec = Math.max(1.0, Number(props.duration_min || 5.0) * 60.0);
+      const visualProgress = Math.max(0.0, Math.min(1.0, elapsedSimTimeSec / visualDurationSec));
+
+      const visualPt = visual.curve.getPointAt(visualProgress);
+      const visualTangent = visual.curve.getTangentAt(visualProgress).normalize();
       visual.rig.root.position.copy(visualPt);
       visual.rig.root.position.y += 0.2;
       const targetYaw = Math.atan2(visualTangent.x, visualTangent.z);
@@ -1288,7 +1297,6 @@ class Studio3DApp {
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       visual.rig.root.rotation.y = curYaw + diff * 0.35;
-      const props = visual.feature?.properties || {};
       const spd = Number(props.base_speed_kmh || 5.0);
       visual.rig.updateKinematics(animDelta, spd, visualTangent, 0, false);
     });

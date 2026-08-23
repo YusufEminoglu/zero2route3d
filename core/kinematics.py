@@ -253,8 +253,9 @@ def vehicle_free_flow_speed(
     hierarchy_rank: int,
     lanes: int = 2,
     slope_pct: float = 0.0,
+    base_vehicle_speed_kmh: float = 50.0,
 ) -> float:
-    """Modelled vehicle speed in km/h based on functional road classification, lanes, and grade."""
+    """Modelled vehicle speed in km/h based on functional road classification, vehicle profile, lanes, and grade."""
     base_speeds = {
         1: 80.0,  # Motorway / Primary Arterial
         2: 60.0,  # Secondary Arterial
@@ -262,7 +263,9 @@ def vehicle_free_flow_speed(
         4: 30.0,  # Local Residential Street
         5: 20.0,  # Narrow Alley / Service Way
     }
-    speed = base_speeds.get(hierarchy_rank, 30.0)
+    road_speed = base_speeds.get(hierarchy_rank, 30.0)
+    v_base = float(base_vehicle_speed_kmh) if math.isfinite(base_vehicle_speed_kmh) and base_vehicle_speed_kmh > 0 else 50.0
+    speed = road_speed * (v_base / 50.0)
     l_count = int(lanes) if math.isfinite(lanes) and lanes > 0 else 2
     speed += min(10.0, max(0, l_count - 2) * 4.0)
     s_pct = float(slope_pct) if math.isfinite(slope_pct) else 0.0

@@ -1382,6 +1382,21 @@ class Route3DStudioDock(QDockWidget):
         # Populate Multi-Profile Comparison Table
         self._update_comparison_table()
 
+        # Load 2D canvas animator with all calculated routes
+        self.canvas_animator.load_routes(list(self.multi_route_results.values()))
+
+        # 30m Linear Corridor Building Filter & 3D WebGL data sync
+        if selected_building_layer is not None and selected_building_layer.isValid():
+            self.cached_osm_buildings = self._extract_buildings_from_layer(selected_building_layer)
+        geojson_data = self._build_web_route_payload(result)
+
+        with contextlib.suppress(Exception):
+            self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+
+        # Automatically add the unified categorized multi-profile route layer to QGIS
+        self.add_route_layer_to_qgis()
+        self.canvas_animator.bring_avatar_layer_to_top()
+
         # Enable Export Buttons & Canvas Animator Controls
         self.btn_add_layer.setEnabled(True)
         self.btn_export_gpx.setEnabled(True)
@@ -1392,20 +1407,6 @@ class Route3DStudioDock(QDockWidget):
         self.btn_anim_play.setEnabled(True)
         self.btn_anim_stop.setEnabled(True)
         self.sld_anim_progress.setEnabled(True)
-
-        # Load 2D canvas animator with all calculated routes
-        self.canvas_animator.load_routes(list(self.multi_route_results.values()))
-
-        # 50m Linear Corridor Building Filter & 3D WebGL data sync
-        if selected_building_layer is not None and selected_building_layer.isValid():
-            self.cached_osm_buildings = self._extract_buildings_from_layer(selected_building_layer)
-        geojson_data = self._build_web_route_payload(result)
-
-        with contextlib.suppress(Exception):
-            self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
-
-        # Automatically add the unified categorized multi-profile route layer to QGIS
-        self.add_route_layer_to_qgis()
 
         self.progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
@@ -1480,7 +1481,7 @@ class Route3DStudioDock(QDockWidget):
 
     def _on_anim_state_changed(self, is_playing: bool) -> None:
         self.btn_anim_play.setText("⏸️ Pause" if is_playing else "▶️ Play")
-        self.btn_anim_play.setEnabled(bool(self.canvas_animator.avatars))
+        self.btn_anim_play.setEnabled(bool(self.canvas_animator.avatars) or bool(self.multi_route_results))
 
     def _on_anim_slider_moved(self, val: int) -> None:
         fraction = val / 1000.0
