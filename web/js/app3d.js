@@ -419,6 +419,7 @@ class Studio3DApp {
 
   selectProfile(profileKey) {
     if (!this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === profileKey)) return;
+    if (this.activeProfileKey === profileKey && this.selectedProfileKeys.has(profileKey)) return;
     this.activeProfileKey = profileKey;
     this.selectedProfileKeys.add(profileKey);
     this.refreshActiveRoute(true);
@@ -567,7 +568,7 @@ class Studio3DApp {
     this.activeScenario = scenarioKey;
     const scenarioProfiles = { ada: 'wheelchair', cycle: 'bicycle', green: 'senior' };
     const targetKey = scenarioProfiles[scenarioKey] || this.routeCollection?.properties?.primary_profile_key || this.activeProfileKey;
-    if (targetKey && this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === targetKey)) {
+    if (targetKey && targetKey !== this.activeProfileKey && this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === targetKey)) {
       this.selectProfile(targetKey);
     } else {
       this.updateHudMetrics();
@@ -627,7 +628,6 @@ class Studio3DApp {
     this.buildClassyRoadRibbon();
     this.buildPinMarkers();
     this.buildAvatar();
-    this.switchScenario(this.activeScenario);
     this.buildUrbanEnvironment();
     this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup);
 
@@ -1019,7 +1019,7 @@ class Studio3DApp {
     if (buildings.length > 0) {
       // 1. Render real OSM polygon buildings
       buildings.forEach((bld, idx) => {
-        const coords = bld.coordinates || [];
+        const coords = bld.polygon || bld.coordinates || [];
         if (coords.length < 3) return;
 
         const bldBaseEle = bld.base_elevation_m !== undefined ? bld.base_elevation_m : (this.baseElevation || 0.0);

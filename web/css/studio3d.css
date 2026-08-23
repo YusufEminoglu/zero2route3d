@@ -374,8 +374,15 @@ html, body {
   right: 14px;
   padding: 10px 18px;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-header-row {
+  display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .btn-play {
@@ -586,6 +593,7 @@ html, body {
   border-radius: 16px;
   border: 1px solid #e2e8f0;
   box-shadow: var(--card-shadow);
+  pointer-events: none;
 }
 
 .empty-icon {
