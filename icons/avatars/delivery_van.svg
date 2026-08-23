@@ -1,1 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".35" stop-color="#f97316"/><stop offset="1" stop-color="#9a3412"/></linearGradient><filter id="s"><feDropShadow dx="3" dy="4" stdDeviation="2" flood-opacity=".45"/></filter></defs><ellipse cx="60" cy="105" rx="44" ry="6" fill="#07111f" opacity=".25"/><g filter="url(#s)" stroke="#172033" stroke-width="3" stroke-linejoin="round"><path d="M10 45h77l20 23v34H10z" fill="url(#g)"/><path d="M70 52h16l14 17H70z" fill="#dbeafe" opacity=".85"/><rect x="20" y="56" width="40" height="24" rx="3" fill="#fff" opacity=".35"/><circle cx="31" cy="102" r="11" fill="#172033"/><circle cx="91" cy="102" r="11" fill="#172033"/><circle cx="31" cy="102" r="4" fill="#cbd5e1"/><circle cx="91" cy="102" r="4" fill="#cbd5e1"/><path d="M14 84h91" stroke="#fff" stroke-opacity=".7"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Top-down Overhead View: Delivery Van (Facing UP / North) -->
+  <defs>
+    <filter id="vanShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#020617" flood-opacity="0.5"/>
+    </filter>
+    <linearGradient id="vanBody" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="50%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Wheels -->
+  <rect x="32" y="24" width="6" height="18" rx="2" fill="#0f172a"/>
+  <rect x="82" y="24" width="6" height="18" rx="2" fill="#0f172a"/>
+  <rect x="32" y="78" width="6" height="18" rx="2" fill="#0f172a"/>
+  <rect x="82" y="78" width="6" height="18" rx="2" fill="#0f172a"/>
+
+  <!-- Mirrors -->
+  <rect x="30" y="38" width="6" height="4" rx="2" fill="#d97706" stroke="#0f172a" stroke-width="1"/>
+  <rect x="84" y="38" width="6" height="4" rx="2" fill="#d97706" stroke="#0f172a" stroke-width="1"/>
+
+  <g filter="url(#vanShadow)">
+    <!-- Van Body -->
+    <path d="M 42,12 C 50,10 70,10 78,12 C 84,14 86,22 86,34 L 86,96 C 86,104 82,108 76,108 C 68,108 52,108 44,108 C 38,108 34,104 34,96 L 34,34 C 34,22 36,14 42,12 Z"
+          fill="url(#vanBody)" stroke="#78350f" stroke-width="2"/>
+
+    <!-- Windshield -->
+    <path d="M 40,32 L 80,32 C 78,40 76,43 75,44 L 45,44 C 44,43 42,40 40,32 Z"
+          fill="#1e293b" stroke="#fde68a" stroke-width="1"/>
+
+    <!-- Cargo Roof Ribs -->
+    <rect x="38" y="48" width="44" height="56" rx="2" fill="#b45309" opacity="0.25"/>
+    <line x1="42" y1="58" x2="78" y2="58" stroke="#78350f" stroke-width="1.5"/>
+    <line x1="42" y1="70" x2="78" y2="70" stroke="#78350f" stroke-width="1.5"/>
+    <line x1="42" y1="82" x2="78" y2="82" stroke="#78350f" stroke-width="1.5"/>
+    <line x1="42" y1="94" x2="78" y2="94" stroke="#78350f" stroke-width="1.5"/>
+
+    <!-- Headlights -->
+    <polygon points="38,13 46,13 45,19 39,19" fill="#fef08a"/>
+    <polygon points="74,13 82,13 81,19 75,19" fill="#fef08a"/>
+
+    <!-- Taillights -->
+    <rect x="37" y="105" width="8" height="3" rx="1" fill="#ef4444"/>
+    <rect x="75" y="105" width="8" height="3" rx="1" fill="#ef4444"/>
+  </g>
+</svg>

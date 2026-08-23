@@ -378,8 +378,8 @@ class Studio3DApp {
     this.selectedProfileKeys = new Set(validFeatures.map((feature) => feature?.properties?.profile_key || 'adult'));
     if (this.elEmpty) this.elEmpty.style.display = 'none';
     this.refreshActiveRoute(true);
-    this.isPlaying = true;
-    if (this.elPlayIcon) this.elPlayIcon.textContent = '⏸';
+    this.isPlaying = false;
+    if (this.elPlayIcon) this.elPlayIcon.textContent = '▶';
   }
 
   refreshActiveRoute(resetCamera = false) {
@@ -1388,16 +1388,46 @@ class Studio3DApp {
 window.app3d = new Studio3DApp();
 
 window.setRouteData = function (geojsonData) {
-  if (window.app3d) {
+  if (window.app3d && geojsonData) {
     window.app3d.loadRoute(geojsonData);
   }
 };
 
-fetch('data/current_route.json')
-  .then((res) => (res.ok ? res.json() : null))
-  .then((data) => {
-    if (data && window.app3d) {
-      window.app3d.loadRoute(data);
+let lastLoadedPayload = null;
+
+async function fetchCurrentRoute() {
+  try {
+    const res = await fetch(`data/current_route.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      const dataStr = JSON.stringify(data);
+      if (data && dataStr !== lastLoadedPayload && window.app3d) {
+        lastLoadedPayload = dataStr;
+        window.app3d.loadRoute(data);
+        return true;
+      }
+      return Boolean(data);
     }
-  })
-  .catch(() => {});
+  } catch (_) {}
+  return false;
+}
+
+// Initial load: Try live QGIS route first, fallback to built-in sample route
+(async () => {
+  const loadedLive = await fetchCurrentRoute();
+  if (!loadedLive) {
+    try {
+      const sampleRes = await fetch(`data/sample_route.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (sampleRes.ok) {
+        const sampleData = await sampleRes.json();
+        if (sampleData && !lastLoadedPayload && window.app3d) {
+          lastLoadedPayload = JSON.stringify(sampleData);
+          window.app3d.loadRoute(sampleData);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Dynamic live sync: picks up newly computed routes from QGIS automatically
+  setInterval(fetchCurrentRoute, 1500);
+})();

@@ -1,1 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".35" stop-color="#f59e0b"/><stop offset="1" stop-color="#b45309"/></linearGradient><filter id="s"><feDropShadow dx="3" dy="4" stdDeviation="2" flood-opacity=".45"/></filter></defs><ellipse cx="60" cy="112" rx="22" ry="5" fill="#07111f" opacity=".25"/><g filter="url(#s)" stroke="#172033" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="60" cy="29" r="14" fill="#f8c7a8"/><path d="M45 28c1-17 29-20 31 0" fill="#451a03"/><path d="M46 53h28l7 28H39z" fill="url(#g)"/><path d="M51 80 45 106m24-26 6 26M45 59 32 80m40-21 13 21" fill="none" stroke="#172033" stroke-width="7"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Top-down Overhead View: Child Pedestrian (Facing UP / North) -->
+  <defs>
+    <filter id="childShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#020617" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Small Shoes -->
+  <ellipse cx="52" cy="44" rx="4" ry="7" fill="#dc2626"/>
+  <ellipse cx="68" cy="74" rx="4" ry="7" fill="#dc2626"/>
+
+  <g filter="url(#childShadow)">
+    <!-- Small Shoulders (Bright Amber/Yellow Shirt) -->
+    <ellipse cx="60" cy="60" rx="18" ry="10" fill="#f59e0b" stroke="#d97706" stroke-width="2"/>
+
+    <!-- School Backpack on Back -->
+    <rect x="50" y="62" width="20" height="12" rx="3" fill="#ef4444" stroke="#b91c1c" stroke-width="1.5"/>
+
+    <!-- Hands -->
+    <circle cx="42" cy="56" r="4.5" fill="#fde68a"/>
+    <circle cx="78" cy="64" r="4.5" fill="#fde68a"/>
+
+    <!-- Head & Cap (Facing UP) -->
+    <circle cx="60" cy="56" r="11" fill="#fde047"/>
+    <!-- Cap Visor pointing UP -->
+    <path d="M 52,48 C 56,43 64,43 68,48 Z" fill="#2563eb"/>
+    <circle cx="60" cy="56" r="9" fill="#1d4ed8"/>
+  </g>
+</svg>

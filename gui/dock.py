@@ -1493,6 +1493,10 @@ class Route3DStudioDock(QDockWidget):
 
     def open_3d_studio(self) -> None:
         """Start local HTTP server and launch the 3D WebGL studio with 50m building corridor in browser."""
+        if self.current_route_result is not None or self.multi_route_results:
+            geojson_data = self._build_web_route_payload(self.current_route_result)
+            with contextlib.suppress(Exception):
+                self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
         server_url = self.local_server.start()
         QDesktopServices.openUrl(QUrl(server_url))
 
