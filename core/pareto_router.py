@@ -19,6 +19,7 @@ from .environmental_raster import EnvironmentalSurfaceSampler
 from .kinematics import (
     cyclist_speed,
     haversine_distance_2d,
+    cycling_energy_cost,
     minetti_energy_cost,
     tobler_walking_speed,
 )
@@ -144,17 +145,22 @@ class ParetoMultiObjectiveRouter:
             _j, kcal = minetti_energy_cost(slope_frac, mass_kg=70.0, distance_m=length_m)
         elif profile.key in {"bicycle", "mtb"}:
             spd_kmh = cyclist_speed(slope_frac, base_speed_kmh=profile.base_speed_kmh)
-            kcal = (length_m / 1000.0) * 28.0 * (1.0 + max(0.0, slope_frac) * 4.0)
+            kcal = cycling_energy_cost(slope_frac, mass_kg=70.0, distance_m=length_m)[1]
         else:
             spd_kmh = max(5.0, profile.base_speed_kmh * (1.0 - abs(slope_pct) * 0.02))
-            kcal = (length_m / 1000.0) * 15.0
+            # Motorised travel has no rider metabolic cost; reporting one would be
+            # an invented figure in a column of measured ones.
+            kcal = 0.0
 
         time_s = length_m / max(0.2, (spd_kmh * 1000.0 / 3600.0))
         ascent_m = dz
 
-        # 3. Heat Exposure Dose
+        # 3. Heat Exposure Dose.
+        # Without a real LST raster there is no heat signal at all: a constant here
+        # would make heat_dose proportional to length, i.e. the "Coolest" objective
+        # would silently collapse into "Shortest".
         lst_val = self.sampler.sample_lst(v_coord[0], v_coord[1])
-        heat_dose = lst_val * (length_m / 100.0)
+        heat_dose = (lst_val * (length_m / 100.0)) if lst_val is not None else 0.0
 
         return ParetoCostVector(
             time_s=time_s,

@@ -1,13 +1,17 @@
-"""Copernicus & Earth Observation Multi-Spectral Environmental Raster Suite.
+"""Corridor elevation raster acquisition.
 
-Acquires, computes, and corridor-clips 4 core environmental indices simultaneously:
-1. Copernicus GLO-30 DEM (Digital Elevation Model in meters)
-2. NDVI (Normalized Difference Vegetation Index: -0.2 to +0.85)
-3. LST (Land Surface Temperature & Thermal Comfort in °C)
-4. NDBI (Normalized Difference Built-up & Impervious Surface Index: -0.5 to +0.65)
+Acquires a real elevation grid for an extent and clips it to the route corridor
+buffer, ready for QGIS loading and Multi-Criteria Decision Analysis.
 
-All rasters are georeferenced, clipped strictly to the route corridor buffer,
-and prepared for direct QGIS loading and Multi-Criteria Decision Analysis (MCDA).
+Elevation is queried from the Open-Elevation API (https://open-elevation.com);
+values that the service does not resolve are written as NoData, never as zero.
+
+This module deliberately produces **only** elevation. Earlier revisions also emitted
+NDVI, LST and NDBI grids that were synthesised from a sine/cosine hash of the pixel
+indices and labelled as Copernicus Sentinel-2 products. No satellite imagery was
+ever fetched, so those three surfaces were fabricated data wearing a real
+provider's name, and they were fed into the routing cost. They have been removed.
+Supply real NDVI / LST rasters through the plugin's own raster selectors instead.
 """
 from __future__ import annotations
 
@@ -15,12 +19,12 @@ import contextlib
 import json
 import math
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .copernicus_dem import CopernicusDemTileSource
-from .dem_fetcher import GlobalDemFetcher
+from .dem_fetcher import NODATA, GlobalDemFetcher
 from .kinematics import haversine_distance_2d
 
 
@@ -28,17 +32,19 @@ from .kinematics import haversine_distance_2d
 class EnvironmentalLayerResult:
     """Descriptor for a generated and corridor-clipped environmental raster."""
 
-    key: str  # 'dem', 'ndvi', 'lst', 'ndbi'
+    key: str  # 'dem'
     name: str
     file_path: Path
     min_val: float
     max_val: float
     unit: str
-    color_palette: str  # 'terrain', 'ndvi_greens', 'lst_thermal', 'ndbi_urban'
+    # 'terrain' for elevation; the ndvi/lst/ndbi palettes remain available for
+    # user-supplied real rasters styled through apply_environmental_raster_symbology.
+    color_palette: str
 
 
-class CopernicusEOSuite:
-    """Acquires and corridor-clips multi-spectral Earth Observation rasters in one pass."""
+class CorridorElevationSuite:
+    """Acquires and corridor-clips a real elevation raster for a route extent."""
 
     @classmethod
     def get_output_dir(cls) -> Path:
@@ -47,14 +53,14 @@ class CopernicusEOSuite:
         return out_dir
 
     @classmethod
-    def fetch_and_clip_multispectral_stack(
+    def fetch_and_clip_corridor_elevation(
         cls,
         bbox: Sequence[float],
         corridor_coords: Optional[Sequence[Tuple[float, float, ...]]] = None,
         buffer_meters: float = 30.0,
         resolution_deg: float = 0.000277777777778,  # ~30m at equator
     ) -> List[EnvironmentalLayerResult]:
-        """Generate and corridor-clip DEM, NDVI, LST, and NDBI rasters for the given extent."""
+        """Acquire and corridor-clip a real elevation raster for the given extent."""
         min_lon, min_lat, max_lon, max_lat = (float(v) for v in bbox[:4])
         if min_lon > max_lon:
             min_lon, max_lon = max_lon, min_lon
@@ -73,15 +79,10 @@ class CopernicusEOSuite:
         # 1. Fetch / derive DEM grid
         dem_grid = cls._acquire_dem_grid(min_lon, min_lat, actual_max_lon, actual_max_lat, width, height, res)
 
-        # 2. Derive multi-spectral environmental indices
-        ndvi_grid = cls._compute_ndvi_grid(dem_grid, min_lon, min_lat, width, height, res)
-        lst_grid = cls._compute_lst_grid(dem_grid, ndvi_grid, width, height)
-        ndbi_grid = cls._compute_ndbi_grid(ndvi_grid, width, height)
-
-        # 3. Apply 30m Corridor Buffer Mask if corridor line is provided
+        # 2. Apply the corridor buffer mask if a corridor line is provided
         if corridor_coords and len(corridor_coords) >= 2:
             cls._apply_corridor_mask(
-                [dem_grid, ndvi_grid, lst_grid, ndbi_grid],
+                [dem_grid],
                 min_lon,
                 min_lat,
                 res,
@@ -91,20 +92,20 @@ class CopernicusEOSuite:
                 buffer_meters=buffer_meters,
             )
 
-        # 4. Write GeoTIFF files
+        # 3. Write the GeoTIFF
         geotransform = (min_lon, res, 0.0, actual_max_lat, 0.0, -res)
         results: List[EnvironmentalLayerResult] = []
 
         specs = [
-            ("dem", "Copernicus 30m DEM (Topography)", dem_grid, "m", "terrain"),
-            ("ndvi", "Copernicus Sentinel-2 NDVI (Greenery Index)", ndvi_grid, "index", "ndvi_greens"),
-            ("lst", "Copernicus Land Surface Temperature (LST)", lst_grid, "°C", "lst_thermal"),
-            ("ndbi", "Copernicus Built-up Index (NDBI Urban Density)", ndbi_grid, "index", "ndbi_urban"),
+            ("dem", "Corridor Elevation (Open-Elevation 30m)", dem_grid, "m", "terrain"),
         ]
 
-        timestamp = int(tempfile.time.time() if hasattr(tempfile, "time") else 1700000000)
+        # tempfile has no `time` attribute, so the old expression always took the
+        # else-branch and every run reused one filename, overwriting rasters that
+        # were still open in the project.
+        timestamp = int(time.time())
         for key, name, grid, unit, palette in specs:
-            file_path = out_dir / f"copernicus_corridor_{key}_{timestamp}.tif"
+            file_path = out_dir / f"corridor_{key}_{timestamp}.tif"
             min_v, max_v = cls._write_geotiff(file_path, grid, width, height, geotransform, nodata_val=-9999.0)
             results.append(
                 EnvironmentalLayerResult(
@@ -131,8 +132,13 @@ class CopernicusEOSuite:
         height: int,
         res: float,
     ) -> List[List[float]]:
-        """Populate DEM grid using official Copernicus COGs or Open-Elevation cache."""
-        grid: List[List[float]] = [[0.0] * width for _ in range(height)]
+        """Populate the elevation grid from the Open-Elevation API and its cache.
+
+        Unresolved samples stay as NoData. Filling them with 0.0 would put a
+        sea-level plateau into the middle of real terrain, indistinguishable from
+        a genuine measurement.
+        """
+        grid: List[List[float]] = [[NODATA] * width for _ in range(height)]
         coords_to_sample: List[Tuple[float, float]] = []
 
         for r in range(height):
@@ -145,85 +151,14 @@ class CopernicusEOSuite:
         idx = 0
         for r in range(height):
             for c in range(width):
-                grid[r][c] = elevations[idx] if idx < len(elevations) else 0.0
+                value = elevations[idx] if idx < len(elevations) else None
+                grid[r][c] = NODATA if value is None else float(value)
                 idx += 1
 
         return grid
 
-    @classmethod
-    def _compute_ndvi_grid(
-        cls,
-        dem_grid: List[List[float]],
-        min_lon: float,
-        min_lat: float,
-        width: int,
-        height: int,
-        res: float,
-    ) -> List[List[float]]:
-        """Compute Normalized Difference Vegetation Index (NDVI: -0.2 to +0.85)."""
-        ndvi_grid: List[List[float]] = [[0.0] * width for _ in range(height)]
-        for r in range(height):
-            for c in range(width):
-                # Deterministic spatial hash for micro-environmental realism
-                val_hash = math.sin(r * 12.9898 + c * 78.233) * 43758.5453
-                noise = val_hash - math.floor(val_hash)
 
-                # Base NDVI with slope and elevation moderation
-                ele = dem_grid[r][c]
-                ele_factor = max(0.0, min(0.3, ele / 1000.0 * 0.15))
-                # Urban green distribution: 0.10 (asphalt) to 0.78 (park/canopy)
-                val = 0.15 + (noise * 0.55) + ele_factor
-                ndvi_grid[r][c] = round(max(-0.15, min(0.85, val)), 3)
-        return ndvi_grid
 
-    @classmethod
-    def _compute_lst_grid(
-        cls,
-        dem_grid: List[List[float]],
-        ndvi_grid: List[List[float]],
-        width: int,
-        height: int,
-    ) -> List[List[float]]:
-        """Compute Land Surface Temperature (LST in °C: 18°C to 42°C)."""
-        lst_grid: List[List[float]] = [[0.0] * width for _ in range(height)]
-        base_temp = 32.0  # Summer daytime baseline
-
-        for r in range(height):
-            for c in range(width):
-                ele = dem_grid[r][c]
-                ndvi = ndvi_grid[r][c]
-
-                # Environmental lapse rate: -6.5°C per 1000m
-                lapse_cooling = (ele / 1000.0) * 6.5
-
-                # Vegetation evapotranspiration cooling: up to -7°C in dense canopy
-                veg_cooling = max(0.0, ndvi) * 7.5
-
-                # Urban impervious heating: low NDVI radiates higher heat
-                urban_heating = max(0.0, 0.35 - ndvi) * 6.0
-
-                lst = base_temp - lapse_cooling - veg_cooling + urban_heating
-                lst_grid[r][c] = round(max(14.0, min(48.0, lst)), 1)
-        return lst_grid
-
-    @classmethod
-    def _compute_ndbi_grid(
-        cls,
-        ndvi_grid: List[List[float]],
-        width: int,
-        height: int,
-    ) -> List[List[float]]:
-        """Compute Normalized Difference Built-up Index (NDBI: -0.5 to +0.65)."""
-        ndbi_grid: List[List[float]] = [[0.0] * width for _ in range(height)]
-        for r in range(height):
-            for c in range(width):
-                ndvi = ndvi_grid[r][c]
-                # Inverse correlation between vegetation and impervious built-up surface
-                val_hash = math.cos(r * 37.123 + c * 91.456) * 23421.678
-                noise = (val_hash - math.floor(val_hash) - 0.5) * 0.15
-                ndbi = (0.28 - (ndvi * 0.75)) + noise
-                ndbi_grid[r][c] = round(max(-0.50, min(0.65, ndbi)), 3)
-        return ndbi_grid
 
     @classmethod
     def _apply_corridor_mask(

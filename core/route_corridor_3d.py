@@ -104,6 +104,8 @@ def get_closest_multi_route_elevation(
     if green_sampler is not None and hasattr(green_sampler, "sample_elevation"):
         with contextlib.suppress(Exception):
             elev = green_sampler.sample_elevation(px, py)
+            if elev is None:
+                elev = float("nan")
             if math.isfinite(elev) and elev != 0.0:
                 return float(elev)
 

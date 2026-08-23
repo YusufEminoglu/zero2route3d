@@ -62,6 +62,11 @@ class AHPEngine:
             return
         i = self.criteria.index(criterion_a)
         j = self.criteria.index(criterion_b)
+        if i == j:
+            # A criterion is always exactly as important as itself. Writing here
+            # would set matrix[i][i] = val and then 1/val, breaking the reciprocal
+            # matrix invariant and turning lambda_max and CR into noise.
+            return
         val = max(1.0 / 9.0, min(9.0, float(value)))
         self.matrix[i][j] = val
         self.matrix[j][i] = 1.0 / val

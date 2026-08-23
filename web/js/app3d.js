@@ -1601,6 +1601,7 @@ window.setRouteData = function (geojsonData) {
 };
 
 let lastLoadedPayload = null;
+let routePollTimer = null;
 
 async function fetchCurrentRoute() {
   try {
@@ -1619,22 +1620,19 @@ async function fetchCurrentRoute() {
   return false;
 }
 
-// Initial load: Try live QGIS route first, fallback to built-in sample route
+// Initial load. There is deliberately no built-in demo route: when QGIS has not
+// computed one yet the studio shows its empty state rather than a fabricated route
+// whose distance, climb and calorie figures would be indistinguishable from real ones.
 (async () => {
-  const loadedLive = await fetchCurrentRoute();
-  if (!loadedLive) {
-    try {
-      const sampleRes = await fetch(`data/sample_route.json?t=${Date.now()}`, { cache: 'no-store' });
-      if (sampleRes.ok) {
-        const sampleData = await sampleRes.json();
-        if (sampleData && !lastLoadedPayload && window.app3d) {
-          lastLoadedPayload = JSON.stringify(sampleData);
-          window.app3d.loadRoute(sampleData);
-        }
-      }
-    } catch (_) {}
-  }
+  await fetchCurrentRoute();
 
-  // Dynamic live sync: picks up newly computed routes from QGIS automatically
-  setInterval(fetchCurrentRoute, 1500);
+  // Dynamic live sync: picks up newly computed routes from QGIS automatically.
+  routePollTimer = setInterval(fetchCurrentRoute, 1500);
 })();
+
+window.addEventListener('beforeunload', () => {
+  if (routePollTimer !== null) {
+    clearInterval(routePollTimer);
+    routePollTimer = null;
+  }
+});

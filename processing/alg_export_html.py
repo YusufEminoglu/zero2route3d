@@ -12,6 +12,7 @@ from qgis.core import (
     QgsProcessingParameterVectorLayer,
 )
 
+from .route_input import extract_route_coords_3d
 from ..core.html_bundler import StandaloneHtmlBundler
 from ..core.mobility_profiles import get_profile
 from ..core.profile_stats import compute_route_statistics
@@ -69,18 +70,7 @@ class ExportStandalone3DHtmlAlgorithm(QgsProcessingAlgorithm):
         layer = self.parameterAsVectorLayer(parameters, self.INPUT_ROUTE, context)
         out_path = self.parameterAsFileOutput(parameters, self.OUTPUT_HTML, context)
 
-        coords_3d = []
-        for f in layer.getFeatures():
-            geom = f.geometry()
-            if geom.isNull() or geom.isEmpty():
-                continue
-            pts = geom.asMultiPolyline()[0] if geom.isMultipart() else geom.asPolyline()
-            for pt in pts:
-                coords_3d.append((pt.x(), pt.y(), pt.z() if pt.is3D() else 0.0))
-            break
-
-        if not coords_3d:
-            coords_3d = [(27.1428, 38.4237, 10.0), (27.1650, 38.4380, 25.0)]
+        coords_3d = extract_route_coords_3d(layer, context, "input route layer")
 
         profile = get_profile("adult")
         stats = compute_route_statistics(coords_3d, profile)

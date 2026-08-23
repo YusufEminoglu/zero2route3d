@@ -38,16 +38,27 @@ class MobilityProfile:
         is_steps: bool = False,
         surface_quality: float = 0.8,
         hierarchy_rank: int = 4,
-        lst_normalized: float = 0.5,
-        green_normalized: float = 0.5,
+        lst_normalized: Optional[float] = None,
+        green_normalized: Optional[float] = None,
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> float:
         """Calculate generalized impedance (cost) for traversing a segment under this profile."""
         len_m = float(length_m) if math.isfinite(length_m) and length_m > 0 else 0.01
         s_pct = float(slope_pct) if math.isfinite(slope_pct) else 0.0
         sq = max(0.0, min(1.0, float(surface_quality))) if math.isfinite(surface_quality) else 0.8
-        lst = max(0.0, min(1.0, float(lst_normalized))) if math.isfinite(lst_normalized) else 0.5
-        grn = max(0.0, min(1.0, float(green_normalized))) if math.isfinite(green_normalized) else 0.5
+        # A missing environmental raster is *absent*, not average. Substituting a
+        # mid-range constant would silently shift every edge cost, so None keeps the
+        # thermal term exactly neutral instead.
+        lst = (
+            max(0.0, min(1.0, float(lst_normalized)))
+            if lst_normalized is not None and math.isfinite(lst_normalized)
+            else None
+        )
+        grn = (
+            max(0.0, min(1.0, float(green_normalized)))
+            if green_normalized is not None and math.isfinite(green_normalized)
+            else None
+        )
 
         weights = custom_weights or {}
         w_slope = weights.get("slope", self.slope_sensitivity)
@@ -84,8 +95,15 @@ class MobilityProfile:
             smooth_mult = 1.0
 
         # 4. Thermal & Environmental Microclimate Resistance
-        thermal_cost = 1.0 + (lst * w_heat * 1.8) - (grn * w_green * 0.4)
-        thermal_mult = max(0.6, thermal_cost)
+        if lst is None and grn is None:
+            thermal_mult = 1.0
+        else:
+            thermal_cost = 1.0
+            if lst is not None:
+                thermal_cost += lst * w_heat * 1.8
+            if grn is not None:
+                thermal_cost -= grn * w_green * 0.4
+            thermal_mult = max(0.6, thermal_cost)
 
         # 5. Road Hierarchy Multiplier
         hier_mult = self.hierarchy_weights.get(hierarchy_rank, 1.0)

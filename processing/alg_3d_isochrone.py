@@ -61,17 +61,12 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        profile_options = [
-            "Standard Adult (5 km/h)",
-            "Senior / Elderly (3.2 km/h)",
-            "Child / Safe Walk",
-            "Stroller / Pram (Max 6% slope)",
-            "Wheelchair / Barrier-Free (Max 5% slope)",
-            "City Bicycle (18 km/h)",
-            "E-Scooter (20 km/h)",
-            "Passenger Car",
-            "Heavy Freight Truck",
-        ]
+        # Derived from the profile registry, never hand-listed: a hard-coded list
+        # of 9 labels was being indexed into the 15-entry registry, so choosing
+        # "Passenger Car" silently routed as a mountain bike and 6 profiles were
+        # unreachable.
+        self.profile_keys = list_profile_keys()
+        profile_options = [get_profile(key).name for key in self.profile_keys]
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.PROFILE,
@@ -115,8 +110,8 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
         net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
 
-        profile_keys = list_profile_keys()
-        profile_key = profile_keys[max(0, min(prof_idx, len(profile_keys) - 1))]
+        keys = getattr(self, "profile_keys", None) or list_profile_keys()
+        profile_key = keys[max(0, min(prof_idx, len(keys) - 1))]
         profile = get_profile(profile_key)
 
         feedback.setProgressText("Loading the real road network...")

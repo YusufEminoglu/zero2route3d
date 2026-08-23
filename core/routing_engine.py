@@ -11,7 +11,11 @@ from .input_validation import deduplicate_adjacent_coordinates, validate_waypoin
 from .kinematics import haversine_distance_2d
 from .mobility_profiles import MobilityProfile, get_profile
 from .network_source import RoadSegment
-from .profile_stats import RouteStatistics, compute_route_statistics
+from .profile_stats import (
+    RouteStatistics,
+    compute_route_statistics,
+    densify_3d_linestring_indexed,
+)
 from .tsp_solver import solve_tsp_order
 
 
@@ -37,7 +41,7 @@ def _empty_statistics() -> RouteStatistics:
         max_slope_pct=0.0,
         avg_slope_pct=0.0,
         total_calories_kcal=0.0,
-        thermal_comfort_score=1.0,
+        thermal_comfort_score=None,
     )
 
 
@@ -166,7 +170,8 @@ class RoutingEngine3D:
 
             key = (round(lon, 5), round(lat, 5))
             if key not in self.coord_to_node:
-                z = raw_z if raw_z != 0.0 else self.sampler.sample_elevation(lon, lat)
+                sampled_z = self.sampler.sample_elevation(lon, lat)
+                z = raw_z if raw_z != 0.0 else (sampled_z if sampled_z is not None else 0.0)
                 if not math.isfinite(z):
                     z = 0.0
                 self.coord_to_node[key] = node_counter
@@ -217,6 +222,8 @@ class RoutingEngine3D:
                 "slope_pct": slope_pct,
                 "highway": seg.highway_type,
                 "hierarchy": seg.hierarchy_rank,
+                "lanes": getattr(seg, "lanes", None),
+                "name": getattr(seg, "name", "") or "",
                 "is_steps": seg.is_steps,
                 "surface": seg.surface,
             }
@@ -339,8 +346,8 @@ class RoutingEngine3D:
             return [], False
 
         if start_node == end_node:
-            z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1])
-            z2 = self.sampler.sample_elevation(end_pt[0], end_pt[1])
+            z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
+            z2 = self.sampler.sample_elevation(end_pt[0], end_pt[1]) or 0.0
             dist_d = haversine_distance_2d(start_pt, end_pt)
             if dist_d < 0.1:
                 return [(start_pt[0], start_pt[1], z1)], True
@@ -427,8 +434,8 @@ class RoutingEngine3D:
             curr = prev_map.get(curr)
 
         path.reverse()
-        z_start = self.sampler.sample_elevation(start_pt[0], start_pt[1])
-        z_end = self.sampler.sample_elevation(end_pt[0], end_pt[1])
+        z_start = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
+        z_end = self.sampler.sample_elevation(end_pt[0], end_pt[1]) or 0.0
 
         final_path: List[Tuple[float, float, float]] = []
         p_start_3d = (start_pt[0], start_pt[1], z_start)
@@ -442,6 +449,61 @@ class RoutingEngine3D:
             final_path.append(p_end_3d)
 
         return final_path, True
+
+    def _sample_series(
+        self,
+        coords: Sequence[Sequence[float]],
+        sampler_fn: Any,
+    ) -> Optional[List[Optional[float]]]:
+        """Sample one environmental surface along the densified route.
+
+        Returns None when the surface yielded no real value anywhere, so callers can
+        drop the criterion entirely rather than average in a fabricated constant.
+        """
+        if not coords:
+            return None
+        dense, _src = densify_3d_linestring_indexed(coords, sample_interval_m=6.0)
+        values: List[Optional[float]] = []
+        found_any = False
+        for pt in dense:
+            value = sampler_fn(pt[0], pt[1])
+            if value is not None:
+                found_any = True
+            values.append(value)
+        return values if found_any else None
+
+    def _segment_metadata_for(
+        self,
+        coords: Sequence[Sequence[float]],
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Recover each route segment's real road attributes from the graph.
+
+        Hierarchy, lane count and the OSM street name are carried on the edge; before
+        this they were dropped during densification and replaced with constants.
+        """
+        if len(coords) < 2:
+            return None
+        meta: List[Dict[str, Any]] = []
+        found_any = False
+        for index in range(len(coords) - 1):
+            key_a = (round(coords[index][0], 5), round(coords[index][1], 5))
+            key_b = (round(coords[index + 1][0], 5), round(coords[index + 1][1], 5))
+            node_a = self.coord_to_node.get(key_a)
+            node_b = self.coord_to_node.get(key_b)
+            entry: Dict[str, Any] = {}
+            if node_a is not None and node_b is not None:
+                for v, _seg_len, _slope, edge_meta in self.adj.get(node_a, []):
+                    if v == node_b:
+                        entry = {
+                            "hierarchy": edge_meta.get("hierarchy", 4),
+                            "lanes": edge_meta.get("lanes"),
+                            "street_name": edge_meta.get("name"),
+                            "surface": edge_meta.get("surface"),
+                        }
+                        found_any = True
+                        break
+            meta.append(entry)
+        return meta if found_any else None
 
     def calculate_route(
         self,
@@ -467,7 +529,11 @@ class RoutingEngine3D:
             stats = _empty_statistics()
             if waypoints and len(waypoints) == 1:
                 w0 = waypoints[0]
-                z0 = w0.elevation_m if w0.elevation_m is not None and math.isfinite(w0.elevation_m) else self.sampler.sample_elevation(w0.lon, w0.lat)
+                z0 = (
+                    w0.elevation_m
+                    if w0.elevation_m is not None and math.isfinite(w0.elevation_m)
+                    else (self.sampler.sample_elevation(w0.lon, w0.lat) or 0.0)
+                )
                 coords = [(w0.lon, w0.lat, z0)]
                 stats.min_elevation_m = z0
                 stats.max_elevation_m = z0
@@ -484,7 +550,10 @@ class RoutingEngine3D:
 
         # Optional TSP optimization for >2 waypoints
         if optimize_tsp and len(wp_list) > 2:
-            pts_tuples = [(w.lon, w.lat, self.sampler.sample_elevation(w.lon, w.lat)) for w in wp_list]
+            pts_tuples = [
+                (w.lon, w.lat, self.sampler.sample_elevation(w.lon, w.lat) or 0.0)
+                for w in wp_list
+            ]
             ordered_indices = solve_tsp_order(pts_tuples, fix_start=True, fix_end=True)
             wp_list = [wp_list[idx] for idx in ordered_indices]
 
@@ -519,7 +588,13 @@ class RoutingEngine3D:
                 all_coords.extend(seg_coords)
 
         all_coords = deduplicate_adjacent_coordinates(all_coords)
-        stats = compute_route_statistics(all_coords, profile)
+        stats = compute_route_statistics(
+            all_coords,
+            profile,
+            lst_samples=self._sample_series(all_coords, self.sampler.sample_lst),
+            green_samples=self._sample_series(all_coords, self.sampler.sample_greenery),
+            segment_metadata=self._segment_metadata_for(all_coords),
+        )
 
         # Compute Alternative Route (e.g. Flattest or Coolest)
         alternatives: List[Dict[str, Any]] = []
@@ -532,17 +607,20 @@ class RoutingEngine3D:
                 if self.coord_to_node.get((round(all_coords[k][0], 5), round(all_coords[k][1], 5))) is not None
                 and self.coord_to_node.get((round(all_coords[k+1][0], 5), round(all_coords[k+1][1], 5))) is not None
             }
+            # The alternative must use the *requested* profile: routing a wheelchair
+            # request as a scenic pedestrian path produced an "alternative" that could
+            # cross stairs the primary profile forbids.
             alt_coords, alt_matched = self.compute_segment_route(
                 (wp_list[0].lon, wp_list[0].lat),
                 (wp_list[1].lon, wp_list[1].lat),
-                get_profile("sightseer"),
+                profile,
                 avoid_edges=edge_set,
             )
             if alt_matched and len(alt_coords) > 2:
-                alt_stats = compute_route_statistics(alt_coords, get_profile("sightseer"))
+                alt_stats = compute_route_statistics(alt_coords, profile)
                 alternatives.append(
                     {
-                        "name": "Alternative Scenic / Ridge Path",
+                        "name": "Alternative Route",
                         "distance_km": alt_stats.total_distance_km,
                         "duration_min": alt_stats.total_duration_min,
                         "elevation_gain_m": alt_stats.elevation_gain_m,

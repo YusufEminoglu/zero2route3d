@@ -9,7 +9,7 @@ from qgis.core import (
     QgsField,
     QgsFields,
     QgsGeometry,
-    QgsPoint,
+    QgsPointXY,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
@@ -144,7 +144,7 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
         res = engine.compute_e2sfca(demand_records, facility_records)
 
         for z in res.zones:
-            geom = QgsGeometry.fromPointXY(QgsPoint(z.lon, z.lat))
+            geom = QgsGeometry.fromPointXY(QgsPointXY(z.lon, z.lat))
             feat = QgsFeature(fields)
             feat.setGeometry(geom)
             feat.setAttributes([

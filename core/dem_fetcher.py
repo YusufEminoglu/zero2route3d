@@ -11,11 +11,20 @@ import json
 import math
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+# Raster NoData value. Distinct from 0.0, which is a legal elevation: filling
+# unresolved samples with zero produced a flat sea-level plateau that downstream
+# slope code could not tell apart from real terrain.
+NODATA = -9999.0
 
 
 class GlobalDemFetcher:
-    """Acquires and caches real-world 30m Copernicus/SRTM topography for coordinates."""
+    """Acquires and caches real elevation samples from the Open-Elevation API.
+
+    The service (https://open-elevation.com) is the only elevation source used
+    here. No Copernicus or SRTM product is queried directly.
+    """
 
     _CACHE_FILE = Path(tempfile.gettempdir()) / "zero2route3d_cache" / "elevation_cache.json"
     _MEMORY_CACHE: Dict[str, float] = {}
@@ -50,19 +59,22 @@ class GlobalDemFetcher:
     @classmethod
     def fetch_elevations_for_coords(
         cls, coords: Sequence[Tuple[float, float]], timeout_sec: float = 3.0
-    ) -> List[float]:
-        """Fetch real elevations in meters for a sequence of (lon, lat) WGS84 points."""
+    ) -> List[Optional[float]]:
+        """Fetch real elevations in metres for a sequence of (lon, lat) WGS84 points.
+
+        Every input gets exactly one output slot. A slot is None when the elevation
+        could not be resolved -- 0.0 is a real elevation and must never stand in for
+        a failed lookup.
+        """
         cls._load_disk_cache()
-        results: List[float] = [0.0] * len(coords)
+        results: List[Optional[float]] = [None] * len(coords)
         missing_pairs: List[Tuple[int, float, float]] = []
 
         for idx, pt in enumerate(coords):
             if not pt or len(pt) < 2:
-                results[idx] = 0.0
                 continue
             lon, lat = float(pt[0]), float(pt[1])
             if not math.isfinite(lon) or not math.isfinite(lat):
-                results[idx] = 0.0
                 continue
 
             key = f"{round(lon, 5):.5f},{round(lat, 5):.5f}"
@@ -125,33 +137,24 @@ class GlobalDemFetcher:
             if any_success:
                 cls._save_disk_cache()
 
-            # Keep unresolved coordinates at the explicit missing-value
-            # sentinel.  Never synthesize terrain from coordinate math.
+            # Keep unresolved coordinates at the explicit missing-value sentinel.
+            # Never synthesize terrain from coordinate math -- and never fall back
+            # to 0.0, which is a real elevation somewhere.
             if unresolved_indices:
                 for m_idx, _lon_val, _lat_val in unresolved_indices:
-                    results[m_idx] = 0.0
+                    results[m_idx] = None
 
         return results
 
     @classmethod
-    def get_fast_elevation(cls, lon: float, lat: float) -> float:
-        """Instant zero-latency elevation query using only the real cache."""
+    def get_fast_elevation(cls, lon: float, lat: float) -> Optional[float]:
+        """Elevation for a coordinate from the cache only, or None if unknown.
+
+        Returns None rather than 0.0 so that "no elevation data here" stays
+        distinguishable from "this point is at sea level".
+        """
         if not math.isfinite(lon) or not math.isfinite(lat):
-            return 0.0
+            return None
         cls._load_disk_cache()
         key = f"{round(lon, 5):.5f},{round(lat, 5):.5f}"
-        if key in cls._MEMORY_CACHE:
-            return cls._MEMORY_CACHE[key]
-        return 0.0
-
-    @classmethod
-    def get_elevation_single(cls, lon: float, lat: float) -> float:
-        """Sample or query elevation for a single coordinate."""
-        if not math.isfinite(lon) or not math.isfinite(lat):
-            return 0.0
-        cls._load_disk_cache()
-        key = f"{round(lon, 5):.5f},{round(lat, 5):.5f}"
-        if key in cls._MEMORY_CACHE:
-            return cls._MEMORY_CACHE[key]
-
-        return cls.get_fast_elevation(lon, lat)
+        return cls._MEMORY_CACHE.get(key)

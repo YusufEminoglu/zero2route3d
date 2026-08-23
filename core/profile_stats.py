@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .kinematics import (
     cyclist_speed,
     haversine_distance_2d,
+    cycling_energy_cost,
     minetti_energy_cost,
     scooter_speed,
     senior_fatigue_decay,
@@ -56,7 +57,9 @@ class RouteStatistics:
     max_slope_pct: float
     avg_slope_pct: float
     total_calories_kcal: float
-    thermal_comfort_score: float  # 0.0 (extreme heat) to 1.0 (ideal cool shade)
+    # 0.0 (extreme heat) to 1.0 (ideal cool shade); None when no LST raster covered
+    # the route -- a score must never be invented from a missing surface.
+    thermal_comfort_score: Optional[float]
     ada_compliant: bool = True
     ada_violations_count: int = 0
     slope_distribution: Dict[str, float] = field(default_factory=dict)
@@ -84,7 +87,11 @@ class RouteStatistics:
             "max_slope_pct": round(self.max_slope_pct, 1),
             "avg_slope_pct": round(self.avg_slope_pct, 1),
             "total_calories_kcal": round(self.total_calories_kcal, 1),
-            "thermal_comfort_score": round(self.thermal_comfort_score, 2),
+            "thermal_comfort_score": (
+                round(self.thermal_comfort_score, 2)
+                if self.thermal_comfort_score is not None
+                else None
+            ),
             "ada_compliant": self.ada_compliant,
             "ada_violations_count": self.ada_violations_count,
             "slope_distribution": self.slope_distribution,
@@ -139,6 +146,41 @@ def densify_3d_linestring(
     return densified
 
 
+def densify_3d_linestring_indexed(
+    coords: Sequence[Sequence[float]],
+    sample_interval_m: float = 8.0,
+    max_points: int = 100_000,
+) -> Tuple[List[Tuple[float, float, float]], List[int]]:
+    """Densify like densify_3d_linestring, also returning each point's source segment.
+
+    The plain densifier throws away which original segment every interpolated point
+    came from, which is why per-edge road attributes (hierarchy, lane count, real
+    street name) used to be unavailable downstream and were replaced by constants.
+    """
+    densified = densify_3d_linestring(coords, sample_interval_m, max_points)
+    valid_coords = [
+        (float(c[0]), float(c[1]))
+        for c in coords
+        if c and len(c) >= 2 and math.isfinite(float(c[0])) and math.isfinite(float(c[1]))
+    ]
+    if len(valid_coords) < 2 or not densified:
+        return densified, [0] * len(densified)
+
+    # Walk both sequences once: the densified points are emitted in segment order.
+    source_idx: List[int] = []
+    seg = 0
+    for pt in densified:
+        while seg < len(valid_coords) - 2:
+            here = haversine_distance_2d(pt, valid_coords[seg])
+            nxt = haversine_distance_2d(pt, valid_coords[seg + 1])
+            if nxt < here:
+                seg += 1
+            else:
+                break
+        source_idx.append(min(seg, len(valid_coords) - 2))
+    return densified, source_idx
+
+
 def smooth_elevation_series(elevations: Sequence[float], window_size: int = 5) -> List[float]:
     """Apply moving Gaussian-weighted smoothing to filter DEM quantization noise."""
     if not elevations:
@@ -189,9 +231,24 @@ def compute_turn_angle_and_direction(
     return diff, "slight_left"
 
 
+def _street_name_at(
+    segment_metadata: Optional[Sequence[Dict[str, Any]]],
+    index: int,
+) -> str:
+    """Real OSM street name for a segment, or "" when the way is unnamed.
+
+    Returning an empty string is deliberate: a placeholder such as "Urban Path"
+    reads like a surveyed name and is indistinguishable from a real one.
+    """
+    if not segment_metadata or index < 0 or index >= len(segment_metadata):
+        return ""
+    return str((segment_metadata[index] or {}).get("street_name") or "")
+
+
 def generate_cue_sheet(
     raw_coords_3d: Sequence[Sequence[float]],
     profile: Optional[MobilityProfile] = None,
+    segment_metadata: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> List[CueInstruction]:
     """Generate human-readable turn-by-turn navigation instructions."""
     if not raw_coords_3d or len(raw_coords_3d) < 2:
@@ -210,7 +267,7 @@ def generate_cue_sheet(
             distance_m=0.0,
             elevation_delta_m=0.0,
             slope_pct=0.0,
-            street_name="Starting Point",
+            street_name=_street_name_at(segment_metadata, 0),
         )
     )
     step_num += 1
@@ -259,7 +316,7 @@ def generate_cue_sheet(
                     distance_m=accum_dist,
                     elevation_delta_m=accum_dz,
                     slope_pct=slope,
-                    street_name="Urban Path",
+                    street_name=_street_name_at(segment_metadata, i),
                     warning=warning,
                 )
             )
@@ -283,7 +340,9 @@ def generate_cue_sheet(
             distance_m=accum_dist + last_d,
             elevation_delta_m=accum_dz + last_dz,
             slope_pct=0.0,
-            street_name="Destination Point",
+            street_name=_street_name_at(
+                segment_metadata, len(segment_metadata) - 1 if segment_metadata else 0
+            ),
         )
     )
 
@@ -293,7 +352,9 @@ def generate_cue_sheet(
 def compute_route_statistics(
     coords_3d: Sequence[Sequence[float]],
     profile: Optional[MobilityProfile] = None,
-    lst_samples: Optional[Sequence[float]] = None,
+    lst_samples: Optional[Sequence[Optional[float]]] = None,
+    green_samples: Optional[Sequence[Optional[float]]] = None,
+    segment_metadata: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> RouteStatistics:
     """Compute comprehensive kinematic, topographic, and thermal statistics along 3D route."""
     if not coords_3d:
@@ -307,7 +368,7 @@ def compute_route_statistics(
             max_slope_pct=0.0,
             avg_slope_pct=0.0,
             total_calories_kcal=0.0,
-            thermal_comfort_score=1.0,
+            thermal_comfort_score=None,
         )
 
     if len(coords_3d) == 1:
@@ -322,13 +383,25 @@ def compute_route_statistics(
             max_slope_pct=0.0,
             avg_slope_pct=0.0,
             total_calories_kcal=0.0,
-            thermal_comfort_score=1.0,
+            thermal_comfort_score=None,
         )
 
     prof = profile if profile is not None else get_profile("adult")
 
     # Densify coordinates
-    dense_pts = densify_3d_linestring(coords_3d, sample_interval_m=6.0)
+    dense_pts, dense_src = densify_3d_linestring_indexed(coords_3d, sample_interval_m=6.0)
+
+    def _segment_attr(vertex_index: int, key: str, fallback: Any) -> Any:
+        """Real per-edge road attribute for a densified vertex, or the fallback."""
+        if not segment_metadata:
+            return fallback
+        if vertex_index >= len(dense_src):
+            return fallback
+        src = dense_src[vertex_index]
+        if src >= len(segment_metadata):
+            return fallback
+        value = (segment_metadata[src] or {}).get(key)
+        return fallback if value is None else value
     if len(dense_pts) < 2:
         ele = float(coords_3d[0][2]) if len(coords_3d[0]) > 2 and math.isfinite(float(coords_3d[0][2])) else 0.0
         return RouteStatistics(
@@ -341,7 +414,7 @@ def compute_route_statistics(
             max_slope_pct=0.0,
             avg_slope_pct=0.0,
             total_calories_kcal=0.0,
-            thermal_comfort_score=1.0,
+            thermal_comfort_score=None,
         )
 
     cumulative_dist = 0.0
@@ -367,6 +440,7 @@ def compute_route_statistics(
 
     profile_list: List[Dict[str, Any]] = []
     thermal_sum = 0.0
+    thermal_dist = 0.0
     category = prof.category
     base_spd = prof.base_speed_kmh if math.isfinite(prof.base_speed_kmh) and prof.base_speed_kmh > 0 else 5.0
 
@@ -416,19 +490,27 @@ def compute_route_statistics(
         if category == "pedestrian":
             fatigue_mult = (
                 senior_fatigue_decay(cumulative_dist, elevation_gain)
-                if profile.key == "senior"
+                if prof.key == "senior"
                 else 1.0
             )
             speed_kmh = tobler_walking_speed(slope_frac, base_speed_kmh=base_spd) * fatigue_mult
             _j, kcal = minetti_energy_cost(slope_frac, mass_kg=70.0, distance_m=d_3d)
             total_calories += kcal
-        elif profile.key in {"bicycle", "mtb"}:
+        elif prof.key in {"bicycle", "mtb"}:
             speed_kmh = cyclist_speed(slope_frac, base_speed_kmh=base_spd)
-            total_calories += (d_3d / 1000.0) * 28.0
-        elif profile.key == "scooter":
+            total_calories += cycling_energy_cost(slope_frac, mass_kg=70.0, distance_m=d_3d)[1]
+        elif prof.key == "scooter":
             speed_kmh = scooter_speed(slope_frac, base_speed_kmh=base_spd)
         else:
-            speed_kmh = vehicle_free_flow_speed(hierarchy_rank=4, lanes=2, slope_pct=slope_pct)
+            # Use the segment's real road hierarchy and lane count when the graph
+            # supplied them, and honour the profile's own free-flow speed, so a
+            # paramedic is not timed identically to a heavy truck.
+            speed_kmh = vehicle_free_flow_speed(
+                hierarchy_rank=int(_segment_attr(i, "hierarchy", 4)),
+                lanes=int(_segment_attr(i, "lanes", 2) or 2),
+                slope_pct=slope_pct,
+                base_vehicle_speed_kmh=base_spd,
+            )
 
         if not math.isfinite(speed_kmh) or speed_kmh <= 0:
             speed_kmh = base_spd
@@ -438,23 +520,40 @@ def compute_route_statistics(
         if math.isfinite(seg_time_s):
             total_time_s += seg_time_s
 
-        lst_val = 0.5
+        # A missing LST raster contributes nothing: it must not be averaged in as
+        # a mid-range constant, which would make thermal_comfort_score a fixed 0.5
+        # for every route on Earth.
+        lst_val: Optional[float] = None
         if lst_samples and i < len(lst_samples):
-            v_lst = float(lst_samples[i])
-            if math.isfinite(v_lst):
-                lst_val = v_lst
-        thermal_sum += lst_val * d_3d
+            raw_lst = lst_samples[i]
+            if raw_lst is not None and math.isfinite(float(raw_lst)):
+                lst_val = float(raw_lst)
+        if lst_val is not None:
+            thermal_sum += lst_val * d_3d
+            thermal_dist += d_3d
 
-        profile_list.append(
-            {
-                "distance_m": round(cumulative_dist, 1),
-                "elevation_m": round(p1[2], 1),
-                "slope_pct": round(slope_pct, 1),
-                "speed_kmh": round(speed_kmh, 1),
-                "lon": round(p1[0], 6),
-                "lat": round(p1[1], 6),
-            }
-        )
+        green_val: Optional[float] = None
+        if green_samples and i < len(green_samples):
+            raw_green = green_samples[i]
+            if raw_green is not None and math.isfinite(float(raw_green)):
+                green_val = float(raw_green)
+
+        vertex: Dict[str, Any] = {
+            "distance_m": round(cumulative_dist, 1),
+            "elevation_m": round(p1[2], 1),
+            "slope_pct": round(slope_pct, 1),
+            "speed_kmh": round(speed_kmh, 1),
+            "lon": round(p1[0], 6),
+            "lat": round(p1[1], 6),
+        }
+        # Only emit the environmental keys when they are backed by a real raster,
+        # so the viewer can render an explicit "no data" state instead of a
+        # constant that looks like a measurement.
+        if lst_val is not None:
+            vertex["lst_normalized"] = round(lst_val, 3)
+        if green_val is not None:
+            vertex["ndvi_normalized"] = round(green_val, 3)
+        profile_list.append(vertex)
         cumulative_dist += d_3d
 
     if dense_pts:
@@ -471,15 +570,18 @@ def compute_route_statistics(
         )
 
     avg_slope = (slope_sum / cumulative_dist) if cumulative_dist > 0 else 0.0
-    mean_lst = (thermal_sum / cumulative_dist) if cumulative_dist > 0 else 0.5
-    thermal_comfort = max(0.0, min(1.0, 1.0 - mean_lst))
+    # thermal_comfort_score stays None unless a real LST raster covered the route.
+    thermal_comfort: Optional[float] = None
+    if thermal_dist > 0:
+        mean_lst = thermal_sum / thermal_dist
+        thermal_comfort = max(0.0, min(1.0, 1.0 - mean_lst))
 
     slope_dist_pct = {
         k: round((v / cumulative_dist) * 100.0, 1) if cumulative_dist > 0 else 0.0
         for k, v in slope_bins.items()
     }
 
-    cues = generate_cue_sheet(coords_3d, profile)
+    cues = generate_cue_sheet(coords_3d, prof, segment_metadata)
 
     return RouteStatistics(
         total_distance_m=cumulative_dist,

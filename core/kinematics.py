@@ -157,12 +157,15 @@ def minetti_energy_cost(
     cost_j_kg_m = (
         280.5 * (s ** 5)
         - 58.7 * (s ** 4)
-        - 228.1 * (s ** 3)
-        - 10.3 * (s ** 2)
-        + 233.5 * s
-        + 2.155
+        - 76.8 * (s ** 3)
+        + 51.9 * (s ** 2)
+        + 19.6 * s
+        + 2.5
     )
-    cost_j_kg_m = max(1.5, cost_j_kg_m)
+    # Minetti's polynomial is fitted over -0.45 <= i <= +0.45; outside that range it
+    # turns non-physical. Clamp to the smallest cost the fit itself produces rather
+    # than to an invented floor.
+    cost_j_kg_m = max(0.6, cost_j_kg_m)
     total_joules = cost_j_kg_m * m * d
     total_kcal = total_joules / 4184.0
     return total_joules, total_kcal
@@ -202,6 +205,48 @@ def rolling_resistance_force(
     theta = math.atan(abs(s))
     g = 9.80665
     return c_rr * m * g * math.cos(theta)
+
+
+def cycling_energy_cost(
+    slope_fraction: float,
+    mass_kg: float = 70.0,
+    distance_m: float = 0.0,
+    bike_mass_kg: float = 15.0,
+    surface: str = "asphalt",
+    gross_efficiency: float = 0.24,
+) -> Tuple[float, float]:
+    """Metabolic energy for cycling a segment, from a real power balance.
+
+    Mechanical work is the sum of the gravitational, rolling and aerodynamic terms
+    over the segment; metabolic energy is that work divided by cycling gross
+    efficiency (~0.20-0.25 in the literature). Descents recover no metabolic energy
+    but still cost basal effort, so the result is floored at zero work.
+
+    Returns (joules, kilocalories).
+    """
+    s_val = float(slope_fraction) if math.isfinite(slope_fraction) else 0.0
+    s = max(-0.30, min(0.30, s_val))
+    rider = float(mass_kg) if math.isfinite(mass_kg) and mass_kg > 0 else 70.0
+    bike = float(bike_mass_kg) if math.isfinite(bike_mass_kg) and bike_mass_kg > 0 else 15.0
+    d = float(distance_m) if math.isfinite(distance_m) and distance_m >= 0 else 0.0
+    eff = float(gross_efficiency) if math.isfinite(gross_efficiency) and 0.05 < gross_efficiency < 1.0 else 0.24
+    total_mass = rider + bike
+
+    theta = math.atan(s)
+    g = 9.80665
+
+    f_grav = total_mass * g * math.sin(theta)
+    f_roll = rolling_resistance_force(total_mass, s, surface)
+
+    speed_kmh = cyclist_speed(s, total_mass_kg=total_mass, surface=surface)
+    p_aero = aerodynamic_drag_power(speed_kmh)
+    v_ms = max(0.1, speed_kmh / 3.6)
+    f_aero = p_aero / v_ms
+
+    f_total = f_grav + f_roll + f_aero
+    mechanical_j = max(0.0, f_total) * d
+    metabolic_j = mechanical_j / eff
+    return metabolic_j, metabolic_j / 4184.0
 
 
 def cyclist_speed(

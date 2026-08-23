@@ -53,8 +53,10 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
 from ..core.basemap import add_osm_basemap
-from ..core.copernicus_dem import CopernicusDemError, CopernicusDemTileSource
-from ..core.copernicus_eo_suite import CopernicusEOSuite, apply_environmental_raster_symbology
+from ..core.copernicus_eo_suite import (
+    CorridorElevationSuite,
+    apply_environmental_raster_symbology,
+)
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import (
     PROFILES,
@@ -519,11 +521,11 @@ class Route3DStudioDock(QDockWidget):
         osm_layout.addWidget(source_note)
         layout.addWidget(card_osm)
 
-        # 2. Copernicus Multi-Spectral Raster Stack Card
+        # 2. Corridor Elevation Raster Card
         card_copernicus = QFrame()
         card_copernicus.setProperty("class", "route3dCard")
         cop_layout = QVBoxLayout(card_copernicus)
-        cop_layout.addWidget(QLabel("<b>2. Copernicus Multi-Spectral Environmental Stack & Clipping</b>"))
+        cop_layout.addWidget(QLabel("<b>2. Corridor Elevation Acquisition & Clipping</b>"))
 
         cop_grid = QGridLayout()
         cop_grid.addWidget(QLabel("Elevation DEM:"), 0, 0)
@@ -559,12 +561,18 @@ class Route3DStudioDock(QDockWidget):
         self.lst_extra_rasters.setMaximumHeight(92)
         cop_grid.addWidget(self.lst_extra_rasters, 4, 1)
 
-        btn_fetch_dem = QPushButton("🛰️ Fetch & Clip Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)")
-        btn_fetch_dem.setToolTip("Acquire Copernicus GLO-30 DEM, Sentinel-2 NDVI, Land Surface Temperature (LST), and NDBI Built-up Density in one pass, automatically clipped to the route corridor buffer.")
+        btn_fetch_dem = QPushButton("⛰️ Fetch && Clip Corridor Elevation Raster")
+        btn_fetch_dem.setToolTip("Query real elevation for the active extent from the Open-Elevation API and clip it to the route corridor buffer.")
         btn_fetch_dem.clicked.connect(self._on_fetch_global_dem_clicked)
         cop_grid.addWidget(btn_fetch_dem, 5, 0, 1, 2)
 
-        lbl_dem_note = QLabel("ℹ️ <i>Acquires official Copernicus GLO-30 DEM, Sentinel-2 NDVI Greenery, LST Thermal Comfort, and NDBI Built-up Density in a single click, automatically clipped and georeferenced to the route corridor.</i>")
+        lbl_dem_note = QLabel(
+            "ℹ️ <i>Elevation is queried from the Open-Elevation API and clipped "
+            "to the route corridor. Points the service cannot resolve are written as "
+            "NoData, never as zero.<br>For heat (LST) or greenery (NDVI) criteria, load "
+            "your own real rasters in the selectors above — this plugin does not "
+            "synthesise them.</i>"
+        )
         lbl_dem_note.setStyleSheet("color: #64748b; font-size: 11px;")
         lbl_dem_note.setWordWrap(True)
         cop_grid.addWidget(lbl_dem_note, 6, 0, 1, 2)
@@ -1497,8 +1505,23 @@ class Route3DStudioDock(QDockWidget):
         if row >= 0:
             self.lst_extra_rasters.takeItem(row)
 
-    def _get_active_bbox(self) -> Tuple[float, float, float, float]:
-        """Compute WGS84 bounding box from canvas or waypoints."""
+    def _warn_no_extent(self) -> None:
+        """Tell the user an extent is required instead of inventing one."""
+        message = (
+            "No area to work with. Zoom the map canvas to your area of interest, "
+            "or set Point A and Point B first."
+        )
+        if self.iface:
+            self.iface.messageBar().pushWarning("02Route 3D", message)
+        else:
+            QMessageBox.warning(self, "02Route 3D", message)
+
+    def _get_active_bbox(self) -> Optional[Tuple[float, float, float, float]]:
+        """WGS84 bounding box from the canvas or the waypoints, or None if neither.
+
+        Returns None rather than a default city: silently downloading data for a
+        hard-coded extent is worse than telling the user to set one.
+        """
         if self.canvas:
             with contextlib.suppress(Exception):
                 extent = self.canvas.extent()
@@ -1516,7 +1539,10 @@ class Route3DStudioDock(QDockWidget):
             lons = [w.lon for w in self.waypoints]
             lats = [w.lat for w in self.waypoints]
             return (min(lons) - 0.015, min(lats) - 0.015, max(lons) + 0.015, max(lats) + 0.015)
-        return (27.13, 38.41, 27.17, 38.45)
+        # No canvas extent and no waypoints: there is nothing to derive a bounding
+        # box from. Returning a hard-coded Izmir box silently downloaded data for a
+        # city the user may never have opened.
+        return None
 
     def _load_osm_layers_into_qgis(
         self,
@@ -1655,6 +1681,9 @@ class Route3DStudioDock(QDockWidget):
     def _fetch_osm_layers_for_extent(self) -> None:
         """Download real OSM roads, 3D buildings, trees, and park greenery for current area and load into QGIS."""
         bbox = self._get_active_bbox()
+        if bbox is None:
+            self._warn_no_extent()
+            return
         if self.iface:
             self.iface.messageBar().pushInfo("02Route 3D", "Fetching real OSM roads, 3D building footprints, trees, and parks from Overpass API...")
 
@@ -1677,7 +1706,7 @@ class Route3DStudioDock(QDockWidget):
             )
 
     def _on_fetch_global_dem_clicked(self) -> None:
-        """Acquire and corridor-clip Copernicus DEM, NDVI, LST, and NDBI environmental stack."""
+        """Acquire and corridor-clip a real elevation raster for the active extent."""
         corridor_coords: List[Tuple[float, float, ...]] = []
         if self.multi_route_results:
             for r in self.multi_route_results.values():
@@ -1697,20 +1726,24 @@ class Route3DStudioDock(QDockWidget):
         else:
             bbox = self._get_active_bbox()
 
+        if bbox is None:
+            self._warn_no_extent()
+            return
+
         if self.iface:
             self.iface.messageBar().pushInfo(
                 "02Route 3D",
-                "Fetching & corridor-clipping Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)...",
+                "Fetching and corridor-clipping the elevation raster...",
             )
 
         try:
-            results = CopernicusEOSuite.fetch_and_clip_multispectral_stack(
+            results = CorridorElevationSuite.fetch_and_clip_corridor_elevation(
                 bbox,
                 corridor_coords=corridor_coords,
                 buffer_meters=30.0,
             )
         except Exception as exc:
-            message = f"Copernicus multi-spectral fetch failed: {exc}"
+            message = f"Elevation acquisition failed: {exc}"
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", message)
             else:
@@ -1728,7 +1761,7 @@ class Route3DStudioDock(QDockWidget):
         # Prepare layer tree group in QGIS
         project = QgsProject.instance()
         root = project.layerTreeRoot()
-        group_name = "🛰️ Copernicus EO Environmental Corridor Stack"
+        group_name = "Corridor Elevation"
         group = root.findGroup(group_name) if root is not None else None
         if group is None and root is not None:
             group = root.insertGroup(1, group_name)
@@ -1738,7 +1771,7 @@ class Route3DStudioDock(QDockWidget):
             layer = QgsRasterLayer(str(res.file_path), res.name, "gdal")
             if not layer.isValid():
                 continue
-            layer.setCustomProperty("zero2route3d/copernicus_eo", res.key)
+            layer.setCustomProperty("zero2route3d/corridor_raster", res.key)
             apply_environmental_raster_symbology(layer, res.color_palette, res.min_val, res.max_val)
             project.addMapLayer(layer, False)
             if group is not None:
@@ -1749,24 +1782,17 @@ class Route3DStudioDock(QDockWidget):
 
             if res.key == "dem":
                 self.cmb_dem_layer.setLayer(layer)
-            elif res.key == "ndvi":
-                self.cmb_green_layer.setLayer(layer)
-            elif res.key == "lst":
-                self.cmb_lst_layer.setLayer(layer)
-            elif res.key == "ndbi":
-                user_role = getattr(getattr(Qt, "ItemDataRole", Qt), "UserRole", 32)
-                item = QListWidgetItem(layer.name())
-                item.setData(user_role, layer.id())
-                self.lst_extra_rasters.addItem(item)
 
         if loaded_count > 0:
-            message = f"Successfully loaded & corridor-clipped {loaded_count} Copernicus Multi-Spectral layers (DEM, NDVI, LST, NDBI) into QGIS!"
+            message = (
+                f"Loaded and corridor-clipped {loaded_count} elevation layer(s) into QGIS."
+            )
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", message)
             else:
                 QMessageBox.information(self, "02Route 3D", message)
         else:
-            message = "Copernicus files generated but could not be loaded into QGIS."
+            message = "The elevation raster was written but could not be loaded into QGIS."
             if self.iface:
                 self.iface.messageBar().pushCritical("02Route 3D", message)
             else:
@@ -2060,7 +2086,7 @@ class Route3DStudioDock(QDockWidget):
         key = self.cmb_profile.currentData() or "adult"
         prof = get_profile(key)
         dialog = ProfileEditorDialog(profile=prof, parent=self)
-        if dialog.exec_():
+        if dialog.exec():
             updated = dialog.get_updated_profile()
             PROFILES[updated.key] = updated
             existing_idx = self.cmb_profile.findData(updated.key)

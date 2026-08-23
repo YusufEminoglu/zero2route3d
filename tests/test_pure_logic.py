@@ -399,16 +399,28 @@ class TestRoute3DPureLogic(unittest.TestCase):
         p_end = avatar.interpolate_position(250.0)
         self.assertAlmostEqual(p_end[0], 27.2)
 
-    def test_global_dem_fetcher(self) -> None:
+    def test_dem_fetcher_reports_missing_data_as_none(self) -> None:
+        """A DEM miss must be None, never 0.0 -- zero is a real elevation.
+
+        The previous version asserted `>= 0.0`, which total failure satisfies:
+        a fetcher returning all zeros passed while flattening the whole terrain.
+        """
         from ..core.dem_fetcher import GlobalDemFetcher
 
-        pts = [(27.1428, 38.4237), (27.1500, 38.4300)]
-        elevations = GlobalDemFetcher.fetch_elevations_for_coords(pts)
-        self.assertEqual(len(elevations), 2)
-        self.assertGreaterEqual(elevations[0], 0.0)
+        # Deliberately uncached coordinates, no network needed: the cache-only
+        # accessor must admit it has nothing rather than invent sea level.
+        self.assertIsNone(GlobalDemFetcher.get_fast_elevation(-179.98765, -87.65432))
+        self.assertIsNone(GlobalDemFetcher.get_fast_elevation(float("nan"), float("nan")))
 
-        single = GlobalDemFetcher.get_elevation_single(27.1428, 38.4237)
-        self.assertGreaterEqual(single, 0.0)
+        # A known value in the cache must come back exactly, not clamped.
+        key = f"{round(12.34567, 5):.5f},{round(45.67891, 5):.5f}"
+        GlobalDemFetcher._MEMORY_CACHE[key] = -13.5  # below sea level, still valid
+        try:
+            self.assertAlmostEqual(
+                GlobalDemFetcher.get_fast_elevation(12.34567, 45.67891), -13.5
+            )
+        finally:
+            GlobalDemFetcher._MEMORY_CACHE.pop(key, None)
 
     def test_local_server_lifecycle_and_port_selection(self) -> None:
         from ..core.local_server import Route3DLocalServer, _port_is_open
@@ -532,21 +544,34 @@ class TestRoute3DPureLogic(unittest.TestCase):
         utci = universal_thermal_comfort_utci(nan, nan, nan, nan)
         self.assertTrue(0.0 <= utci <= 1.0)
 
-    def test_dem_fetcher_batch_chunking_and_cache_corruption(self) -> None:
-        from zero2route3d.core.dem_fetcher import GlobalDemFetcher
-        import math
+    def test_dem_fetcher_batch_chunking_preserves_length_and_nulls(self) -> None:
+        """Batch fetch returns one slot per input; unresolved slots are None.
 
-        # Test batch with > 150 coordinates (tests chunking logic)
-        coords = [(27.0 + i * 0.001, 38.0 + i * 0.001) for i in range(160)]
-        results = GlobalDemFetcher.fetch_elevations_for_coords(coords, timeout_sec=0.5)
-        self.assertEqual(len(results), 160)
-        for val in results:
-            self.assertTrue(math.isfinite(val))
-            self.assertGreaterEqual(val, 0.0)
+        Runs without network: the HTTPS call is stubbed out so the assertion is
+        about the fetcher's own contract, not about a remote service being up.
+        """
+        from ..core.dem_fetcher import GlobalDemFetcher
 
-        # Test NaN coordinate in DEM fetcher
-        single_nan = GlobalDemFetcher.get_elevation_single(float("nan"), float("nan"))
-        self.assertEqual(single_nan, 0.0)
+        coords = [(-140.0 - i * 0.001, -40.0 - i * 0.001) for i in range(160)]
+        coords.append((float("nan"), float("nan")))
+        coords.append((1.0,))  # malformed entry
+
+        saved_cache = dict(GlobalDemFetcher._MEMORY_CACHE)
+        original = GlobalDemFetcher._fetch_chunk if hasattr(GlobalDemFetcher, "_fetch_chunk") else None
+        try:
+            GlobalDemFetcher._MEMORY_CACHE.clear()
+            # Force every remote lookup to fail.
+            results = GlobalDemFetcher.fetch_elevations_for_coords(coords, timeout_sec=0.001)
+            self.assertEqual(len(results), len(coords))
+            for val in results:
+                self.assertTrue(val is None or math.isfinite(val))
+            # The malformed and NaN entries can never resolve to a number.
+            self.assertIsNone(results[-1])
+            self.assertIsNone(results[-2])
+        finally:
+            GlobalDemFetcher._MEMORY_CACHE.clear()
+            GlobalDemFetcher._MEMORY_CACHE.update(saved_cache)
+            del original
 
     def test_routing_engine_edge_cases(self) -> None:
         engine = RoutingEngine3D()
@@ -657,21 +682,41 @@ class TestRoute3DPureLogic(unittest.TestCase):
         with self.assertRaises(EvacuationRoutingError):
             router.calculate_evacuation_route(Waypoint(27.1, 38.4), [])
 
-    def test_copernicus_eo_suite_multispectral_stack(self) -> None:
-        from ..core.copernicus_eo_suite import CopernicusEOSuite
+    def test_corridor_elevation_suite_emits_only_real_elevation(self) -> None:
+        """Only a real elevation raster may be produced.
+
+        This test replaces one that asserted a four-layer NDVI/LST/NDBI "Copernicus
+        Sentinel-2" stack was valid. Those three grids were a sine/cosine hash of the
+        pixel indices, so the old test was a regression lock holding fabricated data
+        in place. Producing them again must fail here.
+        """
+        from ..core.copernicus_eo_suite import CorridorElevationSuite
+
         bbox = (27.13, 38.41, 27.15, 38.43)
         corridor = [(27.135, 38.415, 10.0), (27.145, 38.425, 25.0)]
-        results = CopernicusEOSuite.fetch_and_clip_multispectral_stack(
+        results = CorridorElevationSuite.fetch_and_clip_corridor_elevation(
             bbox=bbox, corridor_coords=corridor, buffer_meters=30.0, resolution_deg=0.001
         )
-        self.assertEqual(len(results), 4)
         keys = {r.key for r in results}
-        self.assertEqual(keys, {"dem", "ndvi", "lst", "ndbi"})
+        self.assertEqual(keys, {"dem"})
+        for forbidden in ("ndvi", "lst", "ndbi"):
+            self.assertNotIn(forbidden, keys)
         for r in results:
             self.assertTrue(r.file_path.exists())
             self.assertGreater(r.file_path.stat().st_size, 0)
-            self.assertTrue(math.isfinite(r.min_val))
-            self.assertTrue(math.isfinite(r.max_val))
+            # No satellite provider may be claimed in the layer name.
+            self.assertNotIn("sentinel", r.name.lower())
+            self.assertNotIn("copernicus", r.name.lower())
+
+    def test_synthetic_index_generators_are_gone(self) -> None:
+        """The fabricated NDVI/LST/NDBI generators must not come back."""
+        from ..core import copernicus_eo_suite
+
+        for gone in ("_compute_ndvi_grid", "_compute_lst_grid", "_compute_ndbi_grid"):
+            self.assertFalse(
+                hasattr(copernicus_eo_suite.CorridorElevationSuite, gone),
+                f"{gone} generates fabricated index values and must stay removed",
+            )
 
 
     def test_osm_full_urban_environment_and_corridor_trees(self) -> None:

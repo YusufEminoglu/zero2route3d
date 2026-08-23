@@ -34,6 +34,9 @@ class RoadSegment:
     is_steps: bool = False
     surface: str = "asphalt"
     is_oneway: bool = False
+    # Real OSM "name" tag. Left empty when the way is unnamed -- an unnamed street
+    # must stay unnamed rather than be given a placeholder like "Urban Path".
+    name: str = ""
 
 
 class NetworkSourceError(RuntimeError):
@@ -240,7 +243,16 @@ class NetworkSourceManager:
                 lanes = 1
                 with contextlib.suppress(Exception):
                     lanes = max(1, int(tags.get("lanes", 1)))
-                oneway = tags.get("oneway") in {"yes", "1", "true"}
+                oneway_tag = str(tags.get("oneway", "")).strip().lower()
+                # oneway=-1 means the way is one-way *against* its digitisation order.
+                # Treating it as bidirectional routed vehicles the wrong way down it.
+                reversed_oneway = oneway_tag in {"-1", "reverse"}
+                oneway = (
+                    oneway_tag in {"yes", "1", "true"}
+                    or reversed_oneway
+                    or str(tags.get("junction", "")).strip().lower() == "roundabout"
+                )
+                street_name = str(tags.get("name", "") or "").strip()
 
                 way_nodes = el.get("nodes") or []
                 for i in range(len(way_nodes) - 1):
@@ -261,7 +273,11 @@ class NetworkSourceManager:
                                 is_steps=is_steps,
                                 surface=surface,
                                 is_oneway=oneway,
+                                name=street_name,
                             )
+                            if reversed_oneway:
+                                # Store it in its true travel direction.
+                                seg.p1, seg.p2 = seg.p2, seg.p1
                             segments.append(seg)
         return segments
 

@@ -1,9 +1,14 @@
 """Processing algorithm for 3D Walkability and Universal Barrier-Free Accessibility Audit."""
 from __future__ import annotations
 
+import contextlib
+import math
 from typing import Any, Dict
 
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsDistanceArea,
     QgsFeature,
     QgsFeatureSink,
     QgsField,
@@ -11,6 +16,7 @@ from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
+    QgsProcessingException,
     QgsProcessingFeedback,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
@@ -72,6 +78,13 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+    @staticmethod
+    def _to_wgs84(transform: QgsCoordinateTransform, point: Any) -> Any:
+        """Reproject one point to WGS84, or None when the transform rejects it."""
+        with contextlib.suppress(Exception):
+            return transform.transform(point)
+        return None
+
     def processAlgorithm(
         self,
         parameters: Dict[str, Any],
@@ -97,8 +110,32 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
         )
 
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer)
+        if not sampler.has_elevation_source:
+            # Without a DEM every segment reads as 0% slope, so the audit would
+            # certify an entire hillside city as barrier-free. Refuse instead.
+            raise QgsProcessingException(
+                "A DEM raster is required: a barrier-free audit cannot be produced "
+                "without elevation data, because every segment would score as flat "
+                "and fully ADA-compliant."
+            )
+
+        # Lengths must be measured on the ellipsoid. geom.length() returns degrees
+        # for a geographic layer, which made slope percentages ~10^5 and zeroed
+        # every walk score.
+        distance_area = QgsDistanceArea()
+        distance_area.setSourceCrs(source.sourceCrs(), context.transformContext())
+        distance_area.setEllipsoid(context.project().ellipsoid() if context.project() else "WGS84")
+
+        # The sampler expects WGS84 lon/lat.
+        to_wgs84 = QgsCoordinateTransform(
+            source.sourceCrs(),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            context.transformContext(),
+        )
+
         total_feats = source.featureCount()
         count = 0
+        skipped_no_dem = 0
 
         for feat in source.getFeatures():
             if feedback.isCanceled():
@@ -108,15 +145,26 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
             if geom.isNull() or geom.isEmpty():
                 continue
 
-            length_m = geom.length()
-            if length_m < 0.1:
+            length_m = distance_area.measureLength(geom)
+            if not math.isfinite(length_m) or length_m < 0.1:
                 continue
 
             p_start = geom.asPolyline()[0] if not geom.isMultipart() else geom.asMultiPolyline()[0][0]
             p_end = geom.asPolyline()[-1] if not geom.isMultipart() else geom.asMultiPolyline()[0][-1]
 
-            z1 = sampler.sample_elevation(p_start.x(), p_start.y())
-            z2 = sampler.sample_elevation(p_end.x(), p_end.y())
+            w_start = self._to_wgs84(to_wgs84, p_start)
+            w_end = self._to_wgs84(to_wgs84, p_end)
+            if w_start is None or w_end is None:
+                skipped_no_dem += 1
+                continue
+
+            z1 = sampler.sample_elevation(w_start.x(), w_start.y())
+            z2 = sampler.sample_elevation(w_end.x(), w_end.y())
+            if z1 is None or z2 is None:
+                # Outside the DEM: emit no score rather than a flattering one.
+                skipped_no_dem += 1
+                continue
+
             dz = abs(z2 - z1)
             slope_pct = (dz / max(0.1, length_m)) * 100.0
 
@@ -136,5 +184,16 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
             count += 1
             if total_feats > 0:
                 feedback.setProgress(int((count / total_feats) * 100.0))
+
+        if skipped_no_dem:
+            feedback.pushWarning(
+                f"{skipped_no_dem} segment(s) fell outside the DEM and were omitted "
+                f"rather than scored against missing elevation."
+            )
+        if count == 0:
+            raise QgsProcessingException(
+                "No segment could be audited: every feature was empty, shorter than "
+                "0.1 m, or outside the supplied DEM."
+            )
 
         return {self.OUTPUT: dest_id}

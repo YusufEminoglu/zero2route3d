@@ -114,16 +114,25 @@ class EnvironmentalSurfaceSampler:
         self.additional_layers = [layer for layer in layers if layer is not None]
         self._additional_range_cache.clear()
 
-    def sample_elevation(self, lon: float, lat: float) -> float:
-        """Sample elevation in meters at given WGS84 coordinate."""
+    @property
+    def has_elevation_source(self) -> bool:
+        """True when at least one DEM raster is configured on this sampler."""
+        return bool(self.dem_layers)
+
+    def sample_elevation(self, lon: float, lat: float) -> Optional[float]:
+        """Sample elevation in metres at a WGS84 coordinate, or None if unknown.
+
+        Returns None -- not 0.0 -- when no DEM covers the point. Zero is a valid
+        elevation, so substituting it silently flattened terrain: slopes computed
+        against real neighbours became cliffs, and a whole network with no DEM
+        looked perfectly flat and therefore fully ADA-compliant.
+        """
         if not math.isfinite(lon) or not math.isfinite(lat):
-            return 0.0
+            return None
 
         coord_key = (round(lon, 5), round(lat, 5))
         if coord_key in self._dem_cache:
             return self._dem_cache[coord_key]
-
-        elevation = 0.0
 
         for dem_layer in self.dem_layers:
             with contextlib.suppress(Exception):
@@ -147,12 +156,11 @@ class EnvironmentalSurfaceSampler:
                     self._dem_cache[coord_key] = elevation
                     return elevation
 
-        # Fast zero-latency cached elevation.  A missing DEM is represented by
-        # zero and must not be mistaken for a generated terrain surface.
+        # Fall back to the cached Open-Elevation samples; None stays None.
         from .dem_fetcher import GlobalDemFetcher
         elevation = GlobalDemFetcher.get_fast_elevation(lon, lat)
-        if not math.isfinite(elevation):
-            elevation = 0.0
+        if elevation is not None and not math.isfinite(elevation):
+            elevation = None
         self._dem_cache[coord_key] = elevation
         return elevation
 
@@ -176,6 +184,10 @@ class EnvironmentalSurfaceSampler:
 
         z1 = float(p1[2]) if len(p1) > 2 and math.isfinite(float(p1[2])) else self.sample_elevation(lon1, lat1)
         z2 = float(p2[2]) if len(p2) > 2 and math.isfinite(float(p2[2])) else self.sample_elevation(lon2, lat2)
+        if z1 is None or z2 is None:
+            # No elevation data here: report a flat, zero-slope segment with a
+            # neutral solar factor rather than inventing a gradient.
+            return 0.0, 0.0, 1.0
 
         dz = z2 - z1
         if not math.isfinite(dz):
@@ -200,10 +212,15 @@ class EnvironmentalSurfaceSampler:
 
         return slope_pct, aspect_deg, solar_factor
 
-    def sample_lst(self, lon: float, lat: float) -> float:
-        """Sample Land Surface Temperature (normalized 0.0 = cool, 1.0 = hot)."""
+    def sample_lst(self, lon: float, lat: float) -> Optional[float]:
+        """Sample Land Surface Temperature (normalized 0.0 = cool, 1.0 = hot).
+
+        Returns None when no LST raster is configured or the point cannot be
+        sampled. Callers must treat None as "no data" and drop the criterion --
+        never as an average value, which would fabricate a thermal surface.
+        """
         if not math.isfinite(lon) or not math.isfinite(lat):
-            return 0.5
+            return None
 
         coord_key = (round(lon, 5), round(lat, 5))
         if coord_key in self._lst_cache:
@@ -231,13 +248,16 @@ class EnvironmentalSurfaceSampler:
                     normalized = max(0.0, min(1.0, normalized))
                     self._lst_cache[coord_key] = normalized
                     return normalized
-        self._lst_cache[coord_key] = 0.5
-        return 0.5
+        self._lst_cache[coord_key] = None
+        return None
 
-    def sample_greenery(self, lon: float, lat: float) -> float:
-        """Sample green tree canopy / NDVI (normalized 0.0 = bare/concrete, 1.0 = lush canopy)."""
+    def sample_greenery(self, lon: float, lat: float) -> Optional[float]:
+        """Sample green tree canopy / NDVI (0.0 = bare/concrete, 1.0 = lush canopy).
+
+        Returns None when no greenery raster is configured -- see sample_lst.
+        """
         if not math.isfinite(lon) or not math.isfinite(lat):
-            return 0.4
+            return None
 
         coord_key = (round(lon, 5), round(lat, 5))
         if coord_key in self._green_cache:
@@ -264,8 +284,8 @@ class EnvironmentalSurfaceSampler:
                     normalized = max(0.0, min(1.0, float(val)))
                     self._green_cache[coord_key] = normalized
                     return normalized
-        self._green_cache[coord_key] = 0.4
-        return 0.4
+        self._green_cache[coord_key] = None
+        return None
 
     def _additional_layer_range(self, layer: Any) -> Optional[Tuple[float, float]]:
         """Read a raster's real min/max statistics once for normalization."""
