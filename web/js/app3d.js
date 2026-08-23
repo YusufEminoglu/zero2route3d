@@ -379,7 +379,7 @@ class Studio3DApp {
     if (this.elEmpty) this.elEmpty.style.display = 'none';
     this.refreshActiveRoute(true);
     this.isPlaying = true;
-    if (this.elPlayIcon) this.elPlayIcon.textContent = 'â¸';
+    if (this.elPlayIcon) this.elPlayIcon.textContent = '⏸';
   }
 
   refreshActiveRoute(resetCamera = false) {
@@ -485,7 +485,7 @@ class Studio3DApp {
     this.elLayerList.innerHTML = '';
     if (this.elLayerCount) this.elLayerCount.textContent = String(this.routeFeatures.length);
     if (!this.routeFeatures.length) {
-      this.elLayerList.innerHTML = '<div class="layer-empty">Waiting for QGIS routesâ€¦</div>';
+      this.elLayerList.innerHTML = '<div class="layer-empty">Waiting for QGIS routes...</div>';
       return;
     }
     this.routeFeatures.forEach((feature) => {

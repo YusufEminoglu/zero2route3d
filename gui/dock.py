@@ -455,16 +455,13 @@ class Route3DStudioDock(QDockWidget):
         anim_ctrl_row = QHBoxLayout()
         self.btn_anim_play = QPushButton("▶️ Play")
         self.btn_anim_play.setEnabled(False)
+        self.btn_anim_play.setToolTip("Play or pause real-time 2D canvas route animation")
         self.btn_anim_play.clicked.connect(self.canvas_animator.toggle_play)
         anim_ctrl_row.addWidget(self.btn_anim_play)
 
-        self.btn_anim_pause = QPushButton("⏸️ Pause")
-        self.btn_anim_pause.setEnabled(False)
-        self.btn_anim_pause.clicked.connect(self.canvas_animator.pause)
-        anim_ctrl_row.addWidget(self.btn_anim_pause)
-
         self.btn_anim_stop = QPushButton("⏹️ Reset")
         self.btn_anim_stop.setEnabled(False)
+        self.btn_anim_stop.setToolTip("Rewind animation to start")
         self.btn_anim_stop.clicked.connect(self.canvas_animator.stop)
         anim_ctrl_row.addWidget(self.btn_anim_stop)
 
@@ -786,9 +783,11 @@ class Route3DStudioDock(QDockWidget):
                 label.setText("—")
         if hasattr(self, "lbl_anim_status"):
             self.lbl_anim_status.setText("00:00 / 00:00 (0%) | Ready to animate")
-        for button in (getattr(self, "btn_anim_play", None), getattr(self, "btn_anim_pause", None), getattr(self, "btn_anim_stop", None)):
+        for button in (getattr(self, "btn_anim_play", None), getattr(self, "btn_anim_stop", None)):
             if button is not None:
                 button.setEnabled(False)
+        if hasattr(self, "btn_anim_play") and self.btn_anim_play:
+            self.btn_anim_play.setText("▶️ Play")
         if hasattr(self, "sld_anim_progress"):
             self.sld_anim_progress.setValue(0)
             self.sld_anim_progress.setEnabled(False)
@@ -1392,8 +1391,8 @@ class Route3DStudioDock(QDockWidget):
         self.btn_export_geojson.setEnabled(True)
         self.btn_export_html.setEnabled(True)
         self.btn_export_dxf.setEnabled(True)
+        self.btn_anim_play.setText("▶️ Play")
         self.btn_anim_play.setEnabled(True)
-        self.btn_anim_pause.setEnabled(False)
         self.btn_anim_stop.setEnabled(True)
         self.sld_anim_progress.setEnabled(True)
 
@@ -1483,9 +1482,8 @@ class Route3DStudioDock(QDockWidget):
         self.lbl_anim_status.setText(f"{cur_min:02d}:{cur_sec:02d} / {tot_min:02d}:{tot_sec:02d} ({pct}%) | 🚗 {mode_count} Modes Active")
 
     def _on_anim_state_changed(self, is_playing: bool) -> None:
-        self.btn_anim_play.setText("▶️ Play")
-        self.btn_anim_play.setEnabled(not is_playing and bool(self.canvas_animator.avatars))
-        self.btn_anim_pause.setEnabled(is_playing)
+        self.btn_anim_play.setText("⏸️ Pause" if is_playing else "▶️ Play")
+        self.btn_anim_play.setEnabled(bool(self.canvas_animator.avatars))
 
     def _on_anim_slider_moved(self, val: int) -> None:
         fraction = val / 1000.0
