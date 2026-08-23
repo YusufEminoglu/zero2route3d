@@ -5,7 +5,6 @@ intermediate waypoints for minimal total 3D distance and elevation climb.
 """
 from __future__ import annotations
 
-import math
 from typing import List, Sequence, Tuple
 
 from .kinematics import haversine_distance_3d

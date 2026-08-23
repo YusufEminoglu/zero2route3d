@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
-
 from .routing_engine import RouteResult3D
 from .solar_shadow import compute_shade_exposure_along_route
 

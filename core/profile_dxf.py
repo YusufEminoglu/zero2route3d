@@ -20,7 +20,32 @@ def export_route_to_dxf_3d(
     layer_name: str = "3D_ROUTE",
 ) -> None:
     """Write 3D route coordinates to standard AutoCAD DXF file."""
-    if len(coords_3d) < 2:
+    target_path = Path(target_path)
+
+    def finite(value: object, default: float = 0.0) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return number if math.isfinite(number) else default
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    clean_coords = [
+        (
+            finite(pt[0]),
+            finite(pt[1]),
+            finite(pt[2]) if len(pt) > 2 else 0.0,
+        )
+        for pt in coords_3d
+        if pt and len(pt) >= 2
+    ]
+
+    if not clean_coords:
+        lines = [
+            "0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009", "0", "ENDSEC",
+            "0", "SECTION", "2", "ENTITIES", "0", "ENDSEC", "0", "EOF"
+        ]
+        target_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
 
     lines = [
@@ -92,7 +117,7 @@ def export_route_to_dxf_3d(
         "0.0",
     ])
 
-    for pt in coords_3d:
+    for pt in clean_coords:
         lines.extend([
             "0",
             "VERTEX",
@@ -111,22 +136,23 @@ def export_route_to_dxf_3d(
     lines.extend(["0", "SEQEND"])
 
     # 2. Longitudinal Profile Drawing in Model Space (Offset to the side)
-    if include_profile_section and len(coords_3d) >= 2:
+    scale = float(profile_vertical_scale) if math.isfinite(profile_vertical_scale) and profile_vertical_scale > 0 else 5.0
+    if include_profile_section and len(clean_coords) >= 2:
         accum_dist = 0.0
-        min_elev = min(p[2] for p in coords_3d)
+        min_elev = min(p[2] for p in clean_coords)
 
         # Baseline offset for profile drawing
-        x_base = coords_3d[0][0]
-        y_base = coords_3d[0][1] - 0.02
+        x_base = clean_coords[0][0]
+        y_base = clean_coords[0][1] - 0.02
 
         profile_pts = []
-        for i in range(len(coords_3d)):
+        for i in range(len(clean_coords)):
             if i > 0:
-                d = haversine_distance_2d(coords_3d[i - 1], coords_3d[i])
+                d = haversine_distance_2d(clean_coords[i - 1], clean_coords[i])
                 accum_dist += d
-            dz = coords_3d[i][2] - min_elev
+            dz = clean_coords[i][2] - min_elev
             px = x_base + (accum_dist / 111320.0)
-            py = y_base + ((dz * profile_vertical_scale) / 110574.0)
+            py = y_base + ((dz * scale) / 110574.0)
             profile_pts.append((px, py, 0.0))
 
         # Profile Polyline

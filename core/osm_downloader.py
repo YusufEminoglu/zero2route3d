@@ -4,8 +4,9 @@ from __future__ import annotations
 import contextlib
 import http.client
 import json
+import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 USER_AGENT = "02Route3D-QGIS-Plugin/0.1.0 (https://github.com/YusufEminoglu/zero2route3d)"
 DEFAULT_TIMEOUT_S = 30
@@ -43,9 +44,25 @@ class OsmDataFetcher:
         timeout_s: int = DEFAULT_TIMEOUT_S,
     ) -> Tuple[List[OsmRoad], List[OsmBuilding]]:
         """Fetch roads and buildings in bbox: (min_lon, min_lat, max_lon, max_lat)."""
-        min_lon, min_lat, max_lon, max_lat = bbox
+        if not bbox or len(bbox) < 4:
+            return [], []
+
+        min_lon, min_lat, max_lon, max_lat = (
+            float(bbox[0]),
+            float(bbox[1]),
+            float(bbox[2]),
+            float(bbox[3]),
+        )
+        if not (math.isfinite(min_lon) and math.isfinite(min_lat) and math.isfinite(max_lon) and math.isfinite(max_lat)):
+            return [], []
+
+        if min_lon >= max_lon or min_lat >= max_lat:
+            return [], []
+
+        to_sec = max(1, int(timeout_s)) if math.isfinite(timeout_s) and timeout_s > 0 else DEFAULT_TIMEOUT_S
+
         query = f"""
-        [out:json][timeout:{timeout_s}];
+        [out:json][timeout:{to_sec}];
         (
           way["highway"~"primary|secondary|tertiary|residential|service|footway|cycleway|living_street|pedestrian|path|track|unclassified"]({min_lat},{min_lon},{max_lat},{max_lon});
           way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
@@ -64,55 +81,75 @@ class OsmDataFetcher:
                 "Content-Type": "application/x-www-form-urlencoded",
                 "User-Agent": USER_AGENT,
             }
-            conn = http.client.HTTPSConnection("overpass-api.de", timeout=timeout_s)
-            conn.request("POST", "/api/interpreter", body=body, headers=headers)
-            resp = conn.getresponse()
-            if resp.status == 200:
-                raw_bytes = resp.read()
-                data = json.loads(raw_bytes.decode("utf-8"))
+            conn = http.client.HTTPSConnection("overpass-api.de", timeout=to_sec)
+            try:
+                conn.request("POST", "/api/interpreter", body=body, headers=headers)
+                resp = conn.getresponse()
+                if resp.status == 200:
+                    raw_bytes = resp.read()
+                    data = json.loads(raw_bytes.decode("utf-8"))
 
-                for elem in data.get("elements", []):
-                    tags = elem.get("tags", {})
-                    elem_id = str(elem.get("id", ""))
+                    for elem in data.get("elements", []):
+                        tags = elem.get("tags", {})
+                        elem_id = str(elem.get("id", ""))
 
-                    if "highway" in tags:
-                        geom = elem.get("geometry", [])
-                        if len(geom) >= 2:
-                            coords = [(float(pt["lon"]), float(pt["lat"])) for pt in geom]
-                            roads.append(
-                                OsmRoad(
-                                    road_id=elem_id,
-                                    geometry=coords,
-                                    highway_type=tags.get("highway", "residential"),
-                                    name=tags.get("name", ""),
-                                    oneway=tags.get("oneway") in ("yes", "1", "true"),
+                        if "highway" in tags:
+                            geom = elem.get("geometry", [])
+                            coords = []
+                            for pt in geom:
+                                try:
+                                    lon_val = float(pt["lon"])
+                                    lat_val = float(pt["lat"])
+                                    if math.isfinite(lon_val) and math.isfinite(lat_val):
+                                        coords.append((lon_val, lat_val))
+                                except (KeyError, ValueError, TypeError):
+                                    continue
+
+                            if len(coords) >= 2:
+                                roads.append(
+                                    OsmRoad(
+                                        road_id=elem_id,
+                                        geometry=coords,
+                                        highway_type=str(tags.get("highway", "residential")),
+                                        name=str(tags.get("name", "")),
+                                        oneway=tags.get("oneway") in ("yes", "1", "true"),
+                                    )
                                 )
-                            )
-                    elif "building" in tags:
-                        geom = elem.get("geometry", [])
-                        if len(geom) >= 3:
-                            coords = [(float(pt["lon"]), float(pt["lat"])) for pt in geom]
-                            levels = 4
-                            height_m = 12.0
-                            if "building:levels" in tags:
-                                with contextlib.suppress(ValueError):
-                                    levels = max(1, int(float(tags["building:levels"])))
-                                    height_m = levels * 3.2
-                            elif "height" in tags:
-                                with contextlib.suppress(ValueError):
-                                    h_str = tags["height"].replace("m", "").strip()
-                                    height_m = max(3.0, float(h_str))
-                                    levels = max(1, int(height_m / 3.2))
+                        elif "building" in tags:
+                            geom = elem.get("geometry", [])
+                            coords = []
+                            for pt in geom:
+                                try:
+                                    lon_val = float(pt["lon"])
+                                    lat_val = float(pt["lat"])
+                                    if math.isfinite(lon_val) and math.isfinite(lat_val):
+                                        coords.append((lon_val, lat_val))
+                                except (KeyError, ValueError, TypeError):
+                                    continue
 
-                            buildings.append(
-                                OsmBuilding(
-                                    building_id=elem_id,
-                                    polygon=coords,
-                                    height_m=height_m,
-                                    levels=levels,
-                                    building_type=tags.get("building", "yes"),
+                            if len(coords) >= 3:
+                                levels = 4
+                                height_m = 12.0
+                                if "building:levels" in tags:
+                                    with contextlib.suppress(ValueError, TypeError):
+                                        levels = max(1, int(float(tags["building:levels"])))
+                                        height_m = levels * 3.2
+                                elif "height" in tags:
+                                    with contextlib.suppress(ValueError, TypeError):
+                                        h_str = str(tags["height"]).replace("m", "").strip()
+                                        height_m = max(3.0, float(h_str))
+                                        levels = max(1, int(height_m / 3.2))
+
+                                buildings.append(
+                                    OsmBuilding(
+                                        building_id=elem_id,
+                                        polygon=coords,
+                                        height_m=height_m,
+                                        levels=levels,
+                                        building_type=str(tags.get("building", "yes")),
+                                    )
                                 )
-                            )
-            conn.close()
+            finally:
+                conn.close()
 
         return roads, buildings

@@ -1,11 +1,9 @@
 """Custom mobility profile builder and preset editor dialog."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -28,12 +26,30 @@ from ..core.mobility_profiles import MobilityProfile, PROFILES, load_custom_prof
 class ProfileEditorDialog(QDialog):
     """Interactive modal dialog to customize or build new mobility profiles."""
 
-    def __init__(self, parent: Optional[QWidget] = None, base_profile_key: str = "adult") -> None:
-        super().__init__(parent)
+    def __init__(
+        self,
+        profile: Optional[MobilityProfile | str | QWidget] = None,
+        parent: Optional[QWidget] = None,
+        base_profile_key: Optional[str] = None,
+    ) -> None:
+        actual_parent = parent
+        base_p = PROFILES["adult"]
+
+        # Resolve polymorphic constructor arguments
+        if isinstance(profile, QWidget):
+            actual_parent = profile
+            if base_profile_key and base_profile_key in PROFILES:
+                base_p = PROFILES[base_profile_key]
+        elif isinstance(profile, MobilityProfile):
+            base_p = profile
+        elif isinstance(profile, str) and profile in PROFILES:
+            base_p = PROFILES[profile]
+        elif base_profile_key and base_profile_key in PROFILES:
+            base_p = PROFILES[base_profile_key]
+
+        super().__init__(actual_parent)
         self.setWindowTitle("02Route 3D — Mobility Profile Builder")
         self.resize(460, 480)
-
-        base_p = PROFILES.get(base_profile_key, PROFILES["adult"])
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
@@ -132,6 +148,10 @@ class ProfileEditorDialog(QDialog):
             description=self.txt_desc.text().strip(),
             icon_name="custom",
         )
+
+    def get_updated_profile(self) -> MobilityProfile:
+        """Alias for get_built_profile for compatibility with callers."""
+        return self.get_built_profile()
 
     def export_preset(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export Mobility Profile Preset", "", "JSON Files (*.json)")

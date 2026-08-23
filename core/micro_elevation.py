@@ -221,16 +221,17 @@ class MicroElevationEngine:
                     self._cache[cache_key] = grad
                     return grad
 
-        # Synthetic micro-topography fallback
-        z = 20.0 + 40.0 * math.sin(lon * 120.0) * math.cos(lat * 120.0)
+        # No DEM coverage: return an explicit flat/missing surface rather than
+        # fabricating relief from the coordinate values.
+        z = 0.0
         grad = SurfaceGradient3D(
             elevation_m=z,
-            slope_pct=4.5,
-            slope_degrees=2.57,
-            aspect_degrees=180.0,
-            dz_dx=0.045,
+            slope_pct=0.0,
+            slope_degrees=0.0,
+            aspect_degrees=0.0,
+            dz_dx=0.0,
             dz_dy=0.0,
-            curvature=0.001,
+            curvature=0.0,
         )
         self._cache[cache_key] = grad
         return grad

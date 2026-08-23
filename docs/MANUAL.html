@@ -1,54 +1,561 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>02Route 3D — Multi-Criteria 3D Mobility Studio User Manual</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 32px; background: #090d16; color: #f8fafc; }
-    h1, h2, h3 { color: #38bdf8; }
-    h1 { border-bottom: 2px solid #0284c7; padding-bottom: 12px; }
-    .badge { background: #0284c7; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; }
-    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 18px; margin-bottom: 20px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border: 1px solid #334155; padding: 10px 14px; text-align: left; }
-    th { background: #0f172a; color: #38bdf8; }
-    tr:nth-child(even) { background: #182234; }
-    code { background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf8; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>02Route 3D — Technical Reference Manual</title>
+    <meta name="description" content="Complete user and technical reference manual for the 02Route 3D QGIS plugin. Comprehensive documentation for all 15 mobility profiles, 14 Processing algorithms, kinematics, and WebGL studio." />
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- MathJax 3 -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        svg: { fontCache: 'global' }
+      };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <style>
+        :root {
+            --primary-dark: #0a0d18;
+            --secondary-dark: #101528;
+            --navy-mid: #131b33;
+            --kinetic-cyan: #06b6d4;
+            --kinetic-cyan-light: #22d3ee;
+            --topo-emerald: #10b981;
+            --topo-emerald-light: #34d399;
+            --hazard-amber: #f59e0b;
+            --hazard-amber-light: #fbbf24;
+            
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            --glass-bg: rgba(16, 21, 40, 0.85);
+            --glass-card: rgba(19, 27, 51, 0.8);
+            --glass-border: rgba(6, 182, 212, 0.18);
+            --glass-border-hover: rgba(6, 182, 212, 0.45);
+            
+            --font-main: 'Inter', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            background-color: var(--primary-dark);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            line-height: 1.7;
+            padding-top: 70px;
+        }
+
+        /* Navbar */
+        .navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 70px;
+            background: rgba(10, 13, 24, 0.92);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(6, 182, 212, 0.2);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+        }
+
+        .nav-container {
+            width: 100%;
+            max-width: 1360px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 800;
+            font-size: 1.2rem;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .logo-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--kinetic-cyan);
+            box-shadow: 0 0 10px var(--kinetic-cyan);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--kinetic-cyan-light);
+        }
+
+        .btn-nav {
+            padding: 0.4rem 1rem;
+            border-radius: 6px;
+            background: rgba(6,182,212,0.15);
+            border: 1px solid rgba(6,182,212,0.35);
+            color: var(--kinetic-cyan-light) !important;
+            font-weight: 600;
+        }
+
+        /* Layout */
+        .manual-layout {
+            max-width: 1360px;
+            margin: 2rem auto;
+            padding: 0 2rem 4rem;
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 3rem;
+            align-items: start;
+        }
+
+        /* Sidebar TOC */
+        .sidebar {
+            position: sticky;
+            top: 90px;
+            background: var(--glass-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            max-height: calc(100vh - 110px);
+            overflow-y: auto;
+        }
+
+        .sidebar h4 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--kinetic-cyan);
+            margin-bottom: 1rem;
+            font-family: var(--font-mono);
+        }
+
+        .toc-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .toc-list a {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            text-decoration: none;
+            transition: color 0.2s, transform 0.2s;
+            display: block;
+            line-height: 1.4;
+        }
+
+        .toc-list a:hover {
+            color: var(--kinetic-cyan-light);
+            transform: translateX(4px);
+        }
+
+        /* Main Content */
+        .content {
+            min-width: 0;
+        }
+
+        .header-box {
+            background: linear-gradient(135deg, rgba(6,182,212,0.12), rgba(16,185,129,0.08));
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 2.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .header-box h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.75rem;
+            letter-spacing: -0.025em;
+        }
+
+        .header-box p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        .doc-section {
+            margin-bottom: 3.5rem;
+        }
+
+        .doc-section h2 {
+            font-size: 1.85rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding-bottom: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .doc-section h3 {
+            font-size: 1.25rem;
+            margin: 1.75rem 0 0.75rem;
+            color: var(--kinetic-cyan-light);
+        }
+
+        .doc-section p {
+            color: var(--text-secondary);
+            margin-bottom: 1.25rem;
+        }
+
+        .glass-panel {
+            background: var(--glass-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid var(--glass-border);
+            margin: 1.5rem 0;
+            background: var(--glass-bg);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.04);
+            padding: 0.9rem 1.25rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            padding: 0.85rem 1.25rem;
+            font-size: 0.88rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        code {
+            font-family: var(--font-mono);
+            background: rgba(0, 0, 0, 0.45);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            color: var(--kinetic-cyan-light);
+            font-size: 0.85rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        pre {
+            background: #05070d;
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: 8px;
+            padding: 1.25rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        pre code {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.6rem;
+            border-radius: 99px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+        .badge-cyan { background: rgba(6,182,212,0.12); color: var(--kinetic-cyan-light); border: 1px solid rgba(6,182,212,0.3); }
+        .badge-emerald { background: rgba(16,185,129,0.12); color: var(--topo-emerald-light); border: 1px solid rgba(16,185,129,0.3); }
+        .badge-amber { background: rgba(245,158,11,0.12); color: var(--hazard-amber-light); border: 1px solid rgba(245,158,11,0.3); }
+
+        .callout {
+            border-left: 3px solid var(--kinetic-cyan);
+            background: rgba(6, 182, 212, 0.08);
+            padding: 1.25rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1.5rem 0;
+        }
+        .callout.amber {
+            border-left-color: var(--hazard-amber);
+            background: rgba(245, 158, 11, 0.08);
+        }
+
+        @media (max-width: 900px) {
+            .manual-layout { grid-template-columns: 1fr; }
+            .sidebar { display: none; }
+        }
+    </style>
 </head>
 <body>
-  <h1>02Route 3D — Multi-Criteria 3D Mobility Studio <span class="badge">v0.1.0</span></h1>
-  <p><strong>02Route 3D</strong> is an elite QGIS plugin designed for multi-criteria 3D route planning, kinematic simulation, and hardware-accelerated 3D urban visualization directly inside QGIS.</p>
 
-  <div class="card">
-    <h2>1. Key Capabilities</h2>
-    <ul>
-      <li><strong>Embedded 60 FPS WebGL 3D Studio:</strong> Real-time hardware-accelerated 3D terrain visualization, LOD1 building massing, volumetric trees, and dynamic sun/shadow simulation.</li>
-      <li><strong>15 Specialized Mobility Profiles:</strong> Adult, Senior, Stroller, Child, Wheelchair ADA, Bicycle, Mountain Bike, E-Scooter, Car, Van, Heavy Truck, Paramedic, Sightseer, and Night Walk.</li>
-      <li><strong>Multi-Criteria Decision Analysis (AHP):</strong> Pairwise comparison matrix with Saaty consistency validation (CR &lt; 0.10) for slope, thermal LST, and tree canopy weights.</li>
-      <li><strong>Traveling Salesperson (TSP) Optimizer:</strong> 2-Opt local search optimization to reorder multi-stop journeys.</li>
-      <li><strong>Turn-by-Turn Navigational Cue Sheet:</strong> Tabular instructions with slope warnings, elevation deltas, and CSV/HTML export.</li>
-      <li><strong>Origin-Destination (OD) 3D Cost Matrix:</strong> High-speed <i>N x M</i> pairwise travel-time, distance, and calorie matrix calculator.</li>
-    </ul>
-  </div>
+    <!-- Sticky Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="nav-brand">
+                <span class="logo-dot"></span>
+                02Route 3D
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.1.0</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="index.html">← Landing &amp; Interactive Labs</a></li>
+                <li><a href="index.html#features">Features</a></li>
+                <li><a href="index.html#science">Science</a></li>
+                <li><a href="https://github.com/YusufEminoglu/zero2route3d" class="btn-nav" target="_blank">GitHub Repo ↗</a></li>
+            </ul>
+        </div>
+    </nav>
 
-  <div class="card">
-    <h2>2. Mobility Profiles Reference</h2>
-    <table>
-      <thead>
-        <tr><th>Key</th><th>Profile Name</th><th>Category</th><th>Speed</th><th>Max Slope</th><th>Stairs</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><code>adult</code></td><td>Standard Adult</td><td>Pedestrian</td><td>5.0 km/h</td><td>25%</td><td>Allowed</td></tr>
-        <tr><td><code>senior</code></td><td>Senior / Elderly</td><td>Pedestrian</td><td>3.2 km/h</td><td>10%</td><td>Heavy Penalty</td></tr>
-        <tr><td><code>stroller</code></td><td>Stroller / Pram</td><td>Pedestrian</td><td>4.0 km/h</td><td>6%</td><td>Prohibited</td></tr>
-        <tr><td><code>wheelchair</code></td><td>Wheelchair (ADA)</td><td>Pedestrian</td><td>3.8 km/h</td><td>5%</td><td>Prohibited</td></tr>
-        <tr><td><code>bicycle</code></td><td>City Bicycle</td><td>Micromobility</td><td>18.0 km/h</td><td>15%</td><td>Prohibited</td></tr>
-        <tr><td><code>scooter</code></td><td>E-Scooter</td><td>Micromobility</td><td>20.0 km/h</td><td>12%</td><td>Prohibited</td></tr>
-        <tr><td><code>car</code></td><td>Passenger Car</td><td>Vehicle</td><td>50.0 km/h</td><td>25%</td><td>Prohibited</td></tr>
-        <tr><td><code>truck</code></td><td>Heavy Truck</td><td>Vehicle</td><td>40.0 km/h</td><td>7%</td><td>Prohibited</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <div class="manual-layout">
+        <!-- Sidebar Table of Contents -->
+        <aside class="sidebar">
+            <h4>Table of Contents</h4>
+            <ul class="toc-list">
+                <li><a href="#overview">1. System Overview</a></li>
+                <li><a href="#profiles">2. Mobility Profiles (15)</a></li>
+                <li><a href="#algorithms">3. Processing Algorithms (14)</a></li>
+                <li><a href="#kinematics">4. Kinematics &amp; Math</a></li>
+                <li><a href="#mcda">5. MCDA &amp; AHP Surface</a></li>
+                <li><a href="#pareto">6. NAMOA* Pareto Routing</a></li>
+                <li><a href="#webgl-studio">7. 60 FPS WebGL Studio</a></li>
+                <li><a href="#exports">8. Data Formats &amp; DXF</a></li>
+                <li><a href="#pyqgis">9. PyQGIS Automation</a></li>
+                <li><a href="#faq">10. Troubleshooting &amp; FAQ</a></li>
+            </ul>
+        </aside>
+
+        <!-- Content Body -->
+        <main class="content">
+            <div class="header-box">
+                <span style="font-family:var(--font-mono); font-size:0.8rem; color:var(--kinetic-cyan); text-transform:uppercase; letter-spacing:0.1em; font-weight:600;">Technical Documentation</span>
+                <h1>02Route 3D Reference Manual</h1>
+                <p>Comprehensive technical and operational manual for 3D multi-criteria routing, biomechanical simulation, spatial accessibility equity, and hardware-accelerated WebGL visualization inside QGIS.</p>
+            </div>
+
+            <!-- Section 1: System Overview -->
+            <section id="overview" class="doc-section">
+                <h2>1. System Overview &amp; Architecture</h2>
+                <p><strong>02Route 3D</strong> is structured around a multi-tier pipeline designed for high performance and zero external Python dependencies:</p>
+                <div class="glass-panel">
+                    <ul style="list-style:none; display:flex; flex-direction:column; gap:1rem;">
+                        <li><strong>1. Core Graph Engine:</strong> Builds 3D topological graphs draped with continuous elevation values from digital elevation models (DEMs). Features bicubic Catmull-Rom spline sampling, A* search, and Dijkstra wavefront propagation.</li>
+                        <li><strong>2. Processing Provider:</strong> Exposes 14 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
+                        <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation.</li>
+                        <li><strong>4. Embedded WebGL 3D Studio:</strong> A dedicated Three.js cockpit embedded within QGIS via <code>QWebEngineView</code> or local browser for 60 FPS hardware-accelerated 3D inspection.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- Section 2: 15 Mobility Profiles -->
+            <section id="profiles" class="doc-section">
+                <h2>2. Mobility Profiles Reference</h2>
+                <p>The routing engine provides 15 rigorously calibrated mobility profiles categorized into Pedestrian, Micromobility, Vehicle, and Emergency modes:</p>
+                
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Key</th>
+                                <th>Name</th>
+                                <th>Category</th>
+                                <th>Base Speed</th>
+                                <th>Max Grade</th>
+                                <th>Stairs Policy</th>
+                                <th>Smoothness</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td><code>adult</code></td><td>Standard Adult</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>5.0 km/h</td><td>25.0%</td><td>Allowed (1.2× penalty)</td><td>0.2</td></tr>
+                            <tr><td><code>senior</code></td><td>Senior / Elderly</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>3.2 km/h</td><td>10.0%</td><td>Heavy Penalty (8.0×)</td><td>0.6</td></tr>
+                            <tr><td><code>child</code></td><td>Child / Safe Walk</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>3.5 km/h</td><td>12.0%</td><td>Allowed (2.0×)</td><td>0.4</td></tr>
+                            <tr><td><code>stroller</code></td><td>Stroller / Pram</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>4.0 km/h</td><td>6.0%</td><td>Strictly Blocked (100×)</td><td>0.8</td></tr>
+                            <tr><td><code>wheelchair</code></td><td>Wheelchair (ADA)</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>3.8 km/h</td><td>5.0%</td><td>Strictly Blocked (1000×)</td><td>0.9</td></tr>
+                            <tr><td><code>jogger</code></td><td>Runner / Jogger</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>9.5 km/h</td><td>20.0%</td><td>Allowed (1.5×)</td><td>0.3</td></tr>
+                            <tr><td><code>sightseer</code></td><td>Scenic / Panoramic</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>4.2 km/h</td><td>20.0%</td><td>Allowed (1.0×)</td><td>0.3</td></tr>
+                            <tr><td><code>night_walk</code></td><td>Illuminated Night</td><td><span class="badge badge-cyan">Pedestrian</span></td><td>4.8 km/h</td><td>15.0%</td><td>Allowed (3.0×)</td><td>0.7</td></tr>
+                            <tr><td><code>bicycle</code></td><td>Commuter Bike</td><td><span class="badge badge-emerald">Micromobility</span></td><td>18.0 km/h</td><td>15.0%</td><td>Blocked (50×)</td><td>0.6</td></tr>
+                            <tr><td><code>mtb</code></td><td>Mountain Bike</td><td><span class="badge badge-emerald">Micromobility</span></td><td>16.0 km/h</td><td>28.0%</td><td>Allowed (5.0×)</td><td>0.1</td></tr>
+                            <tr><td><code>scooter</code></td><td>E-Scooter</td><td><span class="badge badge-emerald">Micromobility</span></td><td>20.0 km/h</td><td>12.0%</td><td>Blocked (100×)</td><td>0.85</td></tr>
+                            <tr><td><code>car</code></td><td>Passenger Car</td><td><span class="badge badge-amber">Vehicle</span></td><td>50.0 km/h</td><td>25.0%</td><td>Blocked (1000×)</td><td>0.5</td></tr>
+                            <tr><td><code>delivery_van</code></td><td>Delivery Van</td><td><span class="badge badge-amber">Vehicle</span></td><td>42.0 km/h</td><td>18.0%</td><td>Blocked (1000×)</td><td>0.6</td></tr>
+                            <tr><td><code>truck</code></td><td>Heavy Logistics</td><td><span class="badge badge-amber">Vehicle</span></td><td>40.0 km/h</td><td>7.0%</td><td>Blocked (1000×)</td><td>0.7</td></tr>
+                            <tr><td><code>paramedic</code></td><td>Emergency EMS</td><td><span class="badge badge-amber">Vehicle</span></td><td>65.0 km/h</td><td>22.0%</td><td>Blocked (1000×)</td><td>0.4</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Section 3: 14 Processing Algorithms -->
+            <section id="algorithms" class="doc-section">
+                <h2>3. Processing Algorithms Catalog</h2>
+                <p>All algorithms are available in the QGIS Processing Toolbox under the <strong>02Route 3D</strong> provider:</p>
+                
+                <div class="glass-panel">
+                    <h3>1. <code>zero2route3d:compute_3d_route</code> (3D Least-Cost Route)</h3>
+                    <p>Calculates single-source shortest path using 3D node elevations. Outputs a <code>LineStringZ</code> layer with cumulative climb, energy expenditure, and slope attributes.</p>
+
+                    <h3>2. <code>zero2route3d:service_area_3d</code> (3D Isochrones)</h3>
+                    <p>Generates multi-tier temporal/metabolic catchments via anisotropic wavefront Dijkstra accounting for slope resistance.</p>
+
+                    <h3>3. <code>zero2route3d:accessibility_equity</code> (E2SFCA Equity Score)</h3>
+                    <p>Calculates spatial equity scores for healthcare and amenity distribution with Gini coefficient, Lorenz curve, and Palma ratio.</p>
+
+                    <h3>4. <code>zero2route3d:multi_criteria_cost_surface</code> (AHP Friction Surface)</h3>
+                    <p>Combines raster layers into a normalized friction surface using Saaty pairwise comparison weights.</p>
+
+                    <h3>5. <code>zero2route3d:pareto_3d_routes</code> (NAMOA* Pareto Routing)</h3>
+                    <p>Yields multiple non-dominated routes trading off travel duration, cumulative climb, heat exposure, and metabolic energy.</p>
+
+                    <h3>6. <code>zero2route3d:map_matching_3d</code> (GPS 3D Map Matching)</h3>
+                    <p>Snaps noisy GPX tracks to the 3D road graph via Hidden Markov Models and Viterbi trellis dynamic programming.</p>
+
+                    <h3>7. <code>zero2route3d:walkability_audit</code> (ADA Compliance Audit)</h3>
+                    <p>Audits pedestrian paths against ADA cross-slope and maximum gradient thresholds, highlighting non-compliant segments.</p>
+
+                    <h3>8. <code>zero2route3d:evacuation_routing</code> (Hazard Egress Routing)</h3>
+                    <p>Dynamic egress pathfinding avoiding expanding fire, flood, or toxic hazard barrier polygons.</p>
+
+                    <h3>9. <code>zero2route3d:solar_exposure</code> (Sun / Shade Analysis)</h3>
+                    <p>Calculates shadowed paths based on solar azimuth/altitude, building massing, and DEM aspect.</p>
+
+                    <h3>10. <code>zero2route3d:batch_3d_route</code> (Batch Point-Pair Routing)</h3>
+                    <p>Calculates least-cost 3D paths for thousands of origin-destination point pairs simultaneously.</p>
+
+                    <h3>11. <code>zero2route3d:od_matrix_3d</code> (3D OD Cost Matrix)</h3>
+                    <p>Computes N×M travel times, distances, and calorie matrices across the 3D network.</p>
+
+                    <h3>12. <code>zero2route3d:generate_analytical_report</code> (HTML Scorecard)</h3>
+                    <p>Generates a publication-grade HTML audit scorecard with embedded SVG elevation profiles.</p>
+
+                    <h3>13. <code>zero2route3d:export_route_to_dxf</code> (AutoCAD DXF Exporter)</h3>
+                    <p>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawings directly to DXF format.</p>
+
+                    <h3>14. <code>zero2route3d:export_standalone_html</code> (Standalone 3D HTML)</h3>
+                    <p>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D WebGL viewer.</p>
+                </div>
+            </section>
+
+            <!-- Section 4: Kinematics & Math -->
+            <section id="kinematics" class="doc-section">
+                <h2>4. Biomechanical Kinematics &amp; Mathematical Formulations</h2>
+                <p>02Route 3D uses peer-reviewed mathematical formulations rather than arbitrary penalty constants:</p>
+
+                <div class="glass-panel">
+                    <h3>Tobler's Hiking Velocity Function</h3>
+                    <p>Predicts walking velocity based on fractional slope $s = \frac{\Delta z}{\Delta x}$:</p>
+                    <div style="text-align:center; margin:1rem 0;">
+                        $$W(s) = 6.0 \cdot \exp\left(-3.5 \cdot |s + 0.05|\right) \cdot \frac{v_{\text{base}}}{5.0} \quad [\text{km/h}]$$
+                    </div>
+
+                    <h3>Minetti 5th-Order Metabolic Energy Polynomial</h3>
+                    <p>Calculates energy expenditure $C_w(s)$ in Joules per kilogram per meter traveled:</p>
+                    <div style="text-align:center; margin:1rem 0;">
+                        $$C_w(s) = 280.5s^5 - 58.7s^4 - 228.1s^3 - 10.3s^2 + 233.5s + 2.155 \quad [\text{J}/(\text{kg}\cdot\text{m})]$$
+                        $$E_{\text{kcal}} = \frac{C_w(s) \cdot m_{\text{kg}} \cdot d_{\text{m}}}{4184.0}$$
+                    </div>
+
+                    <h3>Keys' Bicubic Convolution Spline ($a = -0.5$)</h3>
+                    <p>Ensures continuous first derivatives ($\mathcal{C}^1$) across discrete DEM raster pixels:</p>
+                    <div style="text-align:center; margin:1rem 0;">
+                        $$W(x) = \begin{cases} (a+2)|x|^3 - (a+3)|x|^2 + 1 & |x| \le 1 \\ a|x|^3 - 5a|x|^2 + 8a|x| - 4a & 1 < |x| < 2 \\ 0 & \text{otherwise} \end{cases}$$
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section 9: PyQGIS Automation -->
+            <section id="pyqgis" class="doc-section">
+                <h2>9. PyQGIS Automation &amp; Batch Scripting</h2>
+                <p>You can script 02Route 3D directly from the QGIS Python Console or standalone headless scripts:</p>
+
+                <pre><code>import processing
+
+# 1. Compute 3D Least Cost Route
+result = processing.run("zero2route3d:compute_3d_route", {
+    'NETWORK_LAYER': 'streets_network',
+    'DEM_LAYER': 'copernicus_dem_30m',
+    'START_POINT': '27.1428,38.4237',
+    'END_POINT': '27.1550,38.4350',
+    'PROFILE': 'wheelchair',
+    'OUTPUT': 'memory:wheelchair_route'
+})
+
+route_layer = result['OUTPUT']
+QgsProject.instance().addMapLayer(route_layer)
+print("Route generated with length:", route_layer.featureCount())
+</code></pre>
+            </section>
+
+            <!-- Section 10: Troubleshooting & FAQ -->
+            <section id="faq" class="doc-section">
+                <h2>10. Troubleshooting &amp; FAQ</h2>
+                <div class="glass-panel">
+                    <h3>Q: Does 02Route 3D require external pip dependencies?</h3>
+                    <p><strong>No.</strong> 02Route 3D is designed strictly using core QGIS (PyQt, <code>qgis.core</code>, <code>qgis.gui</code>, <code>numpy</code>, <code>scipy</code>) and has zero pip dependencies.</p>
+
+                    <h3>Q: How does the plugin handle areas without a local DEM?</h3>
+                    <p>You can use the built-in <strong>"Fetch Real Copernicus 30m Topography"</strong> button in the Dock panel. It fetches official Copernicus GLO-30 COG elevation tiles for the canvas extent.</p>
+
+                    <h3>Q: Are the 3D exports compatible with CAD software?</h3>
+                    <p><strong>Yes.</strong> The DXF exporter produces AC1009 standard 3D Polylines that open natively in AutoCAD, Civil 3D, Rhino, and SketchUp with real elevations.</p>
+                </div>
+            </section>
+        </main>
+    </div>
 </body>
 </html>

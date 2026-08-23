@@ -2,21 +2,19 @@
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .kinematics import (
     cyclist_speed,
     haversine_distance_2d,
-    haversine_distance_3d,
     minetti_energy_cost,
     scooter_speed,
     senior_fatigue_decay,
     tobler_walking_speed,
-    universal_thermal_comfort_utci,
     vehicle_free_flow_speed,
 )
-from .mobility_profiles import MobilityProfile
+from .mobility_profiles import MobilityProfile, get_profile
 
 
 @dataclass
@@ -98,21 +96,36 @@ class RouteStatistics:
 def densify_3d_linestring(
     coords: Sequence[Sequence[float]],
     sample_interval_m: float = 8.0,
+    max_points: int = 100_000,
 ) -> List[Tuple[float, float, float]]:
-    """Densify a 3D coordinate sequence by interpolating points every N meters."""
-    if len(coords) < 2:
-        return [(c[0], c[1], c[2] if len(c) > 2 else 0.0) for c in coords]
+    """Densify a 3D coordinate sequence with a hard memory-safe point cap."""
+    valid_coords = [
+        (float(c[0]), float(c[1]), float(c[2]) if len(c) > 2 and math.isfinite(float(c[2])) else 0.0)
+        for c in coords
+        if c and len(c) >= 2 and math.isfinite(float(c[0])) and math.isfinite(float(c[1]))
+    ]
+    if len(valid_coords) < 2:
+        return valid_coords
 
+    interval = max(0.5, float(sample_interval_m)) if math.isfinite(sample_interval_m) and sample_interval_m > 0 else 8.0
+    point_limit = max(1_000, min(1_000_000, int(max_points))) if max_points > 0 else 100_000
+    total_distance = sum(
+        haversine_distance_2d(valid_coords[index], valid_coords[index + 1])
+        for index in range(len(valid_coords) - 1)
+    )
+    estimated_points = total_distance / interval if interval > 0 else float("inf")
+    if estimated_points > point_limit:
+        interval = max(interval, total_distance / point_limit)
     densified: List[Tuple[float, float, float]] = []
 
-    for i in range(len(coords) - 1):
-        p1 = coords[i]
-        p2 = coords[i + 1]
-        z1 = float(p1[2]) if len(p1) > 2 else 0.0
-        z2 = float(p2[2]) if len(p2) > 2 else 0.0
+    for i in range(len(valid_coords) - 1):
+        p1 = valid_coords[i]
+        p2 = valid_coords[i + 1]
+        z1 = p1[2]
+        z2 = p2[2]
 
         seg_dist = haversine_distance_2d(p1, p2)
-        steps = max(1, int(math.ceil(seg_dist / sample_interval_m)))
+        steps = max(1, int(math.ceil(seg_dist / interval)))
 
         for step in range(steps):
             frac = step / steps
@@ -121,21 +134,25 @@ def densify_3d_linestring(
             z = z1 + (z2 - z1) * frac
             densified.append((lon, lat, z))
 
-    last = coords[-1]
-    densified.append((last[0], last[1], float(last[2]) if len(last) > 2 else 0.0))
+    last = valid_coords[-1]
+    densified.append((last[0], last[1], last[2]))
     return densified
 
 
 def smooth_elevation_series(elevations: Sequence[float], window_size: int = 5) -> List[float]:
     """Apply moving Gaussian-weighted smoothing to filter DEM quantization noise."""
+    if not elevations:
+        return []
     n = len(elevations)
-    if n < window_size:
-        return list(elevations)
+    w = max(1, int(window_size)) if math.isfinite(window_size) and window_size > 0 else 5
+    if n < w or w <= 1:
+        return [float(e) if math.isfinite(float(e)) else 0.0 for e in elevations]
 
+    clean_elev = [float(e) if math.isfinite(float(e)) else 0.0 for e in elevations]
     smoothed = []
-    half = window_size // 2
+    half = w // 2
     for i in range(n):
-        sub = elevations[max(0, i - half) : min(n, i + half + 1)]
+        sub = clean_elev[max(0, i - half) : min(n, i + half + 1)]
         smoothed.append(sum(sub) / len(sub))
     return smoothed
 
@@ -146,10 +163,16 @@ def compute_turn_angle_and_direction(
     p_next: Sequence[float],
 ) -> Tuple[float, str]:
     """Compute turn angle in degrees and turn direction string."""
-    dx1 = p_curr[0] - p_prev[0]
-    dy1 = p_curr[1] - p_prev[1]
-    dx2 = p_next[0] - p_curr[0]
-    dy2 = p_next[1] - p_curr[1]
+    if not p_prev or not p_curr or not p_next or len(p_prev) < 2 or len(p_curr) < 2 or len(p_next) < 2:
+        return 0.0, "straight"
+
+    dx1 = float(p_curr[0]) - float(p_prev[0])
+    dy1 = float(p_curr[1]) - float(p_prev[1])
+    dx2 = float(p_next[0]) - float(p_curr[0])
+    dy2 = float(p_next[1]) - float(p_curr[1])
+
+    if not (math.isfinite(dx1) and math.isfinite(dy1) and math.isfinite(dx2) and math.isfinite(dy2)):
+        return 0.0, "straight"
 
     b1 = (math.degrees(math.atan2(dx1, dy1)) + 360.0) % 360.0
     b2 = (math.degrees(math.atan2(dx2, dy2)) + 360.0) % 360.0
@@ -168,17 +191,17 @@ def compute_turn_angle_and_direction(
 
 def generate_cue_sheet(
     raw_coords_3d: Sequence[Sequence[float]],
-    profile: MobilityProfile,
+    profile: Optional[MobilityProfile] = None,
 ) -> List[CueInstruction]:
     """Generate human-readable turn-by-turn navigation instructions."""
-    if len(raw_coords_3d) < 2:
+    if not raw_coords_3d or len(raw_coords_3d) < 2:
         return []
 
+    prof = profile if profile is not None else get_profile("adult")
     cues: List[CueInstruction] = []
     step_num = 1
 
     # Start Departure
-    p_first = raw_coords_3d[0]
     cues.append(
         CueInstruction(
             step_number=step_num,
@@ -200,8 +223,11 @@ def generate_cue_sheet(
         p_curr = raw_coords_3d[i]
         p_next = raw_coords_3d[i + 1]
 
+        z_prev = float(p_prev[2]) if len(p_prev) > 2 and math.isfinite(float(p_prev[2])) else 0.0
+        z_curr = float(p_curr[2]) if len(p_curr) > 2 and math.isfinite(float(p_curr[2])) else 0.0
+
         d = haversine_distance_2d(p_prev, p_curr)
-        dz = p_curr[2] - p_prev[2]
+        dz = z_curr - z_prev
         accum_dist += d
         accum_dz += dz
 
@@ -209,8 +235,11 @@ def generate_cue_sheet(
 
         if direction != "straight" or accum_dist > 400.0:
             slope = (accum_dz / max(0.1, accum_dist)) * 100.0
+            if not math.isfinite(slope):
+                slope = 0.0
             warning = ""
-            if abs(slope) > profile.max_slope_pct:
+            max_s = prof.max_slope_pct if math.isfinite(prof.max_slope_pct) else 25.0
+            if abs(slope) > max_s:
                 warning = f"Warning: Steep gradient ({slope:.1f}%) exceeds profile recommendation!"
 
             dir_text = {
@@ -239,8 +268,13 @@ def generate_cue_sheet(
             accum_dz = 0.0
 
     # Arrival at Destination
-    last_d = haversine_distance_2d(raw_coords_3d[-2], raw_coords_3d[-1])
-    last_dz = raw_coords_3d[-1][2] - raw_coords_3d[-2][2]
+    last_p1 = raw_coords_3d[-2]
+    last_p2 = raw_coords_3d[-1]
+    last_z1 = float(last_p1[2]) if len(last_p1) > 2 and math.isfinite(float(last_p1[2])) else 0.0
+    last_z2 = float(last_p2[2]) if len(last_p2) > 2 and math.isfinite(float(last_p2[2])) else 0.0
+
+    last_d = haversine_distance_2d(last_p1, last_p2)
+    last_dz = last_z2 - last_z1
     cues.append(
         CueInstruction(
             step_number=step_num,
@@ -258,11 +292,11 @@ def generate_cue_sheet(
 
 def compute_route_statistics(
     coords_3d: Sequence[Sequence[float]],
-    profile: MobilityProfile,
+    profile: Optional[MobilityProfile] = None,
     lst_samples: Optional[Sequence[float]] = None,
 ) -> RouteStatistics:
     """Compute comprehensive kinematic, topographic, and thermal statistics along 3D route."""
-    if len(coords_3d) < 2:
+    if not coords_3d:
         return RouteStatistics(
             total_distance_m=0.0,
             total_duration_s=0.0,
@@ -276,8 +310,39 @@ def compute_route_statistics(
             thermal_comfort_score=1.0,
         )
 
+    if len(coords_3d) == 1:
+        ele = float(coords_3d[0][2]) if len(coords_3d[0]) > 2 and math.isfinite(float(coords_3d[0][2])) else 0.0
+        return RouteStatistics(
+            total_distance_m=0.0,
+            total_duration_s=0.0,
+            elevation_gain_m=0.0,
+            elevation_loss_m=0.0,
+            min_elevation_m=ele,
+            max_elevation_m=ele,
+            max_slope_pct=0.0,
+            avg_slope_pct=0.0,
+            total_calories_kcal=0.0,
+            thermal_comfort_score=1.0,
+        )
+
+    prof = profile if profile is not None else get_profile("adult")
+
     # Densify coordinates
     dense_pts = densify_3d_linestring(coords_3d, sample_interval_m=6.0)
+    if len(dense_pts) < 2:
+        ele = float(coords_3d[0][2]) if len(coords_3d[0]) > 2 and math.isfinite(float(coords_3d[0][2])) else 0.0
+        return RouteStatistics(
+            total_distance_m=0.0,
+            total_duration_s=0.0,
+            elevation_gain_m=0.0,
+            elevation_loss_m=0.0,
+            min_elevation_m=ele,
+            max_elevation_m=ele,
+            max_slope_pct=0.0,
+            avg_slope_pct=0.0,
+            total_calories_kcal=0.0,
+            thermal_comfort_score=1.0,
+        )
 
     cumulative_dist = 0.0
     total_time_s = 0.0
@@ -288,8 +353,8 @@ def compute_route_statistics(
     ada_violations = 0
 
     elevations = [p[2] for p in dense_pts]
-    min_elev = min(elevations)
-    max_elev = max(elevations)
+    min_elev = min(elevations) if elevations else 0.0
+    max_elev = max(elevations) if elevations else 0.0
     max_slope = 0.0
 
     slope_bins = {
@@ -302,8 +367,8 @@ def compute_route_statistics(
 
     profile_list: List[Dict[str, Any]] = []
     thermal_sum = 0.0
-    category = profile.category
-    base_spd = profile.base_speed_kmh
+    category = prof.category
+    base_spd = prof.base_speed_kmh if math.isfinite(prof.base_speed_kmh) and prof.base_speed_kmh > 0 else 5.0
 
     for i in range(len(dense_pts) - 1):
         p1 = dense_pts[i]
@@ -313,10 +378,12 @@ def compute_route_statistics(
         dz = p2[2] - p1[2]
         d_3d = math.hypot(d_2d, dz)
 
-        if d_3d < 0.01:
+        if not math.isfinite(d_3d) or d_3d < 0.01:
             continue
 
-        slope_pct = (dz / max(0.1, d_2d)) * 100.0
+        slope_pct = (dz / max(0.1, d_2d)) * 100.0 if d_2d >= 0.01 else 0.0
+        if not math.isfinite(slope_pct):
+            slope_pct = 0.0
         abs_slope = abs(slope_pct)
         max_slope = max(max_slope, abs_slope)
         slope_sum += abs_slope * d_3d
@@ -342,7 +409,10 @@ def compute_route_statistics(
             slope_bins["extreme_over_15"] += d_3d
 
         # Kinematic calculation
-        slope_frac = dz / max(0.1, d_2d)
+        slope_frac = dz / max(0.1, d_2d) if d_2d >= 0.01 else 0.0
+        if not math.isfinite(slope_frac):
+            slope_frac = 0.0
+
         if category == "pedestrian":
             fatigue_mult = (
                 senior_fatigue_decay(cumulative_dist, elevation_gain)
@@ -360,12 +430,19 @@ def compute_route_statistics(
         else:
             speed_kmh = vehicle_free_flow_speed(hierarchy_rank=4, lanes=2, slope_pct=slope_pct)
 
-        seg_time_s = d_3d / max(0.1, (speed_kmh * 1000.0 / 3600.0))
-        total_time_s += seg_time_s
+        if not math.isfinite(speed_kmh) or speed_kmh <= 0:
+            speed_kmh = base_spd
+
+        spd_ms = max(0.1, speed_kmh * 1000.0 / 3600.0)
+        seg_time_s = d_3d / spd_ms
+        if math.isfinite(seg_time_s):
+            total_time_s += seg_time_s
 
         lst_val = 0.5
         if lst_samples and i < len(lst_samples):
-            lst_val = lst_samples[i]
+            v_lst = float(lst_samples[i])
+            if math.isfinite(v_lst):
+                lst_val = v_lst
         thermal_sum += lst_val * d_3d
 
         profile_list.append(
@@ -380,17 +457,18 @@ def compute_route_statistics(
         )
         cumulative_dist += d_3d
 
-    last_pt = dense_pts[-1]
-    profile_list.append(
-        {
-            "distance_m": round(cumulative_dist, 1),
-            "elevation_m": round(last_pt[2], 1),
-            "slope_pct": 0.0,
-            "speed_kmh": round(base_spd, 1),
-            "lon": round(last_pt[0], 6),
-            "lat": round(last_pt[1], 6),
-        }
-    )
+    if dense_pts:
+        last_pt = dense_pts[-1]
+        profile_list.append(
+            {
+                "distance_m": round(cumulative_dist, 1),
+                "elevation_m": round(last_pt[2], 1),
+                "slope_pct": 0.0,
+                "speed_kmh": round(base_spd, 1),
+                "lon": round(last_pt[0], 6),
+                "lat": round(last_pt[1], 6),
+            }
+        )
 
     avg_slope = (slope_sum / cumulative_dist) if cumulative_dist > 0 else 0.0
     mean_lst = (thermal_sum / cumulative_dist) if cumulative_dist > 0 else 0.5

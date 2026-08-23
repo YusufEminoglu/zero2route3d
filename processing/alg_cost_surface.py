@@ -4,11 +4,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from qgis.core import (
-    QgsFeature,
-    QgsFeatureSink,
-    QgsField,
-    QgsFields,
-    QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,

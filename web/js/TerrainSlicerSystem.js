@@ -49,6 +49,9 @@ export class TerrainSlicerSystem {
         }
       `,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
 
     this.capMesh = new THREE.Mesh(capGeo, this.geologyCapMat);
@@ -65,12 +68,16 @@ export class TerrainSlicerSystem {
   setSliceHeight(height) {
     this.sliceHeight = height;
     this.clipPlane.constant = this.sliceHeight;
-    this.capMesh.position.y = this.sliceHeight;
-    this.geologyCapMat.uniforms.uSliceY.value = this.sliceHeight;
+    if (this.capMesh) {
+      this.capMesh.position.y = this.sliceHeight;
+    }
+    if (this.geologyCapMat && this.geologyCapMat.uniforms && this.geologyCapMat.uniforms.uSliceY) {
+      this.geologyCapMat.uniforms.uSliceY.value = this.sliceHeight;
+    }
   }
 
   toggle(enable) {
-    this.isEnabled = enable;
+    this.isEnabled = enable !== undefined ? Boolean(enable) : !this.isEnabled;
     const planes = this.isEnabled ? [this.clipPlane] : [];
 
     if (this.terrainMesh && this.terrainMesh.material) {
@@ -88,6 +95,22 @@ export class TerrainSlicerSystem {
       });
     }
 
-    this.capMesh.visible = this.isEnabled;
+    if (this.capMesh) {
+      this.capMesh.visible = this.isEnabled;
+    }
+    return this.isEnabled;
+  }
+
+  get active() {
+    return this.isEnabled;
+  }
+
+  dispose() {
+    if (this.capMesh) {
+      this.scene.remove(this.capMesh);
+      if (this.capMesh.geometry) this.capMesh.geometry.dispose();
+      if (this.capMesh.material) this.capMesh.material.dispose();
+      this.capMesh = null;
+    }
   }
 }

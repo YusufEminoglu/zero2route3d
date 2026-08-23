@@ -1,7 +1,6 @@
 """Processing algorithm for 3D Walkability and Universal Barrier-Free Accessibility Audit."""
 from __future__ import annotations
 
-import math
 from typing import Any, Dict
 
 from qgis.core import (
@@ -9,7 +8,6 @@ from qgis.core import (
     QgsFeatureSink,
     QgsField,
     QgsFields,
-    QgsGeometry,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
@@ -21,7 +19,6 @@ from qgis.core import (
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
-from ..core.kinematics import haversine_distance_2d
 
 
 class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):

@@ -14,6 +14,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterRasterLayer,
@@ -111,11 +112,14 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
         )
 
         net_mgr = NetworkSourceManager()
-        if net_layer:
-            segments = net_mgr.extract_from_qgis_layer(net_layer)
-        else:
-            bbox = source_track.sourceExtent()
-            segments = net_mgr.generate_synthetic_grid((bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()))
+        bbox = source_track.sourceExtent()
+        try:
+            segments = net_mgr.require_segments(
+                vector_layer=net_layer,
+                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+            )
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         engine = RoutingEngine3D()
         engine.build_graph(segments)

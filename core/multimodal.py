@@ -1,10 +1,10 @@
 """Multi-modal trip planning and intermodal route chaining engine."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence
 
-from .kinematics import haversine_distance_2d, haversine_distance_3d
+from .kinematics import haversine_distance_2d
 from .mobility_profiles import MobilityProfile, get_profile
 from .routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 

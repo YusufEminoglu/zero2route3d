@@ -1,7 +1,7 @@
 """Processing algorithm for N x M Origin-Destination 3D Cost Matrix calculation."""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from qgis.core import (
     QgsFeature,
@@ -12,6 +12,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
@@ -112,7 +113,7 @@ class OriginDestinationMatrix3DAlgorithm(QgsProcessingAlgorithm):
         net_layer = self.parameterAsVectorLayer(parameters, self.INPUT_NETWORK, context)
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
         profile_idx = self.parameterAsEnum(parameters, self.PARAM_PROFILE, context)
-        profile_key = self.profiles[profile_idx]
+        profile_key = self.profiles[max(0, min(profile_idx, len(self.profiles) - 1))]
 
         fields = QgsFields()
         fields.append(QgsField("origin_id", 2))
@@ -136,11 +137,16 @@ class OriginDestinationMatrix3DAlgorithm(QgsProcessingAlgorithm):
         # Build Graph
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer)
         net_mgr = NetworkSourceManager()
-        if net_layer:
-            segments = net_mgr.extract_from_qgis_layer(net_layer)
-        else:
-            bbox = source_origins.sourceExtent()
-            segments = net_mgr.generate_synthetic_grid((bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()))
+        bbox = source_origins.sourceExtent()
+        dest_bbox = source_dests.sourceExtent()
+        bbox.combineExtentWith(dest_bbox)
+        try:
+            segments = net_mgr.require_segments(
+                vector_layer=net_layer,
+                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+            )
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         engine = RoutingEngine3D(sampler=sampler)
         engine.build_graph(segments)

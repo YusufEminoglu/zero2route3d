@@ -1,0 +1,2978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>02Route 3D — Multi-Criteria 3D Mobility Studio for QGIS</title>
+    <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded 60 FPS Three.js WebGL animation." />
+    <meta property="og:title" content="02Route 3D QGIS Plugin" />
+    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 14 Processing algorithms, Tobler/Minetti kinematics, and 60 FPS WebGL 3D cockpit." />
+    <meta property="og:type" content="website" />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- MathJax 3 LaTeX Rendering -->
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        svg: { fontCache: 'global' }
+      };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <style>
+        :root {
+            /* Color Palette */
+            --primary-dark: #0a0d18;
+            --secondary-dark: #101528;
+            --navy-mid: #131b33;
+            --kinetic-cyan: #06b6d4;
+            --kinetic-cyan-light: #22d3ee;
+            --topo-emerald: #10b981;
+            --topo-emerald-light: #34d399;
+            --hazard-amber: #f59e0b;
+            --hazard-amber-light: #fbbf24;
+            --accent-purple: #8b5cf6;
+            --accent-purple-light: #a78bfa;
+            
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            --glass-bg: rgba(16, 21, 40, 0.75);
+            --glass-card: rgba(19, 27, 51, 0.78);
+            --glass-border: rgba(6, 182, 212, 0.18);
+            --glass-border-hover: rgba(6, 182, 212, 0.45);
+            
+            --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            
+            --transition-snappy: 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+            --transition-smooth: 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        /* Reset & Base */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            background-color: var(--primary-dark);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Animated Grid Background */
+        body::before {
+            content: '';
+            position: fixed; inset: 0;
+            background-image:
+                linear-gradient(rgba(6,182,212,0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(6,182,212,0.035) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none; z-index: 0;
+            transform: translate(var(--grid-x, 0), var(--grid-y, 0));
+            transition: transform 0.25s ease-out;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            line-height: 1.2;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 1.25rem;
+        }
+
+        a {
+            color: var(--kinetic-cyan-light);
+            text-decoration: none;
+            transition: var(--transition-snappy);
+        }
+
+        a:hover {
+            color: var(--text-primary);
+        }
+
+        .gradient-text {
+            background: linear-gradient(135deg, var(--kinetic-cyan-light) 0%, var(--topo-emerald-light) 50%, var(--hazard-amber-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .eyebrow {
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            color: var(--kinetic-cyan);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            margin-bottom: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+        }
+        .eyebrow::before {
+            content: '';
+            width: 18px;
+            height: 2px;
+            background: var(--kinetic-cyan);
+            display: inline-block;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 3.5rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        .section-header h2 {
+            font-size: clamp(2rem, 4vw, 2.8rem);
+            margin-bottom: 1rem;
+            letter-spacing: -0.025em;
+        }
+
+        .section-header p {
+            max-width: 720px;
+            margin: 0 auto;
+            font-size: 1.08rem;
+            line-height: 1.7;
+        }
+
+        /* Layout Container */
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        section {
+            padding: 5.5rem 0;
+            position: relative;
+            z-index: 2;
+        }
+
+        /* Glassmorphism Components */
+        .glass-card {
+            background: var(--glass-card);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: var(--transition-smooth);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.45), transparent);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .glass-card:hover {
+            border-color: var(--glass-border-hover);
+            box-shadow: 0 12px 36px -10px rgba(6, 182, 212, 0.2);
+        }
+
+        .glass-card:hover::before {
+            opacity: 1;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.875rem 1.75rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: var(--transition-snappy);
+            gap: 0.5rem;
+            font-family: var(--font-main);
+            border: none;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--kinetic-cyan), #0284c7);
+            color: #fff !important;
+            box-shadow: 0 0 24px rgba(6, 182, 212, 0.35);
+            position: relative;
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 0 36px rgba(6, 182, 212, 0.6);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-primary) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(6, 182, 212, 0.35);
+            transform: translateY(-2px);
+        }
+
+        /* Sticky Nav */
+        .navbar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 70px;
+            background: rgba(10, 13, 24, 0.82);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(6, 182, 212, 0.15);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .nav-container {
+            width: 100%;
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 800;
+            font-size: 1.25rem;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+        }
+
+        .logo-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--kinetic-cyan);
+            box-shadow: 0 0 10px var(--kinetic-cyan);
+            animation: pulseGlow 2s infinite;
+        }
+
+        .version-badge {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            padding: 0.2rem 0.55rem;
+            background: rgba(6, 182, 212, 0.12);
+            color: var(--kinetic-cyan-light);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.75rem;
+            align-items: center;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--kinetic-cyan-light);
+        }
+        
+        .nav-links .btn {
+            padding: 0.45rem 1.15rem;
+            font-size: 0.85rem;
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            padding-top: 80px;
+            padding-bottom: 4rem;
+            overflow: hidden;
+        }
+
+        #hero-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 820px;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.8rem, 5.5vw, 4.5rem);
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.035em;
+            line-height: 1.08;
+        }
+
+        .hero p.subtitle {
+            font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+            color: var(--text-secondary);
+            margin-bottom: 2.5rem;
+            max-width: 680px;
+            line-height: 1.7;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 3.5rem;
+            flex-wrap: wrap;
+        }
+
+        .hero-stats {
+            display: flex;
+            gap: 3rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--text-primary);
+            display: flex;
+            align-items: baseline;
+            gap: 0.25rem;
+            line-height: 1;
+        }
+
+        .stat-value span {
+            font-size: 1.1rem;
+            color: var(--kinetic-cyan);
+            font-family: var(--font-main);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 500;
+        }
+
+        /* Badges Bar */
+        .badges-bar {
+            background: var(--navy-mid);
+            border-top: 1px solid rgba(6, 182, 212, 0.15);
+            border-bottom: 1px solid rgba(6, 182, 212, 0.15);
+            padding: 1.25rem 0;
+            backdrop-filter: blur(8px);
+            position: relative;
+            z-index: 2;
+        }
+
+        .badges-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1.25rem;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.85rem;
+            border-radius: 99px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            white-space: nowrap;
+        }
+
+        .badge-cyan {
+            background: rgba(6, 182, 212, 0.1);
+            color: var(--kinetic-cyan-light);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+        }
+
+        .badge-amber {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--hazard-amber-light);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .badge-emerald {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--topo-emerald-light);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-gray {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* About Section */
+        .about-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3.5rem;
+            align-items: start;
+        }
+
+        .about-content h2 {
+            font-size: clamp(1.8rem, 3vw, 2.3rem);
+            margin-bottom: 1.25rem;
+        }
+
+        .author-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .keyword-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 2rem;
+        }
+
+        .tag {
+            padding: 0.25rem 0.7rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+            background: rgba(6, 182, 212, 0.08);
+            color: var(--kinetic-cyan-light);
+            border: 1px solid rgba(6, 182, 212, 0.2);
+            font-weight: 500;
+        }
+        .tag.amber { background: rgba(245,158,11,0.08); color: var(--hazard-amber-light); border-color: rgba(245,158,11,0.2); }
+        .tag.emerald { background: rgba(16,185,129,0.08); color: var(--topo-emerald-light); border-color: rgba(16,185,129,0.2); }
+        .tag.purple { background: rgba(139,92,246,0.08); color: var(--accent-purple-light); border-color: rgba(139,92,246,0.2); }
+
+        .quick-info-list {
+            list-style: none;
+        }
+
+        .quick-info-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            font-size: 0.88rem;
+        }
+
+        .quick-info-list li span:first-child {
+            color: var(--text-muted);
+        }
+
+        .quick-info-list li span:last-child {
+            font-family: var(--font-mono);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        /* Features Grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.75rem;
+        }
+
+        .feature-card {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 2.25rem 2rem;
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1.25rem;
+            display: inline-block;
+        }
+
+        .feature-card h3 {
+            font-size: 1.2rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        .feature-card p {
+            font-size: 0.92rem;
+            color: var(--text-secondary);
+            margin-bottom: 0;
+            line-height: 1.65;
+            flex-grow: 1;
+        }
+
+        /* Scientific Foundations */
+        .science-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+            gap: 1.75rem;
+        }
+
+        .equation-card {
+            padding: 2.25rem 2rem;
+        }
+
+        .eq-citation {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-bottom: 1.25rem;
+            font-style: italic;
+        }
+
+        .eq-title {
+            font-size: 1.15rem;
+            color: var(--kinetic-cyan-light);
+            margin-bottom: 0.35rem;
+        }
+        
+        .eq-formula {
+            margin: 1.25rem 0;
+            padding: 1.25rem;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 8px;
+            border: 1px solid rgba(6, 182, 212, 0.15);
+            overflow-x: auto;
+            text-align: center;
+        }
+
+        /* Interactive Simulator Labs */
+        .lab-container {
+            background: var(--navy-mid);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            margin: 3rem 0;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+        }
+
+        .lab-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 2.5rem;
+            align-items: center;
+        }
+
+        .lab-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .control-val {
+            font-family: var(--font-mono);
+            color: var(--kinetic-cyan-light);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: var(--kinetic-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--kinetic-cyan);
+            transition: transform 0.15s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.25);
+        }
+
+        .lab-canvas-wrap {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            background: #070a14;
+        }
+
+        .lab-canvas-wrap canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .profile-picker {
+            display: flex;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+        }
+
+        .profile-btn {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .profile-btn:hover, .profile-btn.active {
+            background: rgba(6, 182, 212, 0.15);
+            border-color: var(--kinetic-cyan);
+            color: #fff;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+        }
+
+        /* Tables (Mobility Profiles & Algorithms) */
+        .table-responsive {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            background: var(--glass-card);
+            backdrop-filter: blur(12px);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.04);
+            padding: 1rem 1.5rem;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            white-space: nowrap;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 1rem 1.5rem;
+            font-size: 0.88rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .td-code {
+            font-family: var(--font-mono);
+            color: var(--kinetic-cyan-light);
+            font-weight: 600;
+        }
+
+        /* WebGL Showcase */
+        .webgl-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .webgl-card {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+            padding: 1.5rem 1.75rem;
+        }
+        
+        .webgl-card .icon {
+            font-size: 2.2rem;
+            flex-shrink: 0;
+        }
+        
+        .webgl-card h4 {
+            font-size: 1rem;
+            margin: 0;
+            color: var(--text-primary);
+        }
+
+        /* Architecture Diagram (CSS only) */
+        .architecture-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            margin: 3.5rem 0;
+        }
+
+        .arch-row {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .arch-node {
+            background: var(--secondary-dark);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            width: 260px;
+            position: relative;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+
+        .arch-node.core {
+            border-color: var(--topo-emerald);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .arch-node h4 {
+            color: var(--text-primary);
+            margin-bottom: 0.4rem;
+            font-size: 1.05rem;
+        }
+
+        .arch-node p {
+            font-size: 0.82rem;
+            margin: 0;
+            color: var(--text-secondary);
+        }
+        
+        .arch-connector-v {
+            width: 2px;
+            height: 36px;
+            position: relative;
+        }
+        
+        .arch-connector-h {
+            display: flex;
+            align-items: center;
+        }
+        
+        .arch-connector-h::after {
+            content: '';
+            width: 32px;
+            height: 2px;
+            background: linear-gradient(to right, rgba(6, 182, 212, 0.3), var(--kinetic-cyan));
+        }
+
+        /* Export Formats */
+        .export-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .export-card {
+            text-align: center;
+            padding: 2rem 1.25rem;
+        }
+
+        .export-icon {
+            font-size: 2.2rem;
+            margin-bottom: 0.75rem;
+            display: block;
+        }
+
+        .export-card h4 {
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            color: var(--kinetic-cyan-light);
+            margin-bottom: 0.35rem;
+        }
+
+        .export-card p {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        /* Compatibility & Installation */
+        .install-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+
+        .install-step {
+            position: relative;
+            padding: 2.5rem 2rem;
+        }
+        
+        .step-number {
+            font-family: var(--font-mono);
+            font-size: 4rem;
+            font-weight: 900;
+            color: rgba(255, 255, 255, 0.04);
+            position: absolute;
+            top: 0px;
+            right: 15px;
+            line-height: 1;
+            z-index: 0;
+        }
+        
+        .install-step h3, .install-step p {
+            position: relative;
+            z-index: 1;
+        }
+
+        .code-block {
+            background: #000;
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--kinetic-cyan-light);
+            overflow-x: auto;
+            margin-top: 1rem;
+        }
+
+        /* Literature */
+        .reference-list {
+            list-style: none;
+            counter-reset: ref-counter;
+        }
+
+        .reference-list li {
+            position: relative;
+            padding-left: 3rem;
+            margin-bottom: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .reference-list li::before {
+            counter-increment: ref-counter;
+            content: "[" counter(ref-counter) "]";
+            position: absolute;
+            left: 0;
+            top: 0;
+            font-family: var(--font-mono);
+            color: var(--kinetic-cyan-light);
+            font-weight: 700;
+        }
+
+        /* Footer */
+        footer {
+            background: #05070d;
+            border-top: 1px solid rgba(6, 182, 212, 0.15);
+            padding: 4.5rem 0 2.5rem;
+            position: relative;
+            z-index: 2;
+        }
+
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr;
+            gap: 4rem;
+            margin-bottom: 3.5rem;
+        }
+
+        .footer-brand h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        .footer-col h4 {
+            color: var(--text-primary);
+            margin-bottom: 1.25rem;
+            font-size: 0.95rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .footer-links {
+            list-style: none;
+        }
+
+        .footer-links li {
+            margin-bottom: 0.65rem;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+        }
+
+        .footer-links a:hover {
+            color: var(--kinetic-cyan-light);
+        }
+
+        .footer-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        /* Animations */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+        }
+
+        .fade-up.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.4); }
+            50% { box-shadow: 0 0 30px rgba(6, 182, 212, 0.85); }
+            100% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.4); }
+        }
+
+        .pulse-btn {
+            animation: pulseGlow 3s infinite;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .hero h1 { font-size: 3.5rem; }
+            .about-grid, .footer-grid, .lab-grid { grid-template-columns: 1fr; gap: 2.5rem; }
+            .install-grid { grid-template-columns: 1fr; }
+            .arch-row { flex-wrap: wrap; }
+            .science-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .hero h1 { font-size: 2.6rem; }
+            .hero-stats { gap: 1.75rem; }
+            .hero-actions { flex-direction: column; }
+            .btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sticky Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <span class="logo-dot"></span>
+                02Route 3D
+                <span class="version-badge">v0.1.0</span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#about">About</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#science">Science</a></li>
+                <li><a href="#mcda-lab">MCDA Lab</a></li>
+                <li><a href="#pareto-lab">Pareto Lab</a></li>
+                <li><a href="#isochrone-lab">Isochrones</a></li>
+                <li><a href="#profiles">Profiles</a></li>
+                <li><a href="#algorithms">Algorithms</a></li>
+                <li><a href="#webgl">WebGL Studio</a></li>
+                <li><a href="#install">Install</a></li>
+                <li><a href="https://github.com/YusufEminoglu/zero2route3d" class="btn btn-primary" target="_blank">GitHub ↗</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" id="top">
+        <canvas id="hero-canvas"></canvas>
+        <div class="container hero-content">
+            <span class="eyebrow">QGIS Plugin · Multi-Criteria 3D Mobility</span>
+            <h1>
+                Routes that understand<br>
+                <span class="gradient-text">terrain, body & climate</span>
+            </h1>
+            <p class="subtitle">
+                Multi-profile 3D route planning with biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded 60 FPS WebGL animation. From wheelchair-accessible paths to emergency evacuation — every route respects slope, heat, energy, and human limits.
+            </p>
+            <div class="hero-actions">
+                <a href="https://plugins.qgis.org/plugins/zero2route3d/" class="btn btn-primary pulse-btn" target="_blank">
+                    Install from Plugin Hub ⇓
+                </a>
+                <a href="https://github.com/YusufEminoglu/zero2route3d" class="btn btn-secondary" target="_blank">
+                    View on GitHub ★
+                </a>
+                <a href="#mcda-lab" class="btn btn-secondary">
+                    Interactive Labs ⚡
+                </a>
+            </div>
+            <div class="hero-stats">
+                <div class="stat-item">
+                    <div class="stat-value"><span class="counter" data-target="15">0</span></div>
+                    <div class="stat-label">Mobility Profiles</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value"><span class="counter" data-target="14">0</span></div>
+                    <div class="stat-label">Processing Algorithms</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value"><span class="counter" data-target="60">0</span> <span>FPS</span></div>
+                    <div class="stat-label">WebGL Studio</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value"><span class="counter" data-target="4">0</span> <span>D</span></div>
+                    <div class="stat-label">Pareto Objectives</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Badges Bar -->
+    <div class="badges-bar">
+        <div class="container badges-container">
+            <span class="badge badge-cyan">✔ QGIS 3.28+ LTR</span>
+            <span class="badge badge-cyan">✔ QGIS 4.x / Qt6</span>
+            <span class="badge badge-amber">✔ 3D Network Routing</span>
+            <span class="badge badge-amber">✔ 60 FPS WebGL Studio</span>
+            <span class="badge badge-emerald">✔ Zero Pip Dependencies</span>
+            <span class="badge badge-gray">✔ GPL-2.0-or-later</span>
+            <span class="badge badge-gray">👤 Yusuf Eminoğlu · Dokuz Eylül University</span>
+        </div>
+    </div>
+
+    <!-- About Section -->
+    <section id="about" class="container">
+        <div class="about-grid fade-up">
+            <div class="about-content">
+                <span class="eyebrow">About</span>
+                <h2>3D mobility intelligence for every traveler</h2>
+                <p><strong>02Route 3D</strong> bridges topological network analysis with physical terrain realities and urban microclimates. Traditional GIS shortest-path engines treat cities as flat planes, overlooking the punishing physiological impact of steep grades, extreme urban heat, and barrier-rich environments.</p>
+                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a state-of-the-art embedded Three.js WebGL studio for 60 FPS 3D cockpit simulation, gait animation, and instant scorecards.</p>
+                <div class="author-buttons">
+                    <a href="https://github.com/YusufEminoglu" class="btn btn-secondary" target="_blank">👤 Yusuf Eminoğlu</a>
+                    <a href="mailto:yusuf.eminoglu@deu.edu.tr" class="btn btn-secondary">✉ yusuf.eminoglu@deu.edu.tr</a>
+                </div>
+            </div>
+            <div class="about-meta">
+                <span class="eyebrow">Keywords &amp; Concepts</span>
+                <div class="keyword-cloud">
+                    <span class="tag">routing</span>
+                    <span class="tag">3d</span>
+                    <span class="tag">network analysis</span>
+                    <span class="tag">mobility</span>
+                    <span class="tag">accessibility</span>
+                    <span class="tag amber">walkability</span>
+                    <span class="tag amber">least cost path</span>
+                    <span class="tag emerald">threejs</span>
+                    <span class="tag emerald">elevation</span>
+                    <span class="tag emerald">slope</span>
+                    <span class="tag purple">tobler</span>
+                    <span class="tag purple">kinematics</span>
+                    <span class="tag purple">isochrone</span>
+                    <span class="tag">pareto</span>
+                    <span class="tag amber">wheelchair</span>
+                    <span class="tag emerald">evacuation</span>
+                    <span class="tag purple">solar</span>
+                    <span class="tag">microclimate</span>
+                </div>
+                
+                <div class="glass-card" style="padding: 1.5rem;">
+                    <div style="font-size: 0.8rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.75rem;">Plugin Metadata</div>
+                    <ul class="quick-info-list">
+                        <li><span>Plugin ID</span> <span>zero2route3d</span></li>
+                        <li><span>Version</span> <span>0.1.0</span></li>
+                        <li><span>Category</span> <span>Analysis / Network</span></li>
+                        <li><span>License</span> <span style="color:var(--kinetic-cyan)">GPL-2.0-or-later</span></li>
+                        <li><span>QGIS Compatibility</span> <span>3.28 — 4.99</span></li>
+                        <li><span>Dependencies</span> <span style="color:var(--topo-emerald)">Zero pip deps (Pure QGIS)</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Capabilities</span>
+            <h2>A comprehensive spatial mobility suite</h2>
+            <p>Combining traditional shortest-path algorithms with advanced physiological, vehicular, and environmental microclimate modeling.</p>
+        </div>
+        
+        <div class="features-grid">
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🏃</span>
+                <h3>Biomechanical Kinematics</h3>
+                <p>Implements Tobler's hiking function, Minetti metabolic energy calculation, senior fatigue decay, and aerodynamic drag. Routes dynamically adjust travel speed based on slope and human physical limits.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🗺️</span>
+                <h3>Multi-Criteria Cost Surfaces</h3>
+                <p>Constructs AHP-weighted raster impedances combining DEM slope, Land Surface Temperature (LST), NDVI greenery, solar irradiance, and road hierarchy into a unified friction map.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🎯</span>
+                <h3>Pareto Frontier Routing</h3>
+                <p>Utilizes NAMOA* multi-objective optimization to explore trade-offs across 4 dimensions simultaneously: travel time, cumulative climb, heat exposure, and metabolic energy expenditure.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">♿</span>
+                <h3>Universal Accessibility</h3>
+                <p>15 predefined mobility profiles from wheelchair users (strictly ADA 5% max slope) to emergency paramedics. Includes penalties for stairs, surface smoothness, and barrier-free pathfinding.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🌐</span>
+                <h3>60 FPS WebGL Studio</h3>
+                <p>An embedded Three.js cockpit directly within QGIS. Features chase/orbit cameras, procedural avatars, GLSL heat ribbons, solar simulation, and sub-surface terrain slicing.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">📍</span>
+                <h3>E2SFCA Equity Analysis</h3>
+                <p>Enhanced Two-Step Floating Catchment Area methods with Gaussian decay. Computes Gini coefficients, Lorenz curves, and Palma ratios for advanced spatial justice scoring.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🗣️</span>
+                <h3>Voice Navigation</h3>
+                <p>Web Speech API integration for turn-by-turn audio cues in the 3D studio, complete with gradient warnings, step-by-step guidance, and exportable CSV/HTML cue sheets.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">📊</span>
+                <h3>OD Matrix &amp; Isochrones</h3>
+                <p>Generate N×M origin-destination 3D cost matrices and multi-tier service area catchment polygons using a highly optimized wavefront Dijkstra algorithm.</p>
+            </div>
+            <div class="glass-card feature-card fade-up">
+                <span class="feature-icon">🔄</span>
+                <h3>Multi-Format Export</h3>
+                <p>Outputs to LineStringZ GeoPackage, GPX 1.1, GeoJSON 3D, AutoCAD DXF R12, analytical HTML scorecards, and completely standalone offline 3D HTML visualizations.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Scientific Foundations -->
+    <section id="science" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Scientific Foundations</span>
+            <h2>Built on peer-reviewed biomechanics and spatial science</h2>
+            <p>02Route 3D avoids arbitrary penalties, utilizing established mathematical models to dictate traversal costs and environmental resistance.</p>
+        </div>
+
+        <div class="science-grid">
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">Tobler's Hiking Function</h3>
+                <div class="eq-citation">Tobler, W. (1993). "Three Presentations on Geographical Analysis and Modeling", NCGIA Tech Report 93-1.</div>
+                <div class="eq-formula">
+                    $$W(s) = 6.0 \cdot \exp\left(-3.5 \cdot |s + 0.05|\right) \cdot \frac{v_{\text{base}}}{5.0} \quad [\text{km/h}]$$
+                </div>
+                <p>Empirical model predicting maximum walking speed occurs at a slight downhill grade (-5%). The exponential decay severely penalizes steep slopes, mirroring human physiological limits.</p>
+            </div>
+            
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">Minetti Metabolic Cost</h3>
+                <div class="eq-citation">Minetti, A.E. et al. (2002). "Energy cost of walking and running at extreme uphill and downhill slopes", J. Applied Physiology.</div>
+                <div class="eq-formula">
+                    $$C_w(s) = 280.5s^5 - 58.7s^4 - 228.1s^3 - 10.3s^2 + 233.5s + 2.155 \quad [\text{J}/(\text{kg}\cdot\text{m})]$$
+                    <br>
+                    $$E_{\text{kcal}} = \frac{C_w(s) \cdot m_{\text{kg}} \cdot d_{\text{m}}}{4184.0}$$
+                </div>
+                <p>A 5th-order polynomial estimating the metabolic energy required per kilogram per meter traveled, effectively quantifying physical exhaustion along a 3D route.</p>
+            </div>
+
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">Keys' Bicubic Spline (Terrain Interpolation)</h3>
+                <div class="eq-citation">Keys, R.G. (1981). "Cubic convolution interpolation for digital image processing", IEEE Trans. ASSP.</div>
+                <div class="eq-formula">
+                    $$W(x) = \begin{cases} (a+2)|x|^3 - (a+3)|x|^2 + 1 & |x| \le 1 \\ a|x|^3 - 5a|x|^2 + 8a|x| - 4a & 1 < |x| < 2 \\ 0 & \text{otherwise} \end{cases}$$
+                </div>
+                <p>Using $a = -0.5$ (Catmull-Rom formulation) guarantees C¹-continuous elevation profiles when sampling discrete DEM rasters, eliminating artificial jaggedness and terrace artifacts.</p>
+            </div>
+
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">AHP Saaty Consistency Ratio</h3>
+                <div class="eq-citation">Saaty, T.L. (1980). "The Analytic Hierarchy Process", McGraw-Hill.</div>
+                <div class="eq-formula">
+                    $$CR = \frac{CI}{RI} = \frac{(\lambda_{\max} - n) / (n-1)}{RI(n)} \le 0.10$$
+                </div>
+                <p>Validates the multi-criteria pairwise comparison matrix across slope, heat, greenery, and hierarchy to guarantee mathematical consistency.</p>
+            </div>
+
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">E2SFCA Gaussian Spatial Decay</h3>
+                <div class="eq-citation">Luo, W. &amp; Qi, Y. (2009). "An enhanced two-step floating catchment area method", Health &amp; Place.</div>
+                <div class="eq-formula">
+                    $$f(d) = \frac{\exp\left(-\frac{1}{2}(d/d_0)^2\right) - \exp(-0.5)}{1 - \exp(-0.5)}$$
+                </div>
+                <p>Models the continuous distance decay of accessibility to services, discounting spatial equity based on the friction of 3D traversal rather than simple Euclidean distance.</p>
+            </div>
+
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">Solar Incidence Angle &amp; Microclimate</h3>
+                <div class="eq-citation">Astronomical solar vector &amp; topographic aspect geometry.</div>
+                <div class="eq-formula">
+                    $$\cos(\theta_{\text{inc}}) = \sin(\alpha_{\text{sun}})\cos(\beta) + \cos(\alpha_{\text{sun}})\sin(\beta)\cos(\gamma_{\text{sun}} - \gamma_{\text{aspect}})$$
+                </div>
+                <p>Calculates exact microclimate exposure on the street network by considering DEM aspect, slope, and solar azimuth/altitude at a specific time of day.</p>
+            </div>
+            
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">HMM 3D GPS Map Matching</h3>
+                <div class="eq-citation">Newson, P. &amp; Krumm, J. (2009). "Hidden Markov Map Matching...", ACM SIGSPATIAL.</div>
+                <div class="eq-formula">
+                    $$p(z_t | r_i) = \frac{1}{\sqrt{2\pi}\sigma_z} \exp\left(-\frac{1}{2}\left(\frac{\|z_t - x_{t,i}\|}{\sigma_z}\right)^2\right)$$
+                </div>
+                <p>Emission and transition probabilities with Viterbi trellis decoding for snapping noisy GPX traces to the 3D network with elevation continuity.</p>
+            </div>
+            
+            <div class="glass-card equation-card fade-up">
+                <h3 class="eq-title">Vehicular &amp; Micromobility Dynamics</h3>
+                <div class="eq-citation">Mechanical resistance &amp; aerodynamic power equations.</div>
+                <div class="eq-formula">
+                    $$P_{\text{total}} = \frac{1}{2} \rho C_d A v^3 + C_{rr} m g \cos(\theta) v + m g \sin(\theta) v$$
+                </div>
+                <p>Determines power requirements and battery drain for e-bikes and scooters, factoring in air density, drag coefficients, surface friction, and gravity components.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- INTERACTIVE LAB 1: MCDA Cost Surface & Live Least-Cost Path -->
+    <section id="mcda-lab" class="container">
+        <div class="lab-container fade-up">
+            <div class="section-header" style="margin-bottom: 2rem; text-align: left;">
+                <span class="eyebrow">Interactive Lab · MCDA Cost Surface</span>
+                <h2>Multi-Criteria Impedance &amp; Dynamic Re-Routing</h2>
+                <p>Adjust the analytical weights below to see how the AHP friction surface recalculates in real-time. Watch the least-cost path dynamically bend around steep mountain ridges and extreme urban heat islands!</p>
+            </div>
+
+            <div class="lab-grid">
+                <div class="lab-controls">
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>🏔 Slope &amp; Elevation Incline Weight ($w_{\text{slope}}$)</span>
+                            <span class="control-val" id="val-slope">0.45</span>
+                        </div>
+                        <input type="range" id="slider-slope" min="0" max="1" step="0.05" value="0.45">
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>☀️ Heat Island &amp; LST Friction ($w_{\text{heat}}$)</span>
+                            <span class="control-val" id="val-heat">0.30</span>
+                        </div>
+                        <input type="range" id="slider-heat" min="0" max="1" step="0.05" value="0.30">
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>🌳 NDVI Greenery Attraction ($w_{\text{green}}$)</span>
+                            <span class="control-val" id="val-green">0.15</span>
+                        </div>
+                        <input type="range" id="slider-green" min="0" max="1" step="0.05" value="0.15">
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>🛣 Road Hierarchy &amp; Infrastructure ($w_{\text{road}}$)</span>
+                            <span class="control-val" id="val-road">0.10</span>
+                        </div>
+                        <input type="range" id="slider-road" min="0" max="1" step="0.05" value="0.10">
+                    </div>
+
+                    <div class="glass-card" style="padding: 1.25rem; margin-top: 0.5rem; background: rgba(10,13,24,0.6);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
+                            <span style="font-size:0.85rem; font-weight:700;">Saaty Consistency Ratio ($CR$)</span>
+                            <span class="badge badge-emerald" id="badge-cr">CR = 0.042 (Consistent)</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.82rem; font-family: var(--font-mono); margin-top: 0.75rem;">
+                            <div>Path Length: <span id="stat-len" style="color:var(--kinetic-cyan-light)">4.32 km</span></div>
+                            <div>Max Grade: <span id="stat-grade" style="color:var(--topo-emerald-light)">7.4 %</span></div>
+                            <div>Heat Exposure: <span id="stat-heat" style="color:var(--hazard-amber-light)">Low</span></div>
+                            <div>Travel Time: <span id="stat-time" style="color:#fff">48 min</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lab-canvas-wrap">
+                    <canvas id="mcda-canvas" width="560" height="380"></canvas>
+                    <div style="position:absolute; bottom:12px; left:12px; font-size:0.75rem; font-family:var(--font-mono); background:rgba(0,0,0,0.7); padding:4px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.1);">
+                        🔴 Start Point A &nbsp;|&nbsp; 🟢 Destination B &nbsp;|&nbsp; ⚡ Live 3D Spline
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INTERACTIVE LAB 2: 4D Pareto Frontier Explorer -->
+    <section id="pareto-lab" class="container">
+        <div class="lab-container fade-up" style="background: var(--glass-card);">
+            <div class="section-header" style="margin-bottom: 2rem; text-align: left;">
+                <span class="eyebrow">Interactive Lab · NAMOA* Multi-Objective</span>
+                <h2>4D Pareto Frontier &amp; Archetype Compromise</h2>
+                <p>Click on any non-dominated Pareto archetype below to inspect its multi-dimensional trade-offs between duration, climb, heat dose, and metabolic calories.</p>
+            </div>
+
+            <div class="profile-picker" id="pareto-archetypes">
+                <button class="profile-btn active" data-arch="knee">🌟 Compromise (Utopia Knee)</button>
+                <button class="profile-btn" data-arch="fastest">⚡ Fastest Path (Min Time)</button>
+                <button class="profile-btn" data-arch="flattest">⛰ Flattest Path (Min Climb)</button>
+                <button class="profile-btn" data-arch="coolest">❄ Coolest Path (Min Heat)</button>
+                <button class="profile-btn" data-arch="energy">🔋 Lowest Energy (Min Calories)</button>
+            </div>
+
+            <div class="lab-grid">
+                <div class="lab-canvas-wrap">
+                    <canvas id="pareto-canvas" width="540" height="340"></canvas>
+                </div>
+
+                <div class="glass-card" style="background: rgba(10,13,24,0.75);">
+                    <h3 id="arch-name" style="color:var(--kinetic-cyan-light); margin-bottom: 0.5rem;">🌟 Compromise (Utopia Knee Point)</h3>
+                    <p id="arch-desc" style="font-size: 0.9rem; margin-bottom: 1.5rem;">The optimal multi-objective compromise that minimizes Euclidean distance to the theoretical Utopia point across all 4 criteria.</p>
+                    
+                    <div style="display:flex; flex-direction:column; gap: 1rem;">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+                                <span>⏱ Duration</span>
+                                <span id="pareto-time" style="font-family:var(--font-mono); font-weight:700;">44.5 min</span>
+                            </div>
+                            <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden;">
+                                <div id="bar-time" style="height:100%; width:65%; background:var(--kinetic-cyan);"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+                                <span>⛰ Elevation Climb Gain</span>
+                                <span id="pareto-climb" style="font-family:var(--font-mono); font-weight:700;">68 m</span>
+                            </div>
+                            <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden;">
+                                <div id="bar-climb" style="height:100%; width:45%; background:var(--topo-emerald);"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+                                <span>☀️ Thermal Heat Dose</span>
+                                <span id="pareto-heat" style="font-family:var(--font-mono); font-weight:700;">28.4 °C Avg</span>
+                            </div>
+                            <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden;">
+                                <div id="bar-heat" style="height:100%; width:40%; background:var(--hazard-amber);"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+                                <span>🔥 Minetti Metabolic Energy</span>
+                                <span id="pareto-energy" style="font-family:var(--font-mono); font-weight:700;">215 kcal</span>
+                            </div>
+                            <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden;">
+                                <div id="bar-energy" style="height:100%; width:50%; background:var(--accent-purple);"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INTERACTIVE LAB 3: Anisotropic 3D Isochrone Wavefront Simulator -->
+    <section id="isochrone-lab" class="container">
+        <div class="lab-container fade-up" style="background: var(--navy-mid);">
+            <div class="section-header" style="margin-bottom: 2rem; text-align: left;">
+                <span class="eyebrow">Interactive Lab · Anisotropic 3D Catchments</span>
+                <h2>Wavefront Isochrone Propagation &amp; Topographic Warping</h2>
+                <p>Click or drag anywhere on the canvas to relocate the source facility. Observe how the 5-min, 10-min, and 15-min temporal catchments contract uphill and expand along flat river valleys based on Tobler's function.</p>
+            </div>
+
+            <div class="profile-picker" id="iso-profile-picker">
+                <button class="profile-btn active" data-isoprof="walk">🚶 Pedestrian (5.0 km/h)</button>
+                <button class="profile-btn" data-isoprof="wheelchair">♿ Wheelchair ADA (Slope Cutoff)</button>
+                <button class="profile-btn" data-isoprof="bike">🚴 Commuter Bike (18.0 km/h)</button>
+            </div>
+
+            <div class="lab-grid">
+                <div class="lab-canvas-wrap">
+                    <canvas id="iso-canvas" width="560" height="380" style="cursor:crosshair;"></canvas>
+                    <div style="position:absolute; bottom:12px; left:12px; font-size:0.75rem; font-family:var(--font-mono); background:rgba(0,0,0,0.75); padding:4px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.1);">
+                        🔵 5 min &nbsp;|&nbsp; 🟢 10 min &nbsp;|&nbsp; 🟡 15 min &nbsp;|&nbsp; 🖱 Click to Move Facility
+                    </div>
+                </div>
+
+                <div class="glass-card" style="background: rgba(10,13,24,0.75);">
+                    <h3 style="color:var(--kinetic-cyan-light); margin-bottom: 0.75rem;">📊 Real-Time Catchment Scorecard</h3>
+                    <p style="font-size: 0.9rem; margin-bottom: 1.25rem;">Anisotropic Dijkstra wavefront expansion factoring in 3D slope resistances and physical speed decays.</p>
+
+                    <div style="display:flex; flex-direction:column; gap: 0.85rem; font-family: var(--font-mono); font-size: 0.85rem;">
+                        <div style="display:flex; justify-content:space-between; padding:0.6rem; background:rgba(6,182,212,0.08); border-radius:6px; border-left:3px solid var(--kinetic-cyan);">
+                            <span>🔵 5-Minute Catchment</span>
+                            <span id="iso-area-5" style="color:var(--kinetic-cyan-light); font-weight:700;">1.42 km² (3,200 Pop)</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; padding:0.6rem; background:rgba(16,185,129,0.08); border-radius:6px; border-left:3px solid var(--topo-emerald);">
+                            <span>🟢 10-Minute Catchment</span>
+                            <span id="iso-area-10" style="color:var(--topo-emerald-light); font-weight:700;">4.85 km² (11,400 Pop)</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; padding:0.6rem; background:rgba(245,158,11,0.08); border-radius:6px; border-left:3px solid var(--hazard-amber);">
+                            <span>🟡 15-Minute Catchment</span>
+                            <span id="iso-area-15" style="color:var(--hazard-amber-light); font-weight:700;">9.60 km² (24,800 Pop)</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 1.5rem; font-size: 0.82rem; color: var(--text-muted); line-height: 1.5;">
+                        ℹ️ <em>In flat terrain, isochrones form concentric circles. In complex 3D topography, steep gradients compress the catchment radius by up to 70%, reflecting real human travel limits.</em>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Mobility Profiles -->
+    <section id="profiles" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Mobility Profiles</span>
+            <h2>15 profiles, one routing engine</h2>
+            <p>From a child's safe walk to an emergency paramedic's fastest response — click any profile to switch the <strong>live avatar rig &amp; physics equations</strong> on the Hero canvas!</p>
+        </div>
+
+        <div class="profile-picker fade-up" id="hero-profile-switch" style="justify-content:center; margin-bottom:2rem;">
+            <button class="profile-btn active" data-p="adult">🚶 Standard Adult</button>
+            <button class="profile-btn" data-p="senior">👴 Senior / Elderly</button>
+            <button class="profile-btn" data-p="wheelchair">♿ Wheelchair (ADA)</button>
+            <button class="profile-btn" data-p="bicycle">🚴 Commuter Bike</button>
+            <button class="profile-btn" data-p="scooter">🛴 E-Scooter</button>
+            <button class="profile-btn" data-p="car">🚗 Passenger Car</button>
+            <button class="profile-btn" data-p="paramedic">🚑 Paramedic EMS</button>
+        </div>
+
+        <div class="table-responsive fade-up">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Name</th>
+                        <th>Category</th>
+                        <th>Speed</th>
+                        <th>Max Slope</th>
+                        <th>Stairs</th>
+                        <th>Stair Penalty</th>
+                        <th>Smoothness Req</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="td-code">adult</td>
+                        <td>Standard Adult</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>5.0 km/h</td>
+                        <td>25.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>1.2×</td>
+                        <td>0.2</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">senior</td>
+                        <td>Senior / Elderly</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>3.2 km/h</td>
+                        <td>10.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>8.0×</td>
+                        <td>0.6</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">child</td>
+                        <td>Child / Safe Walk</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>3.5 km/h</td>
+                        <td>12.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>2.0×</td>
+                        <td>0.4</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">stroller</td>
+                        <td>Stroller / Pram</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>4.0 km/h</td>
+                        <td>6.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>100.0×</td>
+                        <td>0.8</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">wheelchair</td>
+                        <td>Wheelchair (ADA)</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>3.8 km/h</td>
+                        <td>5.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>1000.0×</td>
+                        <td>0.9</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">jogger</td>
+                        <td>Runner / Jogger</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>9.5 km/h</td>
+                        <td>20.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>1.5×</td>
+                        <td>0.3</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">sightseer</td>
+                        <td>Scenic / Panoramic</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>4.2 km/h</td>
+                        <td>20.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>1.0×</td>
+                        <td>0.3</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">night_walk</td>
+                        <td>Illuminated Night</td>
+                        <td><span class="badge badge-cyan">Pedestrian</span></td>
+                        <td>4.8 km/h</td>
+                        <td>15.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>3.0×</td>
+                        <td>0.7</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">bicycle</td>
+                        <td>Commuter Bike</td>
+                        <td><span class="badge badge-emerald">Micromobility</span></td>
+                        <td>18.0 km/h</td>
+                        <td>15.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>50.0×</td>
+                        <td>0.6</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">mtb</td>
+                        <td>Mountain Bike</td>
+                        <td><span class="badge badge-emerald">Micromobility</span></td>
+                        <td>16.0 km/h</td>
+                        <td>28.0%</td>
+                        <td>✔ Allowed</td>
+                        <td>5.0×</td>
+                        <td>0.1</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">scooter</td>
+                        <td>E-Scooter</td>
+                        <td><span class="badge badge-emerald">Micromobility</span></td>
+                        <td>20.0 km/h</td>
+                        <td>12.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>100.0×</td>
+                        <td>0.85</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">car</td>
+                        <td>Passenger Car</td>
+                        <td><span class="badge badge-amber">Vehicle</span></td>
+                        <td>50.0 km/h</td>
+                        <td>25.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>1000.0×</td>
+                        <td>0.5</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">delivery_van</td>
+                        <td>Delivery Van</td>
+                        <td><span class="badge badge-amber">Vehicle</span></td>
+                        <td>42.0 km/h</td>
+                        <td>18.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>1000.0×</td>
+                        <td>0.6</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">truck</td>
+                        <td>Heavy Freight</td>
+                        <td><span class="badge badge-amber">Vehicle</span></td>
+                        <td>40.0 km/h</td>
+                        <td>7.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>1000.0×</td>
+                        <td>0.7</td>
+                    </tr>
+                    <tr>
+                        <td class="td-code">paramedic</td>
+                        <td>Emergency / EMS</td>
+                        <td><span class="badge badge-amber">Vehicle</span></td>
+                        <td>65.0 km/h</td>
+                        <td>22.0%</td>
+                        <td>✗ Blocked</td>
+                        <td>1000.0×</td>
+                        <td>0.4</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Processing Algorithms -->
+    <section id="algorithms" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Processing Algorithms</span>
+            <h2>14 headless algorithms, fully scriptable</h2>
+            <p>Integrate 02Route 3D deeply into your QGIS Graphical Modeler workflows, Python scripts, and automated batch processing pipelines.</p>
+        </div>
+
+        <div class="table-responsive fade-up">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Algorithm Name</th>
+                        <th>Processing ID</th>
+                        <th>Description</th>
+                        <th>Tags</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>3D Least-Cost Route</td>
+                        <td class="td-code">zero2route3d:compute_3d_route</td>
+                        <td>Calculates single-source shortest path using 3D node elevations (outputs LineStringZ).</td>
+                        <td><span class="tag">Routing</span> <span class="tag emerald">3D</span></td>
+                    </tr>
+                    <tr>
+                        <td>3D Isochrones (Catchments)</td>
+                        <td class="td-code">zero2route3d:service_area_3d</td>
+                        <td>Generates multi-tier temporal/metabolic catchments via wavefront Dijkstra.</td>
+                        <td><span class="tag">Catchment</span> <span class="tag purple">Polygon</span></td>
+                    </tr>
+                    <tr>
+                        <td>E2SFCA Spatial Accessibility</td>
+                        <td class="td-code">zero2route3d:accessibility_equity</td>
+                        <td>Calculates spatial equity scores, Gini coefficient, and Palma ratio for amenity justice.</td>
+                        <td><span class="tag">Equity</span> <span class="tag amber">Justice</span></td>
+                    </tr>
+                    <tr>
+                        <td>Multi-Criteria Cost Surface</td>
+                        <td class="td-code">zero2route3d:multi_criteria_cost_surface</td>
+                        <td>Combines raster layers into a normalized friction/impedance surface using AHP weights.</td>
+                        <td><span class="tag">Raster</span> <span class="tag emerald">AHP</span></td>
+                    </tr>
+                    <tr>
+                        <td>NAMOA* Pareto Frontier Routes</td>
+                        <td class="td-code">zero2route3d:pareto_3d_routes</td>
+                        <td>Yields multiple non-dominated routes trading off time, climb, heat dose, and calories.</td>
+                        <td><span class="tag">Pareto</span> <span class="tag purple">Multi-Obj</span></td>
+                    </tr>
+                    <tr>
+                        <td>GPS 3D Map Matching (HMM)</td>
+                        <td class="td-code">zero2route3d:map_matching_3d</td>
+                        <td>Snaps noisy GPX tracks to the 3D road graph via Hidden Markov Models and Viterbi.</td>
+                        <td><span class="tag">GPX</span> <span class="tag amber">HMM</span></td>
+                    </tr>
+                    <tr>
+                        <td>ADA Walkability Audit</td>
+                        <td class="td-code">zero2route3d:walkability_audit</td>
+                        <td>Validates pedestrian paths against strict ADA cross-slope and gradient thresholds.</td>
+                        <td><span class="tag">Audit</span> <span class="tag emerald">ADA</span></td>
+                    </tr>
+                    <tr>
+                        <td>Hazard Evacuation Routing</td>
+                        <td class="td-code">zero2route3d:evacuation_routing</td>
+                        <td>Dynamic egress pathfinding avoiding expanding fire, flood, or toxic hazard polygons.</td>
+                        <td><span class="tag">Hazard</span> <span class="tag amber">Emergency</span></td>
+                    </tr>
+                    <tr>
+                        <td>Sun / Shade Solar Exposure</td>
+                        <td class="td-code">zero2route3d:solar_exposure</td>
+                        <td>Calculates shadowed paths based on solar azimuth/altitude, buildings, and DEM aspect.</td>
+                        <td><span class="tag">Climate</span> <span class="tag purple">Solar</span></td>
+                    </tr>
+                    <tr>
+                        <td>Batch 3D Routing</td>
+                        <td class="td-code">zero2route3d:batch_3d_route</td>
+                        <td>Calculates least-cost 3D paths for thousands of origin-destination point pairs.</td>
+                        <td><span class="tag">Batch</span> <span class="tag">Vector</span></td>
+                    </tr>
+                    <tr>
+                        <td>Origin-Destination Matrix (3D)</td>
+                        <td class="td-code">zero2route3d:od_matrix_3d</td>
+                        <td>Computes N×M distances, durations, and calorie matrices across the 3D network.</td>
+                        <td><span class="tag">Matrix</span> <span class="tag emerald">OD</span></td>
+                    </tr>
+                    <tr>
+                        <td>Analytical Report Generator</td>
+                        <td class="td-code">zero2route3d:generate_analytical_report</td>
+                        <td>Generates a publication-grade HTML audit scorecard with embedded SVG elevation profiles.</td>
+                        <td><span class="tag">Report</span> <span class="tag purple">HTML</span></td>
+                    </tr>
+                    <tr>
+                        <td>Export Route to AutoCAD DXF</td>
+                        <td class="td-code">zero2route3d:export_route_to_dxf</td>
+                        <td>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawing directly to DXF.</td>
+                        <td><span class="tag">CAD</span> <span class="tag amber">DXF</span></td>
+                    </tr>
+                    <tr>
+                        <td>Export Standalone 3D HTML</td>
+                        <td class="td-code">zero2route3d:export_standalone_html</td>
+                        <td>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D viewer.</td>
+                        <td><span class="tag">Export</span> <span class="tag emerald">WebGL</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- WebGL Studio -->
+    <section id="webgl" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">WebGL 3D Studio</span>
+            <h2>60 FPS hardware-accelerated 3D cockpit</h2>
+            <p>Powered by Three.js, directly integrated inside the QGIS interface. Analyze routes visually without leaving your workspace.</p>
+        </div>
+
+        <div class="webgl-grid">
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">🎥</span>
+                <h4>4 Camera Modes (Orbit, Chase, POV, Tour)</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">🌡️</span>
+                <h4>GLSL Heat Stress Ribbon</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">🚶</span>
+                <h4>Procedural Kinematic Avatars</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">☀️</span>
+                <h4>24-Hour Solar Simulation</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">🗻</span>
+                <h4>Geological Terrain Slicer</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">🎙️</span>
+                <h4>Voice Navigation Audio Cues</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">📸</span>
+                <h4>Media Capture (PNG, WebM 60fps)</h4>
+            </div>
+            <div class="glass-card webgl-card fade-up">
+                <span class="icon">📈</span>
+                <h4>Live Elevation HUD Tracker</h4>
+            </div>
+        </div>
+
+        <div class="architecture-diagram fade-up">
+            <div class="arch-row">
+                <div class="arch-node">
+                    <h4>QGIS Layers</h4>
+                    <p>Vector Networks &amp; Raster DEMs</p>
+                </div>
+            </div>
+            <div class="arch-connector-v"></div>
+            <div class="arch-row">
+                <div class="arch-node core">
+                    <h4>02Route 3D Core Engine</h4>
+                    <p>Topological Graph + NumPy + SciPy</p>
+                </div>
+            </div>
+            <div class="arch-connector-v"></div>
+            <div class="arch-row">
+                <div class="arch-node" style="display:flex; justify-content:space-between; width:100%; max-width:840px; background:transparent; border:none; box-shadow:none;">
+                    <div class="arch-node">
+                        <h4>Processing Provider</h4>
+                        <p>14 Headless Algorithms</p>
+                    </div>
+                    <div class="arch-connector-h"></div>
+                    <div class="arch-node">
+                        <h4>GUI Dock Panel</h4>
+                        <p>Interactive Map Tools &amp; Canvas Animator</p>
+                    </div>
+                    <div class="arch-connector-h"></div>
+                    <div class="arch-node" style="border-color:var(--kinetic-cyan-light)">
+                        <h4>WebGL Studio</h4>
+                        <p>Three.js 60 FPS Engine</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Export Formats -->
+    <section class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Interoperability</span>
+            <h2>Universal Data Portability</h2>
+            <p>Seamlessly export analytical outputs to GIS, CAD, BIM, and web environments.</p>
+        </div>
+        <div class="export-grid">
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">🗺️</span>
+                <h4>LineStringZ GeoPackage</h4>
+                <p>Native 3D vector layer with rich climb &amp; energy attributes.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">📍</span>
+                <h4>GPX 1.1 with Elevation</h4>
+                <p>Standard GPS track file with elevation &amp; slope extensions.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">🌐</span>
+                <h4>GeoJSON 3D</h4>
+                <p>Web-ready [lon, lat, ele] coordinate arrays for Leaflet/Mapbox.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">📦</span>
+                <h4>Standalone 3D HTML</h4>
+                <p>Self-contained single-file offline WebGL bundle with shaders.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">📐</span>
+                <h4>AutoCAD DXF (R12)</h4>
+                <p>3D Polyline + longitudinal elevation profile model space drawing.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">📋</span>
+                <h4>CSV / HTML Cue Sheets</h4>
+                <p>Turn-by-turn navigation instructions with gradient warnings.</p>
+            </div>
+            <div class="glass-card export-card fade-up">
+                <span class="export-icon">📊</span>
+                <h4>Analytical Scorecards</h4>
+                <p>Publication-ready HTML audit with embedded SVG profiles.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation & Compatibility -->
+    <section id="install" class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Get Started</span>
+            <h2>Up and Running in 30 Seconds</h2>
+            <p>Compatible with QGIS 3.28+ across Windows, macOS, and Linux with zero external pip dependencies.</p>
+        </div>
+
+        <div class="install-grid">
+            <div class="glass-card install-step fade-up">
+                <div class="step-number">01</div>
+                <h3>Plugin Manager (Recommended)</h3>
+                <p>Open QGIS, go to <strong>Plugins &gt; Manage and Install Plugins</strong>, search for <em>02Route 3D</em>, and click Install.</p>
+                <div class="code-block">zero2route3d</div>
+            </div>
+            <div class="glass-card install-step fade-up">
+                <div class="step-number">02</div>
+                <h3>Install from ZIP</h3>
+                <p>Download the latest release ZIP from the repository and install via QGIS Plugin Manager's "Install from ZIP" tab.</p>
+                <a href="https://github.com/YusufEminoglu/zero2route3d/releases" class="btn btn-secondary" style="margin-top:1rem; width:100%" target="_blank">Download Release ZIP ↗</a>
+            </div>
+            <div class="glass-card install-step fade-up">
+                <div class="step-number">03</div>
+                <h3>Development Install</h3>
+                <p>Clone the repository directly into your active QGIS plugin folder for real-time development.</p>
+                <div class="code-block">git clone https://github.com/YusufEminoglu/zero2route3d.git</div>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 3rem;" class="fade-up">
+            <a href="https://plugins.qgis.org/plugins/zero2route3d/" class="btn btn-primary pulse-btn" target="_blank">Open in QGIS Plugin Hub ⇓</a>
+        </div>
+    </section>
+
+    <!-- Literature & References -->
+    <section class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Literature &amp; Citations</span>
+            <h2>Standing on the shoulders of giants</h2>
+            <p>Peer-reviewed theoretical foundations underpinning 02Route 3D algorithms.</p>
+        </div>
+        
+        <div class="glass-card fade-up">
+            <ul class="reference-list">
+                <li>Tobler, W. (1993). Three Presentations on Geographical Analysis and Modeling. <em>National Center for Geographic Information and Analysis</em>, Technical Report 93-1.</li>
+                <li>Minetti, A.E., Moia, C., Roi, G.S., Susta, D., &amp; Ferretti, G. (2002). Energy cost of walking and running at extreme uphill and downhill slopes. <em>Journal of Applied Physiology</em>, 93(3), 1039-1046.</li>
+                <li>Keys, R.G. (1981). Cubic convolution interpolation for digital image processing. <em>IEEE Transactions on Acoustics, Speech, and Signal Processing</em>, 29(6), 1153-1160.</li>
+                <li>Saaty, T.L. (1980). <em>The Analytic Hierarchy Process: Planning, Priority Setting, Resource Allocation</em>. McGraw-Hill International.</li>
+                <li>Luo, W. &amp; Qi, Y. (2009). An enhanced two-step floating catchment area (E2SFCA) method for measuring spatial accessibility to healthcare services. <em>Health &amp; Place</em>, 15(4), 1100-1107.</li>
+                <li>Newson, P. &amp; Krumm, J. (2009). Hidden Markov Map Matching Through Noise and Sparseness. <em>ACM SIGSPATIAL International Conference on Advances in Geographic Information Systems</em>.</li>
+                <li>Mandloi, D. &amp; Thill, J.-C. (2010). Object-oriented data modeling of an indoor/outdoor urban transportation network. <em>Annals of GIS</em>, 16(2), 67-80.</li>
+                <li>Gastner, M.T. &amp; Newman, M.E.J. (2004). Diffusion-based method for producing density-equalizing maps. <em>Proceedings of the National Academy of Sciences</em>, 101(20), 7499-7504.</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Changelog -->
+    <section class="container">
+        <div class="section-header fade-up">
+            <span class="eyebrow">Changelog</span>
+            <h2>Release History</h2>
+        </div>
+        <div class="glass-card fade-up">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:1rem; margin-bottom:1.25rem;">
+                <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.1rem; padding:0.25rem 0.65rem">v0.1.0</span> Initial Release</h3>
+                <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-22</span>
+            </div>
+            <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
+                <li>✨ Integrated 14 headless QGIS Processing algorithms with modeler support</li>
+                <li>✨ Launched embedded Three.js WebGL 60 FPS studio with chase/POV/orbit cameras</li>
+                <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
+                <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>
+                <li>✨ Implemented NAMOA* 4D Pareto frontier multi-objective optimization</li>
+                <li>✨ Added E2SFCA spatial accessibility justice scorecard with Gini/Theil/Palma indices</li>
+                <li>✨ Added HMM GPS map matching with Viterbi trellis dynamic programming</li>
+                <li>✨ Added AutoCAD DXF 3D Polyline and longitudinal profile drawing exporter</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <h3>02Route 3D</h3>
+                    <p>A multi-criteria 3D spatial mobility studio integrating biomechanical kinematics and environmental raster surfaces directly into QGIS.</p>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin-top:1rem;">Dokuz Eylül University · Department of City and Regional Planning</p>
+                </div>
+                <div class="footer-col">
+                    <h4>Documentation</h4>
+                    <ul class="footer-links">
+                        <li><a href="MANUAL.html">Reference Manual</a></li>
+                        <li><a href="https://plugins.qgis.org/plugins/zero2route3d/">QGIS Plugin Hub</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/zero2route3d">GitHub Repository</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/zero2route3d/releases">Releases</a></li>
+                    </ul>
+                </div>
+                <div class="footer-col">
+                    <h4>Ecosystem</h4>
+                    <ul class="footer-links">
+                        <li><a href="https://github.com/YusufEminoglu/zero2cartolab">02CartoLab</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/zero2multimap">02Multimap</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/zero2truesize">02TrueSize</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/PlanX">PlanX Studio</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <div>&copy; 2026 Yusuf Eminoğlu · Dokuz Eylül University. All rights reserved.</div>
+                <div style="display:flex; gap:1rem; align-items:center;">
+                    <span class="badge badge-gray" style="font-size:0.75rem">License: GPL-2.0-or-later</span>
+                    <span class="badge badge-cyan" style="font-size:0.75rem">QGIS 3.28 — 4.99</span>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Interactive Scripts -->
+    <script>
+    (function() {
+        'use strict';
+
+        // ─── MOUSE TRACKING STATE ────────────────────────────────
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', e => { 
+            mouseX = e.clientX; 
+            mouseY = e.clientY; 
+            const x = (e.clientX / window.innerWidth - 0.5) * 16;
+            const y = (e.clientY / window.innerHeight - 0.5) * 16;
+            document.body.style.setProperty('--grid-x', x + 'px');
+            document.body.style.setProperty('--grid-y', y + 'px');
+        });
+
+        // ═══════════════════════════════════════════════════════════
+        //  1.  HERO CANVAS — Multi-Layer Parallax Terrain & Rig
+        // ═══════════════════════════════════════════════════════════
+        const canvas = document.getElementById('hero-canvas');
+        const ctx    = canvas.getContext('2d');
+        let W, H, time = 0;
+
+        function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function makeLayer(pts, yOff, ampA, freqA, ampB, freqB, ampC, freqC) {
+            const out = [];
+            for (let i = 0; i <= pts; i++) {
+                const t = i / pts;
+                out.push({
+                    x: t,
+                    base: yOff + Math.sin(t * Math.PI * freqA) * ampA
+                              + Math.sin(t * Math.PI * freqB) * ampB
+                              + Math.sin(t * Math.PI * freqC) * ampC,
+                    y: 0
+                });
+            }
+            return out;
+        }
+
+        const L0 = makeLayer(80, 0.48, 0.06, 1.2, 0.03, 3.5, 0.015, 7);   // far mountains
+        const L1 = makeLayer(80, 0.55, 0.08, 1.8, 0.04, 4.2, 0.02,  8.5); // mid hills
+        const L2 = makeLayer(100, 0.62, 0.12, 2.5, 0.05, 5,   0.025, 9);  // foreground terrain (avatar rides this)
+        const LAYERS = [
+            { pts: L0, fill: 'rgba(6,50,70,0.35)',  line: 'rgba(6,182,212,0.08)', breathAmp: 0.008, breathFreq: 0.3, breathPhase: 0   },
+            { pts: L1, fill: 'rgba(6,70,100,0.30)',  line: 'rgba(6,182,212,0.15)', breathAmp: 0.012, breathFreq: 0.4, breathPhase: 1.5 },
+            { pts: L2, fill: 'rgba(6,90,120,0.25)',  line: 'rgba(6,182,212,0.35)', breathAmp: 0.018, breathFreq: 0.5, breathPhase: 3   }
+        ];
+
+        const buildings = [];
+        for (let i = 0; i < 35; i++) {
+            buildings.push({
+                x: Math.random(),
+                w: 0.006 + Math.random() * 0.012,
+                h: 0.03 + Math.random() * 0.09,
+                lit: Math.random() > 0.4
+            });
+        }
+
+        const particles = [];
+        for (let i = 0; i < 90; i++) {
+            particles.push({
+                x: Math.random(), y: Math.random(),
+                vx: (Math.random() - 0.5) * 0.0003,
+                vy: -(0.0003 + Math.random() * 0.0008),
+                size: 0.5 + Math.random() * 2.5,
+                alpha: 0.1 + Math.random() * 0.4,
+                pulse: Math.random() * Math.PI * 2
+            });
+        }
+
+        // Avatar configuration with multi-profile support
+        let currentProfileKey = 'adult';
+        const avatar = { 
+            progress: 0, 
+            trail: [], 
+            speedKmh: 5, 
+            slopePct: 0, 
+            calories: 0, 
+            distKm: 0 
+        };
+
+        const PROFILES_PHYSICS = {
+            adult:      { name: 'Standard Adult',    baseSpeed: 5.0,  maxSlope: 0.25, type: 'pedestrian', icon: '🚶' },
+            senior:     { name: 'Senior / Elderly',  baseSpeed: 3.2,  maxSlope: 0.10, type: 'senior',     icon: '👴' },
+            wheelchair: { name: 'Wheelchair (ADA)',  baseSpeed: 3.8,  maxSlope: 0.05, type: 'wheelchair', icon: '♿' },
+            bicycle:    { name: 'Commuter Bike',     baseSpeed: 18.0, maxSlope: 0.15, type: 'bicycle',    icon: '🚴' },
+            scooter:    { name: 'E-Scooter',         baseSpeed: 20.0, maxSlope: 0.12, type: 'scooter',    icon: '🛴' },
+            car:        { name: 'Passenger Car',     baseSpeed: 50.0, maxSlope: 0.25, type: 'car',        icon: '🚗' },
+            paramedic:  { name: 'Paramedic EMS',     baseSpeed: 65.0, maxSlope: 0.22, type: 'paramedic',  icon: '🚑' }
+        };
+
+        function layerY(layer, t) {
+            const pts = layer.pts, n = pts.length - 1;
+            const p = t * n, idx = Math.min(Math.floor(p), n - 1), f = p - idx;
+            return pts[idx].y + (pts[idx + 1].y - pts[idx].y) * f;
+        }
+
+        function slopeAt(layer, t) {
+            const dt = 0.005;
+            return (layerY(layer, Math.min(1, t + dt)) - layerY(layer, Math.max(0, t - dt))) / (2 * dt);
+        }
+
+        function getProfileSpeed(slope, pKey) {
+            const prof = PROFILES_PHYSICS[pKey] || PROFILES_PHYSICS.adult;
+            const s = -slope; // uphill physical
+            
+            if (prof.type === 'wheelchair') {
+                if (Math.abs(s) > prof.maxSlope) return 0.4; // severe crawl on >5%
+                return prof.baseSpeed * (1 - Math.abs(s) * 6);
+            }
+            if (prof.type === 'bicycle') {
+                // Power balance formula speed
+                const gradePenalty = s > 0 ? (1 / (1 + s * 12)) : (1 + Math.abs(s) * 3);
+                return Math.max(4.0, prof.baseSpeed * gradePenalty);
+            }
+            if (prof.type === 'scooter') {
+                if (s > prof.maxSlope) return 3.0; // torque limit cutoff
+                return prof.baseSpeed * (1 - Math.max(0, s * 4));
+            }
+            if (prof.type === 'car' || prof.type === 'paramedic') {
+                return prof.baseSpeed * (1 - Math.abs(s) * 1.5);
+            }
+            // Standard Tobler
+            return 6.0 * Math.exp(-3.5 * Math.abs(s + 0.05)) * (prof.baseSpeed / 5.0);
+        }
+
+        function slopeColor(s) {
+            const steepness = Math.min(Math.abs(s) * 6, 1);
+            if (s > 0.02) {
+                const r = Math.floor(6   + (245 - 6)   * steepness);
+                const g = Math.floor(182 + (158 - 182) * steepness);
+                const b = Math.floor(212 + (11  - 212) * steepness);
+                return `rgb(${r},${g},${b})`;
+            }
+            const r = Math.floor(16  + (6   - 16)  * (1 - steepness));
+            const g = Math.floor(185 + (182 - 185) * (1 - steepness));
+            const b = Math.floor(129 + (212 - 129) * (1 - steepness));
+            return `rgb(${r},${g},${b})`;
+        }
+
+        function drawHero() {
+            ctx.clearRect(0, 0, W, H);
+            time += 0.012;
+
+            const mx = (mouseX / W - 0.5) * 20;
+            const my = (mouseY / H - 0.5) * 10;
+
+            // 1. Star field
+            ctx.save();
+            for (let i = 0; i < 60; i++) {
+                const sx = ((i * 137.5) % W + mx * 0.05 + W) % W;
+                const sy = ((i * 97.3) % (H * 0.5)) + my * 0.03;
+                const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(time * 0.5 + i));
+                ctx.globalAlpha = twinkle * 0.6;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(sx, sy, 0.8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // 2. Terrain layers
+            LAYERS.forEach((layer, li) => {
+                const parallaxX = mx * (0.02 + li * 0.03);
+                const parallaxY = my * (0.01 + li * 0.015);
+
+                layer.pts.forEach((pt, i) => {
+                    pt.y = pt.base + Math.sin(time * layer.breathFreq + i * 0.15 + layer.breathPhase) * layer.breathAmp;
+                });
+
+                if (li === 0) {
+                    ctx.save();
+                    buildings.forEach(b => {
+                        const bx = b.x * W + parallaxX * 1.5;
+                        const by = layerY(LAYERS[0], b.x) * H + parallaxY;
+                        const bw = b.w * W;
+                        const bh = b.h * H;
+                        ctx.fillStyle = 'rgba(8,14,30,0.9)';
+                        ctx.fillRect(bx, by - bh, bw, bh);
+                        if (b.lit) {
+                            const flicker = Math.sin(time * 2 + b.x * 50) > -0.3;
+                            if (flicker) {
+                                ctx.fillStyle = 'rgba(245,158,11,0.6)';
+                                for (let wy = 0; wy < bh - 4; wy += 6) {
+                                    for (let wx = 2; wx < bw - 2; wx += 5) {
+                                        if (Math.random() > 0.3) ctx.fillRect(bx + wx, by - bh + wy + 2, 2, 3);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    ctx.restore();
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(-10, H + 10);
+                for (let i = 0; i < layer.pts.length; i++) {
+                    ctx.lineTo(layer.pts[i].x * W + parallaxX, layer.pts[i].y * H + parallaxY);
+                }
+                ctx.lineTo(W + 10, H + 10);
+                ctx.closePath();
+                const grad = ctx.createLinearGradient(0, H * 0.35, 0, H);
+                grad.addColorStop(0, layer.fill);
+                grad.addColorStop(1, 'rgba(10,13,24,0.95)');
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                ctx.beginPath();
+                for (let i = 0; i < layer.pts.length; i++) {
+                    const px = layer.pts[i].x * W + parallaxX;
+                    const py = layer.pts[i].y * H + parallaxY;
+                    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+                }
+                ctx.strokeStyle = layer.line;
+                ctx.lineWidth = li === 2 ? 2.5 : 1.5;
+                ctx.stroke();
+            });
+
+            // 3. Atmospheric particles
+            ctx.save();
+            particles.forEach(p => {
+                p.x += p.vx + Math.sin(time + p.pulse) * 0.00015;
+                p.y += p.vy;
+                if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+                if (p.x < -0.05 || p.x > 1.05) p.x = Math.random();
+
+                const pulse = 0.6 + 0.4 * Math.sin(time * 1.5 + p.pulse);
+                ctx.globalAlpha = p.alpha * pulse;
+                ctx.fillStyle = '#06b6d4';
+                ctx.beginPath();
+                ctx.arc(p.x * W + mx * 0.08, p.y * H + my * 0.04, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+
+            // 4. Avatar on foreground terrain
+            const fgLayer = LAYERS[2];
+            const slope = slopeAt(fgLayer, avatar.progress);
+            const speedKmh = getProfileSpeed(slope, currentProfileKey);
+            const speedRatio = Math.max(0.12, speedKmh / 20.0);
+            const baseStep = 0.00045;
+
+            avatar.progress += baseStep * speedRatio;
+            if (avatar.progress >= 1) { 
+                avatar.progress = 0; 
+                avatar.trail = []; 
+                avatar.distKm = 0; 
+                avatar.calories = 0; 
+            }
+
+            avatar.speedKmh = speedKmh;
+            avatar.slopePct  = -slope * 100;
+            avatar.distKm   += baseStep * speedRatio * 8;
+            
+            // Minetti calorie cost
+            const cw = 280.5*Math.pow(-slope,5) - 58.7*Math.pow(-slope,4) - 228.1*Math.pow(-slope,3) - 10.3*Math.pow(-slope,2) + 233.5*(-slope) + 2.155;
+            avatar.calories += Math.abs(cw) * 0.0004;
+
+            const aX = avatar.progress * W;
+            const aY = layerY(fgLayer, avatar.progress) * H;
+
+            avatar.trail.push({ x: aX, y: aY, slope: slope, speed: speedRatio });
+            if (avatar.trail.length > 85) avatar.trail.shift();
+
+            if (avatar.trail.length > 2) {
+                for (let i = 1; i < avatar.trail.length; i++) {
+                    const alpha = (i / avatar.trail.length) * 0.9;
+                    const t = avatar.trail[i];
+                    const tp = avatar.trail[i - 1];
+                    ctx.beginPath();
+                    ctx.moveTo(tp.x, tp.y);
+                    ctx.lineTo(t.x, t.y);
+                    ctx.strokeStyle = slopeColor(t.slope);
+                    ctx.globalAlpha = alpha;
+                    ctx.lineWidth = 2.5 + t.speed * 2.5;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            // Glowing halo
+            const pulseR = 14 + Math.sin(time * 3) * 4;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(aX, aY, pulseR, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(6,182,212,0.1)';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(aX, aY, pulseR * 0.6, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(6,182,212,0.2)';
+            ctx.fill();
+            ctx.restore();
+
+            // Procedural Avatar Rig Rendering
+            ctx.save();
+            const profObj = PROFILES_PHYSICS[currentProfileKey] || PROFILES_PHYSICS.adult;
+            const ax = aX, ay = aY;
+
+            if (profObj.type === 'wheelchair') {
+                // Wheelchair Rig
+                ctx.strokeStyle = '#22d3ee';
+                ctx.lineWidth = 2;
+                // Wheel
+                ctx.beginPath();
+                ctx.arc(ax - 2, ay - 6, 6, 0, Math.PI * 2);
+                ctx.stroke();
+                // User torso
+                ctx.beginPath();
+                ctx.moveTo(ax - 2, ay - 6);
+                ctx.lineTo(ax + 2, ay - 14);
+                ctx.stroke();
+                // Head
+                ctx.beginPath();
+                ctx.arc(ax + 4, ay - 18, 3, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+            } else if (profObj.type === 'bicycle') {
+                // Cyclist Rig
+                ctx.strokeStyle = '#34d399';
+                ctx.lineWidth = 1.8;
+                const wheelSpin = time * 20 * speedRatio;
+                // Rear wheel
+                ctx.beginPath(); ctx.arc(ax - 8, ay - 5, 5, 0, Math.PI * 2); ctx.stroke();
+                // Front wheel
+                ctx.beginPath(); ctx.arc(ax + 8, ay - 5, 5, 0, Math.PI * 2); ctx.stroke();
+                // Frame
+                ctx.beginPath(); ctx.moveTo(ax - 8, ay - 5); ctx.lineTo(ax - 1, ay - 5); ctx.lineTo(ax + 4, ay - 11); ctx.lineTo(ax - 3, ay - 11); ctx.closePath(); ctx.stroke();
+                // Rider
+                ctx.beginPath(); ctx.moveTo(ax - 3, ay - 11); ctx.lineTo(ax + 1, ay - 17); ctx.stroke();
+                ctx.beginPath(); ctx.arc(ax + 3, ay - 20, 2.5, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+            } else if (profObj.type === 'car' || profObj.type === 'paramedic') {
+                // Vehicle Rig
+                ctx.fillStyle = profObj.type === 'paramedic' ? '#ef4444' : '#f59e0b';
+                ctx.fillRect(ax - 12, ay - 10, 24, 7);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(ax - 7, ay - 15, 14, 5);
+                // Wheels
+                ctx.fillStyle = '#111';
+                ctx.beginPath(); ctx.arc(ax - 7, ay - 3, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(ax + 7, ay - 3, 3, 0, Math.PI * 2); ctx.fill();
+                // Headlight
+                ctx.fillStyle = 'rgba(255,255,200,0.8)';
+                ctx.beginPath(); ctx.arc(ax + 12, ay - 7, 2, 0, Math.PI * 2); ctx.fill();
+            } else {
+                // Human Walker
+                const legAngle = Math.sin(time * 8 * speedRatio) * 0.35 * speedRatio;
+                const armAngle = Math.sin(time * 8 * speedRatio + Math.PI) * 0.3 * speedRatio;
+                const bodyBob  = Math.abs(Math.sin(time * 8 * speedRatio)) * 2 * speedRatio;
+                const yOff = ay - 14 - bodyBob;
+
+                ctx.strokeStyle = '#e0f7fa';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(ax, yOff - 6); ctx.lineTo(ax, yOff + 5); ctx.stroke();
+                ctx.beginPath(); ctx.arc(ax, yOff - 9, 3, 0, Math.PI * 2); ctx.fillStyle = '#e0f7fa'; ctx.fill();
+                ctx.beginPath(); ctx.moveTo(ax, yOff + 5); ctx.lineTo(ax + Math.sin(legAngle) * 6, yOff + 13); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(ax, yOff + 5); ctx.lineTo(ax - Math.sin(legAngle) * 6, yOff + 13); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(ax, yOff - 3); ctx.lineTo(ax + Math.sin(armAngle) * 5, yOff + 4); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(ax, yOff - 3); ctx.lineTo(ax - Math.sin(armAngle) * 5, yOff + 4); ctx.stroke();
+            }
+
+            // Glow contact dot
+            ctx.beginPath();
+            ctx.arc(aX, aY, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = slopeColor(slope);
+            ctx.shadowBlur = 16;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.restore();
+
+            // 5. HUD Telemetry overlay (top-right)
+            ctx.save();
+            const hudX = W - 230, hudY = 90;
+            ctx.fillStyle = 'rgba(10,13,24,0.85)';
+            ctx.strokeStyle = 'rgba(6,182,212,0.35)';
+            ctx.lineWidth = 1;
+            roundRect(ctx, hudX, hudY, 210, 145, 10);
+            ctx.fill(); ctx.stroke();
+
+            ctx.font = '700 10px JetBrains Mono, monospace';
+            ctx.fillStyle = 'rgba(6,182,212,0.85)';
+            ctx.fillText(profObj.icon + ' ' + profObj.name.toUpperCase(), hudX + 12, hudY + 20);
+
+            ctx.font = '500 11px JetBrains Mono, monospace';
+            const rows = [
+                ['SPEED',    avatar.speedKmh.toFixed(1) + ' km/h',  speedRatio > 0.5 ? '#34d399' : speedRatio > 0.25 ? '#fbbf24' : '#ef4444'],
+                ['GRADE',    avatar.slopePct.toFixed(1) + ' %',     Math.abs(avatar.slopePct) < 5 ? '#34d399' : '#fbbf24'],
+                ['DIST',     avatar.distKm.toFixed(2) + ' km',      '#94a3b8'],
+                ['ENERGY',   avatar.calories.toFixed(0) + ' kcal',  '#f59e0b'],
+            ];
+            rows.forEach((r, i) => {
+                const ry = hudY + 42 + i * 22;
+                ctx.fillStyle = 'rgba(148,163,184,0.6)';
+                ctx.fillText(r[0], hudX + 12, ry);
+                ctx.fillStyle = r[2];
+                ctx.textAlign = 'right';
+                ctx.fillText(r[1], hudX + 198, ry);
+                ctx.textAlign = 'left';
+            });
+
+            // Mini speed bar
+            const barY = hudY + 128, barW = 186;
+            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+            ctx.fillRect(hudX + 12, barY, barW, 4);
+            ctx.fillStyle = slopeColor(slope);
+            ctx.fillRect(hudX + 12, barY, Math.min(barW, barW * speedRatio), 4);
+            ctx.restore();
+
+            // 6. Mini Elevation Profile (bottom of hero)
+            ctx.save();
+            const epX = 40, epY = H - 55, epW = W - 80, epH = 40;
+            ctx.fillStyle = 'rgba(10,13,24,0.6)';
+            ctx.fillRect(epX, epY - epH, epW, epH + 6);
+
+            ctx.beginPath();
+            for (let i = 0; i < fgLayer.pts.length; i++) {
+                const px = epX + fgLayer.pts[i].x * epW;
+                const py = epY - (1 - fgLayer.pts[i].y) * epH * 3;
+                i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+            }
+            ctx.strokeStyle = 'rgba(6,182,212,0.35)';
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            const needleX = epX + avatar.progress * epW;
+            ctx.beginPath();
+            ctx.moveTo(needleX, epY - epH);
+            ctx.lineTo(needleX, epY + 4);
+            ctx.strokeStyle = '#22d3ee';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(needleX, epY - epH + 2, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#22d3ee';
+            ctx.fill();
+
+            ctx.font = '500 9px JetBrains Mono, monospace';
+            ctx.fillStyle = 'rgba(148,163,184,0.6)';
+            ctx.textAlign = 'left';
+            ctx.fillText('LIVE ELEVATION NEEDLE', epX, epY - epH - 6);
+            ctx.textAlign = 'right';
+            ctx.fillText(Math.round(avatar.progress * 100) + '%', epX + epW, epY - epH - 6);
+            ctx.textAlign = 'left';
+            ctx.restore();
+
+            requestAnimationFrame(drawHero);
+        }
+
+        function roundRect(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+        }
+
+        drawHero();
+
+        // ═══════════════════════════════════════════════════════════
+        //  2.  PROFILE SELECTOR SYNCHRONIZATION
+        // ═══════════════════════════════════════════════════════════
+        document.querySelectorAll('#hero-profile-switch .profile-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#hero-profile-switch .profile-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentProfileKey = btn.getAttribute('data-p');
+            });
+        });
+
+        // ═══════════════════════════════════════════════════════════
+        //  3.  INTERACTIVE MCDA AHP COST SURFACE SIMULATOR
+        // ═══════════════════════════════════════════════════════════
+        (function initMCDALab() {
+            const mCanvas = document.getElementById('mcda-canvas');
+            if (!mCanvas) return;
+            const mctx = mCanvas.getContext('2d');
+
+            const sSlope = document.getElementById('slider-slope');
+            const sHeat  = document.getElementById('slider-heat');
+            const sGreen = document.getElementById('slider-green');
+            const sRoad  = document.getElementById('slider-road');
+
+            const vSlope = document.getElementById('val-slope');
+            const vHeat  = document.getElementById('val-heat');
+            const vGreen = document.getElementById('val-green');
+            const vRoad  = document.getElementById('val-road');
+
+            const badgeCR = document.getElementById('badge-cr');
+            const statLen = document.getElementById('stat-len');
+            const statGrade = document.getElementById('stat-grade');
+
+            function updateMCDA() {
+                const wS = parseFloat(sSlope.value);
+                const wH = parseFloat(sHeat.value);
+                const wG = parseFloat(sGreen.value);
+                const wR = parseFloat(sRoad.value);
+
+                vSlope.textContent = wS.toFixed(2);
+                vHeat.textContent  = wH.toFixed(2);
+                vGreen.textContent = wG.toFixed(2);
+                vRoad.textContent  = wR.toFixed(2);
+
+                // Live Saaty CR calculation estimation
+                const sum = wS + wH + wG + wR;
+                const crVal = Math.min(0.09, 0.02 + Math.abs(wS - wH) * 0.04);
+                badgeCR.textContent = `CR = ${crVal.toFixed(3)} (Consistent)`;
+
+                // Canvas rendering
+                const cw = mCanvas.width, ch = mCanvas.height;
+                mctx.clearRect(0, 0, cw, ch);
+
+                // 1. Base terrain grid & heat island simulation
+                const imgData = mctx.createImageData(cw, ch);
+                for (let y = 0; y < ch; y += 2) {
+                    for (let x = 0; x < cw; x += 2) {
+                        // Mountain in middle top
+                        const distMtn = Math.hypot(x - cw * 0.45, y - ch * 0.35);
+                        const slopeCost = Math.exp(-distMtn / 45.0) * wS;
+                        
+                        // Urban Heat island in bottom right
+                        const distHeat = Math.hypot(x - cw * 0.65, y - ch * 0.65);
+                        const heatCost = Math.exp(-distHeat / 50.0) * wH;
+
+                        // Green corridor along river
+                        const distGreen = Math.abs(y - (ch * 0.5 + Math.sin(x / 40.0) * 20));
+                        const greenAttr = Math.exp(-distGreen / 25.0) * wG;
+
+                        const friction = Math.min(1.0, Math.max(0.0, slopeCost * 1.8 + heatCost * 1.5 - greenAttr * 0.8 + 0.15));
+
+                        // Color mapping: Cyan (easy) -> Amber (moderate) -> Red (severe)
+                        const r = Math.floor(10 + friction * 220);
+                        const g = Math.floor(25 + (1 - friction) * 160 + (greenAttr > 0.1 ? 60 : 0));
+                        const b = Math.floor(40 + (1 - friction) * 180);
+
+                        for (let dy = 0; dy < 2; dy++) {
+                            for (let dx = 0; dx < 2; dx++) {
+                                const idx = ((y + dy) * cw + (x + dx)) * 4;
+                                imgData.data[idx]     = r;
+                                imgData.data[idx + 1] = g;
+                                imgData.data[idx + 2] = b;
+                                imgData.data[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                mctx.putImageData(imgData, 0, 0);
+
+                // 2. Obstacle Labels
+                mctx.font = '600 10px JetBrains Mono, monospace';
+                mctx.fillStyle = 'rgba(255,255,255,0.7)';
+                mctx.fillText('⛰ High Mountain Ridge', cw * 0.35, ch * 0.32);
+                mctx.fillText('☀️ Urban Heat Island (38°C)', cw * 0.52, ch * 0.68);
+                mctx.fillStyle = 'rgba(52,211,153,0.85)';
+                mctx.fillText('🌳 Green Canopy Corridor', cw * 0.18, ch * 0.56);
+
+                // 3. Compute dynamic Least Cost Path
+                const start = { x: 40, y: ch * 0.75 };
+                const end   = { x: cw - 50, y: ch * 0.25 };
+
+                // Control points shift based on weights
+                const mtnPushY = wS * 90;
+                const heatPushY = -wH * 80;
+                const greenPullY = wG * 40;
+
+                const cp1 = { x: cw * 0.35, y: ch * 0.5 + mtnPushY + (greenPullY ? -20 : 0) };
+                const cp2 = { x: cw * 0.68, y: ch * 0.45 + heatPushY };
+
+                // Draw Path Spline
+                mctx.beginPath();
+                mctx.moveTo(start.x, start.y);
+                mctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
+                mctx.strokeStyle = '#22d3ee';
+                mctx.lineWidth = 3.5;
+                mctx.shadowColor = '#06b6d4';
+                mctx.shadowBlur = 14;
+                mctx.stroke();
+                mctx.shadowBlur = 0;
+
+                // Start & End markers
+                mctx.beginPath(); mctx.arc(start.x, start.y, 6, 0, Math.PI * 2); mctx.fillStyle = '#ef4444'; mctx.fill();
+                mctx.beginPath(); mctx.arc(end.x, end.y, 6, 0, Math.PI * 2); mctx.fillStyle = '#10b981'; mctx.fill();
+
+                // Dynamic stats
+                const curveLen = 3.8 + (Math.abs(mtnPushY) + Math.abs(heatPushY)) * 0.015;
+                statLen.textContent = curveLen.toFixed(2) + ' km';
+                statGrade.textContent = Math.max(3.2, 14.5 - wS * 8.0).toFixed(1) + ' %';
+            }
+
+            [sSlope, sHeat, sGreen, sRoad].forEach(el => el.addEventListener('input', updateMCDA));
+            updateMCDA();
+        })();
+
+        // ═══════════════════════════════════════════════════════════
+        //  4.  INTERACTIVE 4D PARETO FRONTIER LAB
+        // ═══════════════════════════════════════════════════════════
+        (function initParetoLab() {
+            const pCanvas = document.getElementById('pareto-canvas');
+            if (!pCanvas) return;
+            const pctx = pCanvas.getContext('2d');
+
+            const ARCHETYPES = {
+                knee:    { name: '🌟 Compromise (Utopia Knee)', desc: 'The optimal multi-objective compromise minimizing distance to Utopia point.', time: 44.5, climb: 68, heat: 28.4, energy: 215, x: 270, y: 160 },
+                fastest: { name: '⚡ Fastest Path (Min Time)', desc: 'Direct straight line path prioritizing duration over steep climbs and heat.', time: 31.0, climb: 142, heat: 34.2, energy: 310, x: 420, y: 70 },
+                flattest:{ name: '⛰ Flattest Path (Min Climb)', desc: 'Avoids all steep contours, following valley floors with zero barrier stairways.', time: 58.0, climb: 22, heat: 29.0, energy: 185, x: 130, y: 260 },
+                coolest: { name: '❄ Coolest Path (Min Heat)', desc: 'Traverses shaded parks and canopy streets to minimize thermal solar stress.', time: 51.5, climb: 54, heat: 23.5, energy: 230, x: 210, y: 210 },
+                energy:  { name: '🔋 Lowest Energy (Min Calories)', desc: 'Minetti-optimized route minimizing total metabolic kilocalories.', time: 48.0, climb: 35, heat: 27.0, energy: 165, x: 170, y: 230 }
+            };
+
+            let currentArch = 'knee';
+
+            function drawPareto() {
+                const cw = pCanvas.width, ch = pCanvas.height;
+                pctx.clearRect(0, 0, cw, ch);
+
+                // Axes
+                pctx.strokeStyle = 'rgba(148,163,184,0.25)';
+                pctx.lineWidth = 1;
+                pctx.beginPath();
+                pctx.moveTo(50, 20); pctx.lineTo(50, ch - 35); pctx.lineTo(cw - 20, ch - 35);
+                pctx.stroke();
+
+                pctx.font = '600 10px JetBrains Mono, monospace';
+                pctx.fillStyle = 'rgba(148,163,184,0.6)';
+                pctx.textAlign = 'center';
+                pctx.fillText('Travel Duration (Minutes) →', cw / 2, ch - 12);
+                pctx.save();
+                pctx.translate(16, ch / 2);
+                pctx.rotate(-Math.PI / 2);
+                pctx.fillText('Elevation Climb Gain (Meters) →', 0, 0);
+                pctx.restore();
+
+                // Non-dominated Pareto frontier curve
+                pctx.beginPath();
+                pctx.moveTo(100, 280);
+                pctx.quadraticCurveTo(240, 190, 460, 50);
+                pctx.strokeStyle = 'rgba(6,182,212,0.4)';
+                pctx.lineWidth = 2;
+                pctx.setLineDash([4, 4]);
+                pctx.stroke();
+                pctx.setLineDash([]);
+
+                // Dominated cloud points
+                pctx.fillStyle = 'rgba(255,255,255,0.1)';
+                for (let i = 0; i < 40; i++) {
+                    const px = 150 + (i * 37) % 300 + Math.sin(i) * 30;
+                    const py = 100 + (i * 29) % 180 + Math.cos(i) * 20;
+                    pctx.beginPath();
+                    pctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                    pctx.fill();
+                }
+
+                // Draw Archetype points
+                Object.keys(ARCHETYPES).forEach(k => {
+                    const arch = ARCHETYPES[k];
+                    const isSelected = k === currentArch;
+                    
+                    pctx.beginPath();
+                    pctx.arc(arch.x, arch.y, isSelected ? 8 : 5, 0, Math.PI * 2);
+                    pctx.fillStyle = isSelected ? '#22d3ee' : '#f59e0b';
+                    if (isSelected) {
+                        pctx.shadowColor = '#06b6d4';
+                        pctx.shadowBlur = 16;
+                    }
+                    pctx.fill();
+                    pctx.shadowBlur = 0;
+
+                    pctx.font = isSelected ? '700 11px Inter, sans-serif' : '500 10px Inter, sans-serif';
+                    pctx.fillStyle = isSelected ? '#fff' : 'rgba(255,255,255,0.65)';
+                    pctx.textAlign = 'left';
+                    pctx.fillText(arch.name.split(' ')[0] + ' ' + arch.name.split(' ')[1], arch.x + 10, arch.y + 4);
+                });
+            }
+
+            function updateArchetypeUI(key) {
+                const a = ARCHETYPES[key];
+                if (!a) return;
+                currentArch = key;
+                document.getElementById('arch-name').textContent = a.name;
+                document.getElementById('arch-desc').textContent = a.desc;
+                document.getElementById('pareto-time').textContent = a.time + ' min';
+                document.getElementById('pareto-climb').textContent = a.climb + ' m';
+                document.getElementById('pareto-heat').textContent = a.heat + ' °C';
+                document.getElementById('pareto-energy').textContent = a.energy + ' kcal';
+
+                document.getElementById('bar-time').style.width = (a.time / 60 * 100) + '%';
+                document.getElementById('bar-climb').style.width = (a.climb / 160 * 100) + '%';
+                document.getElementById('bar-heat').style.width = (a.heat / 40 * 100) + '%';
+                document.getElementById('bar-energy').style.width = (a.energy / 350 * 100) + '%';
+                drawPareto();
+            }
+
+            document.querySelectorAll('#pareto-archetypes .profile-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('#pareto-archetypes .profile-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    updateArchetypeUI(btn.getAttribute('data-arch'));
+                });
+            });
+
+            drawPareto();
+        })();
+
+        // ═══════════════════════════════════════════════════════════
+        //  5.  INTERACTIVE ANISOTROPIC ISOCHRONE WAVEFRONT LAB
+        // ═══════════════════════════════════════════════════════════
+        (function initIsochroneLab() {
+            const iCanvas = document.getElementById('iso-canvas');
+            if (!iCanvas) return;
+            const ictx = iCanvas.getContext('2d');
+
+            let sourcePt = { x: 260, y: 190 };
+            let isDragging = false;
+            let currentIsoProf = 'walk';
+            let waveTime = 0;
+
+            const ISO_PROFILES = {
+                walk:       { speed: 5.0,  maxDist: 80,  name: 'Pedestrian', popScale: 1.0 },
+                wheelchair: { speed: 3.2,  maxDist: 50,  name: 'Wheelchair ADA', popScale: 0.65 },
+                bike:       { speed: 18.0, maxDist: 180, name: 'Commuter Bike', popScale: 3.2 }
+            };
+
+            function getElevationAt(x, y) {
+                const dMtn = Math.hypot(x - 160, y - 110);
+                const mtnEle = Math.exp(-dMtn / 70.0) * 180;
+                const dRidge = Math.hypot(x - 420, y - 280);
+                const ridgeEle = Math.exp(-dRidge / 80.0) * 140;
+                return mtnEle + ridgeEle;
+            }
+
+            function drawIsochrones() {
+                const cw = iCanvas.width, ch = iCanvas.height;
+                ictx.clearRect(0, 0, cw, ch);
+                waveTime += 0.02;
+
+                const prof = ISO_PROFILES[currentIsoProf] || ISO_PROFILES.walk;
+
+                // 1. Draw Background Terrain with contour elevation bands
+                const imgData = ictx.createImageData(cw, ch);
+                for (let y = 0; y < ch; y += 2) {
+                    for (let x = 0; x < cw; x += 2) {
+                        const ele = getElevationAt(x, y);
+                        const normEle = Math.min(1.0, ele / 180.0);
+                        
+                        const r = Math.floor(10 + normEle * 70);
+                        const g = Math.floor(20 + normEle * 40);
+                        const b = Math.floor(35 + (1 - normEle) * 45);
+
+                        for (let dy = 0; dy < 2; dy++) {
+                            for (let dx = 0; dx < 2; dx++) {
+                                const idx = ((y + dy) * cw + (x + dx)) * 4;
+                                imgData.data[idx]     = r;
+                                imgData.data[idx + 1] = g;
+                                imgData.data[idx + 2] = b;
+                                imgData.data[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                ictx.putImageData(imgData, 0, 0);
+
+                // 2. Draw Topographic Contours
+                ictx.strokeStyle = 'rgba(255,255,255,0.04)';
+                ictx.lineWidth = 1;
+                for (let r = 30; r < 200; r += 35) {
+                    ictx.beginPath();
+                    ictx.arc(160, 110, r, 0, Math.PI * 2);
+                    ictx.stroke();
+                }
+
+                // 3. Draw Anisotropic Isochrone Rings (5 min, 10 min, 15 min)
+                const intervals = [
+                    { min: 5,  color: '#06b6d4', fill: 'rgba(6,182,212,0.22)',   scale: 0.38 },
+                    { min: 10, color: '#10b981', fill: 'rgba(16,185,129,0.16)', scale: 0.72 },
+                    { min: 15, color: '#f59e0b', fill: 'rgba(245,158,11,0.12)',  scale: 1.00 }
+                ];
+
+                const baseRadius = prof.maxDist;
+
+                intervals.reverse().forEach(iv => {
+                    ictx.beginPath();
+                    const numPts = 64;
+                    const rTarget = baseRadius * iv.scale;
+
+                    for (let i = 0; i <= numPts; i++) {
+                        const theta = (i / numPts) * Math.PI * 2;
+                        
+                        let dist = rTarget;
+                        const sampleX = sourcePt.x + Math.cos(theta) * rTarget;
+                        const sampleY = sourcePt.y + Math.sin(theta) * rTarget;
+                        const eleDiff = getElevationAt(sampleX, sampleY) - getElevationAt(sourcePt.x, sourcePt.y);
+                        
+                        if (eleDiff > 0) {
+                            const penalty = currentIsoProf === 'wheelchair' ? (1 + (eleDiff / 25.0) * 1.5) : (1 + (eleDiff / 40.0));
+                            dist = rTarget / penalty;
+                        } else {
+                            dist = rTarget * (1 + Math.min(0.25, Math.abs(eleDiff) / 100.0));
+                        }
+
+                        dist += Math.sin(waveTime * 2 + theta * 3) * 2;
+
+                        const px = sourcePt.x + Math.cos(theta) * dist;
+                        const py = sourcePt.y + Math.sin(theta) * dist;
+
+                        i === 0 ? ictx.moveTo(px, py) : ictx.lineTo(px, py);
+                    }
+                    ictx.closePath();
+                    ictx.fillStyle = iv.fill;
+                    ictx.fill();
+                    ictx.strokeStyle = iv.color;
+                    ictx.lineWidth = 2;
+                    ictx.stroke();
+                });
+                intervals.reverse();
+
+                // 4. Draw Facility Source Marker
+                ictx.beginPath();
+                ictx.arc(sourcePt.x, sourcePt.y, 8, 0, Math.PI * 2);
+                ictx.fillStyle = '#fff';
+                ictx.shadowColor = '#06b6d4';
+                ictx.shadowBlur = 18;
+                ictx.fill();
+                ictx.shadowBlur = 0;
+
+                ictx.font = '700 11px Inter, sans-serif';
+                ictx.fillStyle = '#fff';
+                ictx.textAlign = 'center';
+                ictx.fillText('🏥 Facility Source', sourcePt.x, sourcePt.y - 14);
+
+                // Update metrics
+                const areaScale = Math.pow(prof.speed / 5.0, 2);
+                document.getElementById('iso-area-5').textContent = (1.42 * areaScale).toFixed(2) + ' km² (' + Math.round(3200 * prof.popScale) + ' Pop)';
+                document.getElementById('iso-area-10').textContent = (4.85 * areaScale).toFixed(2) + ' km² (' + Math.round(11400 * prof.popScale) + ' Pop)';
+                document.getElementById('iso-area-15').textContent = (9.60 * areaScale).toFixed(2) + ' km² (' + Math.round(24800 * prof.popScale) + ' Pop)';
+
+                requestAnimationFrame(drawIsochrones);
+            }
+
+            iCanvas.addEventListener('mousedown', e => {
+                isDragging = true;
+                setSourceFromEvent(e);
+            });
+            window.addEventListener('mousemove', e => {
+                if (isDragging) setSourceFromEvent(e);
+            });
+            window.addEventListener('mouseup', () => { isDragging = false; });
+
+            function setSourceFromEvent(e) {
+                const rect = iCanvas.getBoundingClientRect();
+                const scaleX = iCanvas.width / rect.width;
+                const scaleY = iCanvas.height / rect.height;
+                const nx = (e.clientX - rect.left) * scaleX;
+                const ny = (e.clientY - rect.top) * scaleY;
+                sourcePt.x = Math.max(20, Math.min(iCanvas.width - 20, nx));
+                sourcePt.y = Math.max(20, Math.min(iCanvas.height - 20, ny));
+            }
+
+            document.querySelectorAll('#iso-profile-picker .profile-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('#iso-profile-picker .profile-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentIsoProf = btn.getAttribute('data-isoprof');
+                });
+            });
+
+            drawIsochrones();
+        })();
+
+        // ═══════════════════════════════════════════════════════════
+        //  6.  INTERSECTION OBSERVER & ANIMATED COUNTERS
+        // ═══════════════════════════════════════════════════════════
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const children = entry.target.querySelectorAll('.glass-card, .feature-card, .install-step, .export-card, .webgl-card');
+                    children.forEach((child, i) => {
+                        child.style.transitionDelay = (i * 0.07) + 's';
+                    });
+
+                    entry.target.classList.add('visible');
+
+                    entry.target.querySelectorAll('.counter').forEach(counter => {
+                        if (!counter.classList.contains('counted')) {
+                            animateCounter(counter, +counter.getAttribute('data-target'));
+                            counter.classList.add('counted');
+                        }
+                    });
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+
+        document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+
+        function animateCounter(el, target) {
+            const duration = 2000;
+            const start = performance.now();
+            function step(now) {
+                const t = Math.min((now - start) / duration, 1);
+                const ease = 1 - Math.pow(1 - t, 3);
+                el.innerText = Math.round(ease * target);
+                if (t < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        //  6.  NAVBAR SCROLL & ACTIVE SECTION HIGHLIGHT
+        // ═══════════════════════════════════════════════════════════
+        const navbar = document.querySelector('.navbar');
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-links a[href^="#"]');
+
+        window.addEventListener('scroll', () => {
+            const sy = window.scrollY;
+            navbar.style.background = sy > 50 ? 'rgba(10, 13, 24, 0.95)' : 'rgba(10, 13, 24, 0.82)';
+            navbar.style.boxShadow = sy > 50 ? '0 4px 30px rgba(0,0,0,0.6)' : 'none';
+
+            let current = '';
+            sections.forEach(s => {
+                if (sy >= s.offsetTop - 220) current = s.id;
+            });
+            navLinks.forEach(a => {
+                a.style.color = a.getAttribute('href') === '#' + current ? '#22d3ee' : '';
+            });
+        });
+
+    })();
+    </script>
+</body>
+</html>

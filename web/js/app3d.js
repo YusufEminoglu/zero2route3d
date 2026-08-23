@@ -4,6 +4,26 @@ import { KinematicAvatarRig } from './KinematicAvatarRig.js';
 import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';
 import { VoiceCueSystem } from './VoiceCueSystem.js';
 
+function disposeHierarchy(obj) {
+  if (!obj) return;
+  obj.traverse((child) => {
+    if (child.geometry) {
+      child.geometry.dispose();
+    }
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => {
+          if (m.map) m.map.dispose();
+          m.dispose();
+        });
+      } else {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    }
+  });
+}
+
 class Studio3DApp {
   constructor() {
     this.container = document.getElementById('canvasContainer');
@@ -13,12 +33,14 @@ class Studio3DApp {
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setSize(this.width, this.height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
-    this.container.appendChild(this.renderer.domElement);
+    if (this.container) {
+      this.container.appendChild(this.renderer.domElement);
+    }
 
     // Scene with clean daylight atmosphere
     this.scene = new THREE.Scene();
@@ -26,16 +48,16 @@ class Studio3DApp {
     this.scene.fog = new THREE.FogExp2(0xf0f9ff, 0.00025);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(45, this.width / this.height, 1, 30000);
-    this.camera.position.set(0, 180, 260);
+    this.camera = new THREE.PerspectiveCamera(45, this.width / Math.max(1, this.height), 1, 30000);
+    this.camera.position.set(0, 220, 320);
 
-    // Controls
+    // Controls - Free 360 Orbit Camera by default
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
     this.controls.minDistance = 10;
-    this.controls.maxDistance = 12000;
+    this.controls.maxDistance = 15000;
 
     this.setupLighting();
 
@@ -43,15 +65,19 @@ class Studio3DApp {
     this.terrainMesh = null;
     this.roadMesh = null;
     this.centerlineMesh = null;
+    this.glowTubeMesh = null;
+    this.pulseBeacon = null;
     this.avatarMesh = null;
     this.needlePin = null;
     this.buildingsGroup = new THREE.Group();
     this.treesGroup = new THREE.Group();
     this.pinsGroup = new THREE.Group();
+    this.routeOverlayGroup = new THREE.Group();
 
     this.scene.add(this.buildingsGroup);
     this.scene.add(this.treesGroup);
     this.scene.add(this.pinsGroup);
+    this.scene.add(this.routeOverlayGroup);
 
     // Subsystems
     this.avatarRig = new KinematicAvatarRig(this.scene);
@@ -60,6 +86,13 @@ class Studio3DApp {
 
     // Route state & Elevation normalization
     this.routeData = null;
+    this.routeCollection = null;
+    this.routeFeatures = [];
+    this.activeProfileKey = null;
+    this.selectedProfileKeys = new Set();
+    this.profileOpacity = new Map();
+    this.routeVisuals = [];
+    this.avatarRigs = [];
     this.scenePoints = [];
     this.curve = null;
     this.originLonLat = null;
@@ -70,7 +103,9 @@ class Studio3DApp {
     this.isPlaying = false;
     this.progress = 0.0;
     this.playbackSpeed = 1.0;
-    this.cameraMode = 'chase'; // Default to road centerline chase
+    this.cameraMode = 'orbit'; // Default to Orbit camera
+    this.basemapProvider = 'osm'; // 'osm', 'satellite', 'voyager', 'dark'
+    this.activeChartMetric = 'elevation'; // 'elevation', 'slope', 'lst', 'greenery'
     this.elevationExaggeration = 1.5;
     this.showBuildings = true;
     this.showTrees = true;
@@ -93,19 +128,17 @@ class Studio3DApp {
   }
 
   setupLighting() {
-    // Hemispheric Natural Ambient Lighting
     this.hemiLight = new THREE.HemisphereLight(0xffffff, 0xe2e8f0, 0.95);
     this.scene.add(this.hemiLight);
 
-    // Warm Sun Directional Light
-    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.25);
+    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.35);
     this.sunLight.position.set(400, 800, 300);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.width = 2048;
     this.sunLight.shadow.mapSize.height = 2048;
     this.sunLight.shadow.camera.near = 10;
     this.sunLight.shadow.camera.far = 10000;
-    const d = 1200;
+    const d = 1400;
     this.sunLight.shadow.camera.left = -d;
     this.sunLight.shadow.camera.right = d;
     this.sunLight.shadow.camera.top = d;
@@ -126,26 +159,35 @@ class Studio3DApp {
     this.elNeedle = document.getElementById('profileNeedle');
     this.elSvg = document.getElementById('profileSvg');
     this.lblExag = document.getElementById('lblExag');
+    this.elMetricLiveVal = document.getElementById('metricLiveVal');
+    this.elMetricReadout = document.getElementById('metricReadout');
+    this.elLayerList = document.getElementById('layerList');
+    this.elLayerCount = document.getElementById('layerCount');
   }
 
   bindEvents() {
     window.addEventListener('resize', () => {
       this.width = window.innerWidth;
       this.height = window.innerHeight;
-      this.camera.aspect = this.width / this.height;
+      this.camera.aspect = this.width / Math.max(1, this.height);
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(this.width, this.height);
       if (this.routeData) this.renderProfileChart();
     });
 
-    document.getElementById('btnPlay').addEventListener('click', () => this.togglePlay());
+    const btnPlay = document.getElementById('btnPlay');
+    if (btnPlay) {
+      btnPlay.addEventListener('click', () => this.togglePlay());
+    }
 
-    this.elScrubber.addEventListener('input', (e) => {
-      this.progress = parseFloat(e.target.value) / 1000.0;
-      this.updateAvatarPosition();
-    });
+    if (this.elScrubber) {
+      this.elScrubber.addEventListener('input', (e) => {
+        this.progress = Math.max(0.0, Math.min(1.0, parseFloat(e.target.value) / 1000.0));
+        this.updateAvatarPosition();
+      });
+    }
 
-    // Scenario Switcher (Inspired by DİRİ Decision Support System)
+    // Scenario Switcher
     document.querySelectorAll('.scenario-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.scenario-btn').forEach((b) => b.classList.remove('active'));
@@ -158,8 +200,8 @@ class Studio3DApp {
     document.querySelectorAll('.speed-opt').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.speed-opt').forEach((b) => b.classList.remove('active'));
-        e.target.classList.add('active');
-        this.playbackSpeed = parseFloat(e.target.dataset.speed || 1.0);
+        e.currentTarget.classList.add('active');
+        this.playbackSpeed = parseFloat(e.currentTarget.dataset.speed || 1.0);
       });
     });
 
@@ -168,10 +210,29 @@ class Studio3DApp {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.cam-btn').forEach((b) => b.classList.remove('active'));
         e.currentTarget.classList.add('active');
-        this.cameraMode = e.currentTarget.dataset.cam || 'chase';
-        if (this.cameraMode === 'orbit') {
-          this.controls.enabled = true;
-        }
+        this.cameraMode = e.currentTarget.dataset.cam || 'orbit';
+        this.controls.enabled = (this.cameraMode === 'orbit');
+      });
+    });
+
+    // Basemap Provider Selection (OSM, Satellite, Voyager, Dark)
+    document.querySelectorAll('.bmap-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.bmap-btn').forEach((b) => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        this.basemapProvider = e.currentTarget.dataset.provider || 'osm';
+        this.updateBasemapTexture();
+      });
+    });
+
+    // Multi-Metric Chart Switcher
+    document.querySelectorAll('.metric-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.metric-btn').forEach((b) => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        this.activeChartMetric = e.currentTarget.dataset.metric || 'elevation';
+        this.renderProfileChart();
+        this.updateAvatarPosition();
       });
     });
 
@@ -182,7 +243,7 @@ class Studio3DApp {
         const exags = [1.0, 1.5, 2.0, 3.0];
         const nextIdx = (exags.indexOf(this.elevationExaggeration) + 1) % exags.length;
         this.elevationExaggeration = exags[nextIdx];
-        this.lblExag.textContent = `${this.elevationExaggeration.toFixed(1)}x`;
+        if (this.lblExag) this.lblExag.textContent = `${this.elevationExaggeration.toFixed(1)}x`;
         if (this.routeData) this.rebuildScene();
       });
     }
@@ -194,7 +255,8 @@ class Studio3DApp {
         this.showBuildings = !this.showBuildings;
         this.buildingsGroup.visible = this.showBuildings;
         btnBld.classList.toggle('active', this.showBuildings);
-        btnBld.querySelector('b').textContent = this.showBuildings ? 'ON' : 'OFF';
+        const b = btnBld.querySelector('b');
+        if (b) b.textContent = this.showBuildings ? 'ON' : 'OFF';
       });
     }
 
@@ -205,7 +267,8 @@ class Studio3DApp {
         this.showTrees = !this.showTrees;
         this.treesGroup.visible = this.showTrees;
         btnTrees.classList.toggle('active', this.showTrees);
-        btnTrees.querySelector('b').textContent = this.showTrees ? 'ON' : 'OFF';
+        const b = btnTrees.querySelector('b');
+        if (b) b.textContent = this.showTrees ? 'ON' : 'OFF';
       });
     }
 
@@ -218,7 +281,8 @@ class Studio3DApp {
           this.terrainMesh.visible = this.showBasemap;
         }
         btnBasemap.classList.toggle('active', this.showBasemap);
-        btnBasemap.querySelector('b').textContent = this.showBasemap ? 'ON' : 'OFF';
+        const b = btnBasemap.querySelector('b');
+        if (b) b.textContent = this.showBasemap ? 'ON' : 'OFF';
       });
     }
 
@@ -226,8 +290,19 @@ class Studio3DApp {
     const btnSlicer = document.getElementById('btnSlicer');
     if (btnSlicer) {
       btnSlicer.addEventListener('click', () => {
-        this.slicerSystem.toggle();
-        btnSlicer.classList.toggle('active', this.slicerSystem.active);
+        const active = this.slicerSystem.toggle();
+        btnSlicer.classList.toggle('active', active);
+      });
+    }
+
+    // Voice cues button
+    const btnVoice = document.getElementById('btnVoice');
+    if (btnVoice) {
+      btnVoice.addEventListener('click', () => {
+        const active = this.voiceSystem.toggle();
+        btnVoice.classList.toggle('active', active);
+        const b = btnVoice.querySelector('b');
+        if (b) b.textContent = active ? 'ON' : 'OFF';
       });
     }
 
@@ -265,59 +340,221 @@ class Studio3DApp {
     return new THREE.Vector3(dx, dy, dz);
   }
 
+  // Web Guide consumes the same FeatureCollection that QGIS animates.
+  // Each feature is a route layer; the eye control decides which layers move.
   loadRoute(geojson) {
-    this.routeData = geojson;
+    const features = geojson?.type === 'FeatureCollection'
+      ? (Array.isArray(geojson.features) ? geojson.features : [])
+      : (geojson?.type === 'Feature' ? [geojson] : []);
+    const validFeatures = features.filter((feature) => {
+      const coords = feature?.geometry?.coordinates || [];
+      return feature?.geometry?.type === 'LineString' && Array.isArray(coords) && coords.length >= 2;
+    });
+
+    if (!validFeatures.length) {
+      this.routeData = null;
+      this.routeCollection = null;
+      this.routeFeatures = [];
+      this.activeProfileKey = null;
+      this.selectedProfileKeys.clear();
+      if (this.elEmpty) this.elEmpty.style.display = 'block';
+      this.scenePoints = [];
+      this.curve = null;
+      if (this.elSvg) this.elSvg.innerHTML = '';
+      if (this.radarCtx) this.radarCtx.clearRect(0, 0, 130, 130);
+      this.clearSceneObjects();
+      this.updateHudMetrics();
+      this.renderLayerPanel();
+      return;
+    }
+
+    this.routeCollection = geojson;
+    this.routeFeatures = validFeatures;
+    const collectionPrimary = geojson?.properties?.primary_profile_key;
+    const firstKey = validFeatures[0]?.properties?.profile_key || 'adult';
+    this.activeProfileKey = validFeatures.some((feature) => feature?.properties?.profile_key === collectionPrimary)
+      ? collectionPrimary
+      : firstKey;
+    this.selectedProfileKeys = new Set(validFeatures.map((feature) => feature?.properties?.profile_key || 'adult'));
     if (this.elEmpty) this.elEmpty.style.display = 'none';
+    this.refreshActiveRoute(true);
+    this.isPlaying = true;
+    if (this.elPlayIcon) this.elPlayIcon.textContent = 'â¸';
+  }
 
-    const coords = geojson?.geometry?.coordinates || [];
-    if (coords.length < 2) return;
-
-    // Determine reference minimum base elevation
+  refreshActiveRoute(resetCamera = false) {
+    const activeFeature = this.routeFeatures.find(
+      (feature) => (feature?.properties?.profile_key || 'adult') === this.activeProfileKey,
+    ) || this.routeFeatures[0];
+    if (!activeFeature) return;
+    this.routeData = activeFeature;
+    this.activeProfileKey = activeFeature.properties?.profile_key || 'adult';
+    const coords = activeFeature.geometry.coordinates;
     const elevations = coords.map((c) => (c[2] !== undefined ? c[2] : 0.0));
     this.baseElevation = Math.min(...elevations);
-
     this.originLonLat = { lon: coords[0][0], lat: coords[0][1] };
     this.scenePoints = coords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
     this.curve = new THREE.CatmullRomCurve3(this.scenePoints, false, 'catmullrom', 0.15);
-
+    this.routeVisuals = this.routeFeatures
+      .filter((feature) => this.selectedProfileKeys.has(feature?.properties?.profile_key || 'adult'))
+      .map((feature) => {
+        const featureCoords = feature.geometry.coordinates;
+        const points = featureCoords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
+        return {
+          key: feature?.properties?.profile_key || 'adult',
+          feature,
+          points,
+          curve: new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.15),
+        };
+      });
     this.updateHudMetrics();
-
-    if (this.voiceSystem && geojson.properties?.cue_sheet) {
-      this.voiceSystem.loadCues(geojson.properties.cue_sheet);
+    if (this.voiceSystem && activeFeature.properties?.cue_sheet) {
+      this.voiceSystem.loadCues(activeFeature.properties.cue_sheet);
     }
-
+    this.renderLayerPanel();
     this.rebuildScene();
     this.renderProfileChart();
-    this.resetCameraView();
+    if (resetCamera) this.resetCameraView();
+  }
 
-    this.isPlaying = true;
-    if (this.elPlayIcon) {
-      this.elPlayIcon.textContent = '⏸';
+  selectProfile(profileKey) {
+    if (!this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === profileKey)) return;
+    this.activeProfileKey = profileKey;
+    this.selectedProfileKeys.add(profileKey);
+    this.refreshActiveRoute(true);
+  }
+
+  toggleProfileAnimation(profileKey) {
+    if (this.selectedProfileKeys.has(profileKey)) this.selectedProfileKeys.delete(profileKey);
+    else this.selectedProfileKeys.add(profileKey);
+    if (profileKey === this.activeProfileKey && !this.selectedProfileKeys.has(profileKey)) {
+      this.activeProfileKey = [...this.selectedProfileKeys][0] || null;
     }
+    this.refreshActiveRoute(false);
+    this.updateAvatarPosition();
+  }
+
+  setProfileOpacity(profileKey, value) {
+    const opacity = Math.max(0.0, Math.min(1.0, Number(value)));
+    this.profileOpacity.set(profileKey, opacity);
+    this.applyProfileAppearance();
+  }
+
+  applyProfileAppearance() {
+    const opacityFor = (key) => this.profileOpacity.has(key) ? this.profileOpacity.get(key) : 1.0;
+    this.routeVisuals.forEach((visual) => {
+      const opacity = opacityFor(visual.key);
+      if (visual.rig?.subMeshGroup) {
+        visual.rig.subMeshGroup.traverse((node) => {
+          if (!node.material) return;
+          const materials = Array.isArray(node.material) ? node.material : [node.material];
+          materials.forEach((material) => {
+            material.transparent = opacity < 1.0;
+            material.opacity = opacity;
+            material.needsUpdate = true;
+          });
+        });
+      }
+    });
+    this.routeOverlayGroup.children.forEach((line) => {
+      const key = line.userData?.profileKey;
+      if (key && line.material) {
+        line.material.opacity = opacityFor(key);
+        line.material.transparent = line.material.opacity < 1.0;
+      }
+    });
+    const activeOpacity = opacityFor(this.activeProfileKey);
+    [this.centerlineMesh, this.glowTubeMesh].forEach((mesh) => {
+      if (!mesh?.material) return;
+      mesh.material.opacity = activeOpacity;
+      mesh.material.transparent = activeOpacity < 1.0;
+      mesh.material.needsUpdate = true;
+    });
+  }
+
+  profileColor(feature) {
+    const palette = ['#0284c7', '#8b5cf6', '#d946ef', '#10b981', '#f59e0b', '#ef4444', '#14b8a6', '#6366f1'];
+    const color = feature?.properties?.profile_color;
+    if (typeof color === 'string' && color.trim()) return color;
+    const index = Math.max(0, this.routeFeatures.indexOf(feature));
+    return palette[index % palette.length];
+  }
+
+  renderLayerPanel() {
+    if (!this.elLayerList) return;
+    this.elLayerList.innerHTML = '';
+    if (this.elLayerCount) this.elLayerCount.textContent = String(this.routeFeatures.length);
+    if (!this.routeFeatures.length) {
+      this.elLayerList.innerHTML = '<div class="layer-empty">Waiting for QGIS routesâ€¦</div>';
+      return;
+    }
+    this.routeFeatures.forEach((feature) => {
+      const props = feature.properties || {};
+      const key = props.profile_key || 'adult';
+      const color = this.profileColor(feature);
+      const row = document.createElement('div');
+      row.className = `layer-row${key === this.activeProfileKey ? ' active' : ''}${this.selectedProfileKeys.has(key) ? ' selected' : ''}`;
+      row.style.setProperty('--layer-color', color);
+      row.title = `${props.profile_name || key} | ${Number(props.distance_km || 0).toFixed(2)} km | ${Number(props.duration_min || 0).toFixed(1)} min | +${Number(props.elevation_gain_m || 0).toFixed(1)} m | ${Number(props.max_slope_pct || 0).toFixed(1)}% | ${Number(props.calories_kcal || 0).toFixed(0)} kcal`;
+      row.addEventListener('click', () => this.selectProfile(key));
+
+      const toggle = document.createElement('button');
+      toggle.className = `layer-toggle${this.selectedProfileKeys.has(key) ? ' on' : ''}`;
+      toggle.type = 'button';
+      toggle.textContent = this.selectedProfileKeys.has(key) ? '●' : '○';
+      toggle.setAttribute('aria-label', `Toggle ${props.profile_name || key} animation`);
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.toggleProfileAnimation(key);
+      });
+
+      const text = document.createElement('div');
+      text.className = 'layer-name';
+      text.textContent = props.profile_name || key;
+      const meta = document.createElement('span');
+      meta.className = 'layer-meta';
+      meta.textContent = `${Number(props.distance_km || 0).toFixed(2)} km · ${Number(props.duration_min || 0).toFixed(1)} min`;
+      text.appendChild(meta);
+
+      const opacity = document.createElement('input');
+      opacity.type = 'range';
+      opacity.className = 'layer-opacity';
+      opacity.min = '0';
+      opacity.max = '100';
+      opacity.step = '1';
+      opacity.value = String(Math.round((this.profileOpacity.get(key) ?? 1.0) * 100));
+      opacity.title = 'Layer opacity';
+      opacity.addEventListener('click', (event) => event.stopPropagation());
+      opacity.addEventListener('input', (event) => {
+        event.stopPropagation();
+        this.setProfileOpacity(key, Number(event.target.value) / 100.0);
+      });
+
+      const swatch = document.createElement('span');
+      swatch.className = 'layer-swatch';
+      row.appendChild(toggle);
+      row.appendChild(text);
+      row.appendChild(opacity);
+      row.appendChild(swatch);
+      this.elLayerList.appendChild(row);
+    });
   }
 
   updateHudMetrics() {
-    if (!this.routeData) return;
-    const props = this.routeData.properties || {};
-    let dist = props.distance_km || 0.0;
-    let dur = props.duration_min || 0.0;
-    let climb = props.elevation_gain_m || 0.0;
-    let slope = props.max_slope_pct || 0.0;
-    let kcal = props.calories_kcal || 0.0;
-
-    // DİRİ Scenario multipliers for comparative evaluation
-    if (this.activeScenario === 'green') {
-      dur *= 1.08;
-      kcal *= 1.05;
-      slope *= 0.85;
-    } else if (this.activeScenario === 'ada') {
-      dur *= 1.15;
-      slope = Math.min(slope, 5.8);
-      climb *= 0.82;
-    } else if (this.activeScenario === 'cycle') {
-      dur *= 0.35;
-      kcal *= 0.75;
+    if (!this.routeData || !this.routeData.properties) {
+      if (this.elDist) this.elDist.textContent = '—';
+      if (this.elTime) this.elTime.textContent = '—';
+      if (this.elClimb) this.elClimb.textContent = '—';
+      if (this.elSlope) this.elSlope.textContent = '—';
+      if (this.elKcal) this.elKcal.textContent = '—';
+      return;
     }
+    const props = this.routeData.properties || {};
+    const dist = Number(props.distance_km || 0.0);
+    const dur = Number(props.duration_min || 0.0);
+    const climb = Number(props.elevation_gain_m || 0.0);
+    const slope = Number(props.max_slope_pct || 0.0);
+    const kcal = Number(props.calories_kcal || 0.0);
 
     if (this.elDist) this.elDist.textContent = `${dist.toFixed(2)} km`;
     if (this.elTime) this.elTime.textContent = `${dur.toFixed(1)} min`;
@@ -328,29 +565,63 @@ class Studio3DApp {
 
   switchScenario(scenarioKey) {
     this.activeScenario = scenarioKey;
-    this.updateHudMetrics();
-
-    if (scenarioKey === 'ada') {
-      this.avatarRig.setProfile('wheelchair');
-    } else if (scenarioKey === 'cycle') {
-      this.avatarRig.setProfile('road_bike');
-    } else if (scenarioKey === 'green') {
-      this.avatarRig.setProfile('senior');
+    const scenarioProfiles = { ada: 'wheelchair', cycle: 'bicycle', green: 'senior' };
+    const targetKey = scenarioProfiles[scenarioKey] || this.routeCollection?.properties?.primary_profile_key || this.activeProfileKey;
+    if (targetKey && this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === targetKey)) {
+      this.selectProfile(targetKey);
     } else {
-      this.avatarRig.setProfile('adult');
+      this.updateHudMetrics();
     }
   }
 
-  rebuildScene() {
-    if (this.terrainMesh) this.scene.remove(this.terrainMesh);
-    if (this.roadMesh) this.scene.remove(this.roadMesh);
-    if (this.centerlineMesh) this.scene.remove(this.centerlineMesh);
-    if (this.avatarMesh) this.scene.remove(this.avatarMesh);
-    if (this.needlePin) this.scene.remove(this.needlePin);
+  clearSceneObjects() {
+    const removeAndDispose = (mesh) => {
+      if (!mesh) return;
+      this.scene.remove(mesh);
+      disposeHierarchy(mesh);
+    };
 
-    while (this.buildingsGroup.children.length) this.buildingsGroup.remove(this.buildingsGroup.children[0]);
-    while (this.treesGroup.children.length) this.treesGroup.remove(this.treesGroup.children[0]);
-    while (this.pinsGroup.children.length) this.pinsGroup.remove(this.pinsGroup.children[0]);
+    removeAndDispose(this.terrainMesh);
+    this.terrainMesh = null;
+    removeAndDispose(this.roadMesh);
+    this.roadMesh = null;
+    removeAndDispose(this.centerlineMesh);
+    this.centerlineMesh = null;
+    removeAndDispose(this.glowTubeMesh);
+    this.glowTubeMesh = null;
+    removeAndDispose(this.pulseBeacon);
+    this.pulseBeacon = null;
+    removeAndDispose(this.avatarMesh);
+    this.avatarMesh = null;
+    removeAndDispose(this.needlePin);
+    this.needlePin = null;
+
+    const clearGroup = (group) => {
+      while (group.children.length) {
+        const child = group.children[0];
+        group.remove(child);
+        disposeHierarchy(child);
+      }
+    };
+
+    clearGroup(this.buildingsGroup);
+    clearGroup(this.treesGroup);
+    clearGroup(this.pinsGroup);
+    clearGroup(this.routeOverlayGroup);
+
+    const rigs = new Set(this.avatarRigs || []);
+    if (this.avatarRig) rigs.add(this.avatarRig);
+    rigs.forEach((rig) => {
+      if (rig && typeof rig.dispose === 'function') rig.dispose();
+    });
+    this.avatarRig = new KinematicAvatarRig(this.scene);
+    this.avatarRigs = [];
+  }
+
+  rebuildScene() {
+    this.clearSceneObjects();
+
+    if (!this.curve || this.scenePoints.length < 2) return;
 
     this.buildTerrain();
     this.buildClassyRoadRibbon();
@@ -364,26 +635,109 @@ class Studio3DApp {
     this.updateAvatarPosition();
   }
 
+  getTerrainElevationAt(x, z) {
+    if (!this.curve || !this.scenePoints.length) return 0.0;
+    const sampleSteps = 32;
+    let bestDistSq = Infinity;
+    let nearestY = this.scenePoints[0].y;
+    for (let s = 0; s <= sampleSteps; s++) {
+      const u = s / sampleSteps;
+      const spt = this.curve.getPointAt(u);
+      const distSq = (x - spt.x) * (x - spt.x) + (z - spt.z) * (z - spt.z);
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        nearestY = spt.y;
+      }
+    }
+    return nearestY;
+  }
+
   buildTerrain() {
+    if (!this.scenePoints.length) return;
     const box = new THREE.Box3().setFromPoints(this.scenePoints);
     const size = new THREE.Vector3();
     box.getSize(size);
     const center = new THREE.Vector3();
     box.getCenter(center);
 
-    const pad = Math.max(size.x, size.z) * 0.6 + 450;
-    const width = Math.max(size.x + pad * 2, 800);
-    const depth = Math.max(size.z + pad * 2, 800);
+    // Keep the WebGL ground close to the real route extent. The previous
+    // 60% + 500 m padding made short routes look lost in an empty ocean.
+    const pad = Math.max(80, Math.min(220, Math.max(size.x, size.z) * 0.18));
+    const width = Math.max(size.x + pad * 2, 260);
+    const depth = Math.max(size.z + pad * 2, 260);
 
-    const segments = 64;
+    const segments = 96;
     const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
     geo.rotateX(-Math.PI / 2);
+    geo.translate(center.x, 0, center.z);
 
-    const avgRouteY = this.scenePoints.reduce((acc, p) => acc + p.y, 0) / (this.scenePoints.length || 1);
-    geo.translate(center.x, avgRouteY - 0.5, center.z);
+    // 3D Topographic Elevation Surface Interpolation
+    const posAttr = geo.attributes.position;
+    const count = posAttr.count;
 
-    // Create Real OpenStreetMap / Carto Light Tile Canvas Texture
-    const basemapTexture = this.createBasemapCanvasTexture(width, depth, center);
+    const routeSamples = [];
+    const sampleSteps = Math.max(30, Math.min(180, this.scenePoints.length * 2));
+    for (let s = 0; s <= sampleSteps; s++) {
+      const u = s / sampleSteps;
+      const spt = this.curve.getPointAt(u);
+      routeSamples.push(spt);
+    }
+
+    // Topographic regional gradient plane
+    let sumX = 0, sumZ = 0, sumY = 0, sumXX = 0, sumZZ = 0, sumXZ = 0, sumXY = 0, sumZY = 0;
+    const n = this.scenePoints.length;
+    for (let p of this.scenePoints) {
+      const x = p.x - center.x;
+      const z = p.z - center.z;
+      const y = p.y;
+      sumX += x; sumZ += z; sumY += y;
+      sumXX += x * x; sumZZ += z * z; sumXZ += x * z;
+      sumXY += x * y; sumZY += z * y;
+    }
+    const denom = (sumXX * sumZZ - sumXZ * sumXZ);
+    const gradX = Math.abs(denom) > 1e-4 ? (sumXY * sumZZ - sumZY * sumXZ) / denom : 0;
+    const gradZ = Math.abs(denom) > 1e-4 ? (sumZY * sumXX - sumXY * sumXZ) / denom : 0;
+    const meanY = sumY / Math.max(1, n);
+
+    for (let i = 0; i < count; i++) {
+      const vx = posAttr.getX(i);
+      const vz = posAttr.getZ(i);
+
+      let weightedY = 0;
+      let totalWeight = 0;
+      let minDist = Infinity;
+
+      for (let s of routeSamples) {
+        const dx = vx - s.x;
+        const dz = vz - s.z;
+        const distSq = dx * dx + dz * dz;
+        const dist = Math.sqrt(distSq);
+        if (dist < minDist) minDist = dist;
+
+        const w = 1.0 / Math.pow(Math.max(10.0, dist), 1.6);
+        weightedY += s.y * w;
+        totalWeight += w;
+      }
+
+      const localRouteEle = totalWeight > 0 ? (weightedY / totalWeight) : meanY;
+      const regionalEle = meanY + gradX * (vx - center.x) + gradZ * (vz - center.z);
+
+      const corridorRadius = 140.0;
+      const blend = Math.max(0.0, Math.min(1.0, (minDist - 25.0) / corridorRadius));
+      const finalY = (1.0 - blend) * localRouteEle + blend * regionalEle - 0.4;
+
+      posAttr.setY(i, finalY);
+    }
+
+    posAttr.needsUpdate = true;
+    geo.computeVertexNormals();
+
+    this.terrainWidth = width;
+    this.terrainDepth = depth;
+    this.terrainCenter = center;
+
+    // Load real Slippy Map basemap tiles (OSM, Satellite, Carto)
+    const basemapTexture = this.loadRealBasemapTiles(width, depth, center);
 
     const mat = new THREE.MeshStandardMaterial({
       map: basemapTexture,
@@ -393,99 +747,206 @@ class Studio3DApp {
 
     this.terrainMesh = new THREE.Mesh(geo, mat);
     this.terrainMesh.receiveShadow = true;
+    this.terrainMesh.visible = this.showBasemap;
     this.scene.add(this.terrainMesh);
   }
 
-  createBasemapCanvasTexture(width, depth, center) {
+  updateBasemapTexture() {
+    if (!this.terrainMesh || !this.terrainWidth) return;
+    if (this.terrainMesh.material && this.terrainMesh.material.map) {
+      this.terrainMesh.material.map.dispose();
+    }
+    const newTex = this.loadRealBasemapTiles(this.terrainWidth, this.terrainDepth, this.terrainCenter);
+    this.terrainMesh.material.map = newTex;
+    this.terrainMesh.material.needsUpdate = true;
+  }
+
+  loadRealBasemapTiles(width, depth, center) {
+    const textureResolution = 4096;
     const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 1024;
+    canvas.width = textureResolution;
+    canvas.height = textureResolution;
     const ctx = canvas.getContext('2d');
 
-    // Clean Cartographic Light Background
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(0, 0, 1024, 1024);
-
-    // Grid parcel blocks
-    ctx.fillStyle = '#e2e8f0';
-    for (let x = 40; x < 1024; x += 120) {
-      for (let y = 40; y < 1024; y += 120) {
-        ctx.fillRect(x, y, 90, 90);
-      }
-    }
-
-    // Green urban park textures
-    ctx.fillStyle = 'rgba(16, 185, 129, 0.18)';
-    ctx.beginPath();
-    ctx.arc(320, 320, 180, 0, Math.PI * 2);
-    ctx.arc(750, 680, 220, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Road grid network lines
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 14;
-    for (let x = 0; x <= 1024; x += 120) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 1024);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= 1024; y += 120) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(1024, y);
-      ctx.stroke();
-    }
+    // Background color based on provider; no fake grid is drawn while tiles load.
+    const isDark = this.basemapProvider === 'dark';
+    const isSat = this.basemapProvider === 'satellite';
+    ctx.fillStyle = isDark ? '#0f172a' : (isSat ? '#1e293b' : '#f8fafc');
+    ctx.fillRect(0, 0, textureResolution, textureResolution);
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.ClampToEdgeWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    if (this.renderer?.capabilities) {
+      tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    }
+
+    if (!this.originLonLat) return tex;
+
+    const latRad = (this.originLonLat.lat * Math.PI) / 180.0;
+    const mPerDegLon = Math.max(1.0, 111320.0 * Math.cos(latRad));
+    const mPerDegLat = 110574.0;
+
+    const minLon = this.originLonLat.lon + (center.x - width / 2) / mPerDegLon;
+    const maxLon = this.originLonLat.lon + (center.x + width / 2) / mPerDegLon;
+    const minLat = this.originLonLat.lat - (center.z + depth / 2) / mPerDegLat;
+    const maxLat = this.originLonLat.lat - (center.z - depth / 2) / mPerDegLat;
+
+    // Pick zoom from target ground resolution instead of a fixed low-detail zoom.
+    const maxDimensionMeters = Math.max(width, depth, 260);
+    const targetPixels = 4096;
+    const metersPerPixel = maxDimensionMeters / targetPixels;
+    let zoom = Math.floor(Math.log2((156543.03392 * Math.max(0.1, Math.cos(latRad))) / metersPerPixel));
+    zoom = Math.max(13, Math.min(19, Number.isFinite(zoom) ? zoom : 16));
+
+    const numTiles = Math.pow(2, zoom);
+    const lon2tile = (lon) => Math.max(0, Math.min(numTiles - 1, Math.floor(((lon + 180) / 360) * numTiles)));
+    const lat2tile = (lat) => {
+      const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
+      const rad = (clampedLat * Math.PI) / 180.0;
+      const val = (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2;
+      return Math.max(0, Math.min(numTiles - 1, Math.floor(val * numTiles)));
+    };
+    const tile2lon = (x, z) => (x / Math.pow(2, z)) * 360 - 180;
+    const tile2lat = (y, z) => {
+      const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
+      return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    };
+
+    const minTileX = lon2tile(minLon);
+    const maxTileX = lon2tile(maxLon);
+    const minTileY = lat2tile(maxLat);
+    const maxTileY = lat2tile(minLat);
+
+    // A maximum 6x6 tile window prevents tile storms while retaining detail.
+    const spanX = Math.min(5, Math.max(0, maxTileX - minTileX));
+    const spanY = Math.min(5, Math.max(0, maxTileY - minTileY));
+
+    const getTileUrl = (x, y, z) => {
+      if (this.basemapProvider === 'satellite') {
+        return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+      } else if (this.basemapProvider === 'voyager') {
+        return `https://basemaps.cartocdn.com/rastertiles/voyager/${z}/${x}/${y}.png`;
+      } else if (this.basemapProvider === 'dark') {
+        return `https://basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}.png`;
+      }
+      return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+    };
+
+    const lonSpan = maxLon - minLon || 1.0;
+    const latSpan = maxLat - minLat || 1.0;
+
+    for (let tx = minTileX; tx <= minTileX + spanX; tx++) {
+      for (let ty = minTileY; ty <= minTileY + spanY; ty++) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const tMinLon = tile2lon(tx, zoom);
+          const tMaxLon = tile2lon(tx + 1, zoom);
+          const tMaxLat = tile2lat(ty, zoom);
+          const tMinLat = tile2lat(ty + 1, zoom);
+
+          const px0 = ((tMinLon - minLon) / lonSpan) * textureResolution;
+          const px1 = ((tMaxLon - minLon) / lonSpan) * textureResolution;
+          const py0 = ((maxLat - tMaxLat) / latSpan) * textureResolution;
+          const py1 = ((maxLat - tMinLat) / latSpan) * textureResolution;
+
+          ctx.drawImage(img, px0, py0, Math.max(1, px1 - px0), Math.max(1, py1 - py0));
+          tex.needsUpdate = true;
+        };
+        img.onerror = () => {
+          // Fallback gracefully on tile fetch error
+        };
+        img.src = getTileUrl(tx, ty, zoom);
+      }
+    }
+
     return tex;
   }
 
   buildClassyRoadRibbon() {
     if (!this.curve || this.scenePoints.length < 2) return;
 
-    const tubularSegments = Math.max(120, this.scenePoints.length * 8);
-    const roadWidth = 8.5;
+    const tubularSegments = Math.max(160, this.scenePoints.length * 8);
+    const roadWidth = 7.5;
+    const profColorHex = this.routeData?.properties?.profile_color || '#0ea5e9';
+    const profColor = new THREE.Color(profColorHex);
 
-    // Road surface geometry
+    // Layer 1: Road Asphalt Base (Floating +0.8m above ground to eliminate clipping)
     const roadGeo = new THREE.TubeGeometry(this.curve, tubularSegments, roadWidth * 0.5, 6, false);
-    roadGeo.scale(1.0, 0.15, 1.0); // Flatten to asphalt ribbon
+    roadGeo.scale(1.0, 0.12, 1.0);
 
     const roadMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b, // Refined dark slate asphalt
-      roughness: 0.8,
-      metalness: 0.1,
+      color: 0x1e293b,
+      roughness: 0.7,
+      metalness: 0.15,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -2,
     });
 
     this.roadMesh = new THREE.Mesh(roadGeo, roadMat);
+    this.roadMesh.position.y += 0.8;
     this.roadMesh.receiveShadow = true;
+    this.roadMesh.renderOrder = 8;
     this.scene.add(this.roadMesh);
 
-    // Centerline dashed marking
-    const centerGeo = new THREE.TubeGeometry(this.curve, tubularSegments, 0.45, 4, false);
-    centerGeo.scale(1.0, 0.18, 1.0);
+    // Layer 2: Glowing Outer Neon Ribbon (+1.2m)
+    const glowGeo = new THREE.TubeGeometry(this.curve, tubularSegments, 1.2, 6, false);
+    glowGeo.scale(1.0, 0.2, 1.0);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: profColor,
+      transparent: true,
+      opacity: 0.35,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
+    });
+    this.glowTubeMesh = new THREE.Mesh(glowGeo, glowMat);
+    this.glowTubeMesh.position.y += 1.1;
+    this.glowTubeMesh.renderOrder = 9;
+    this.scene.add(this.glowTubeMesh);
+
+    // Layer 3: Vibrant Core Centerline Neon Beam (+1.5m)
+    const centerGeo = new THREE.TubeGeometry(this.curve, tubularSegments, 0.45, 6, false);
+    centerGeo.scale(1.0, 0.25, 1.0);
     const centerMat = new THREE.MeshStandardMaterial({
-      color: 0xf8fafc,
-      roughness: 0.3,
+      color: 0xffffff,
+      emissive: profColor,
+      emissiveIntensity: 0.95,
+      roughness: 0.15,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -6,
     });
     this.centerlineMesh = new THREE.Mesh(centerGeo, centerMat);
-    this.centerlineMesh.position.y += 0.15;
+    this.centerlineMesh.position.y += 1.4;
+    this.centerlineMesh.renderOrder = 10;
     this.scene.add(this.centerlineMesh);
+
+    // Layer 4: Dynamic Moving Pulse Light Beacon
+    const beaconGeo = new THREE.SphereGeometry(1.6, 16, 16);
+    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9 });
+    this.pulseBeacon = new THREE.Mesh(beaconGeo, beaconMat);
+    this.pulseBeacon.position.y += 1.8;
+    this.scene.add(this.pulseBeacon);
   }
 
   buildPinMarkers() {
     if (!this.scenePoints.length) return;
-    const pStart = this.scenePoints[0];
-    const pEnd = this.scenePoints[this.scenePoints.length - 1];
+    const pStart = this.scenePoints[0].clone();
+    pStart.y += 1.5;
+    const pEnd = this.scenePoints[this.scenePoints.length - 1].clone();
+    pEnd.y += 1.5;
 
-    const createPin = (colorHex, label) => {
+    const createPin = (colorHex) => {
       const pinGroup = new THREE.Group();
       const coneGeo = new THREE.ConeGeometry(3.5, 12, 16);
       coneGeo.rotateX(Math.PI);
-      const coneMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3 });
+      const coneMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3, emissive: colorHex, emissiveIntensity: 0.2 });
       const cone = new THREE.Mesh(coneGeo, coneMat);
       cone.position.y = 12;
       cone.castShadow = true;
@@ -499,38 +960,64 @@ class Studio3DApp {
       return pinGroup;
     };
 
-    const pinA = createPin(0x059669, 'Origin A');
+    const pinA = createPin(0x059669);
     pinA.position.copy(pStart);
     this.pinsGroup.add(pinA);
 
-    const pinB = createPin(0xdc2626, 'Destination B');
+    const pinB = createPin(0xdc2626);
     pinB.position.copy(pEnd);
     this.pinsGroup.add(pinB);
   }
 
   buildAvatar() {
-    const group = new THREE.Group();
-    const orbGeo = new THREE.SphereGeometry(2.0, 16, 16);
-    const orbMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.2 });
-    const orb = new THREE.Mesh(orbGeo, orbMat);
-    orb.position.y = 4;
-    group.add(orb);
-    this.avatarMesh = group;
-    this.scene.add(this.avatarMesh);
+    const activeKey = this.activeProfileKey || this.routeData?.properties?.profile_key || 'adult';
+    this.avatarRig.setProfile(activeKey);
+    this.avatarRigs = [this.avatarRig];
+
+    this.routeVisuals.forEach((visual) => {
+      if (visual.key === activeKey) {
+        visual.rig = this.avatarRig;
+        return;
+      }
+      const rig = new KinematicAvatarRig(this.scene);
+      rig.setProfile(visual.key);
+      visual.rig = rig;
+      this.avatarRigs.push(rig);
+    });
+    this.buildRouteOverlays();
+    this.applyProfileAppearance();
+  }
+
+  buildRouteOverlays() {
+    while (this.routeOverlayGroup.children.length) {
+      const child = this.routeOverlayGroup.children[0];
+      this.routeOverlayGroup.remove(child);
+      disposeHierarchy(child);
+    }
+    this.routeVisuals.forEach((visual) => {
+      if (visual.key === this.activeProfileKey || visual.points.length < 2) return;
+      const color = this.profileColor(visual.feature);
+      const geometry = new THREE.BufferGeometry().setFromPoints(visual.points);
+      const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.72 });
+      const line = new THREE.Line(geometry, material);
+      line.userData.profileKey = visual.key;
+      this.routeOverlayGroup.add(line);
+    });
   }
 
   buildUrbanEnvironment() {
     const buildings = this.routeData?.properties?.corridor_buildings || [];
 
-    // Architectural Facade Materials (Modern Light Theme)
     const bldMats = [
-      new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.75, metalness: 0.05 }),
-      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.7, metalness: 0.1 }),
-      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.65, metalness: 0.15 }),
-      new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.8, metalness: 0.08 }),
+      new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7, metalness: 0.08 }),
+      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.65, metalness: 0.12 }),
+      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.6, metalness: 0.18 }),
+      new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.75, metalness: 0.1 }),
+      new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8, metalness: 0.05 }),
     ];
 
     if (buildings.length > 0) {
+      // 1. Render real OSM polygon buildings
       buildings.forEach((bld, idx) => {
         const coords = bld.coordinates || [];
         if (coords.length < 3) return;
@@ -544,7 +1031,6 @@ class Studio3DApp {
         });
         avgY /= scenePts.length;
 
-        // Shape in local XZ coordinates
         const shape = new THREE.Shape();
         shape.moveTo(scenePts[0].x, -scenePts[0].z);
         for (let i = 1; i < scenePts.length; i++) {
@@ -567,35 +1053,11 @@ class Studio3DApp {
 
         const mat = bldMats[idx % bldMats.length];
         const bldMesh = new THREE.Mesh(bldGeo, mat);
-        // Base elevation strictly matched to the road section elevation
         bldMesh.position.y = avgY;
         bldMesh.castShadow = true;
         bldMesh.receiveShadow = true;
         this.buildingsGroup.add(bldMesh);
       });
-    }
-
-    // Street trees along sidewalk matched to road elevation
-    const treeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.85 });
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
-    const step = 8;
-    for (let i = 0; i < this.scenePoints.length - 1; i += step) {
-      const pt = this.scenePoints[i];
-      const tangent = this.curve.getTangentAt(i / this.scenePoints.length);
-      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-
-      const tree = new THREE.Group();
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 6, 6), trunkMat);
-      trunk.position.y = 3;
-      const foliage = new THREE.Mesh(new THREE.DodecahedronGeometry(3.8, 0), treeMat);
-      foliage.position.y = 6.5;
-      tree.add(trunk);
-      tree.add(foliage);
-      // Place tree right on the road segment's elevation pt.y
-      const treePos = pt.clone().add(normal.clone().multiplyScalar(12));
-      tree.position.copy(treePos);
-      tree.castShadow = true;
-      this.treesGroup.add(tree);
     }
   }
 
@@ -607,44 +1069,62 @@ class Studio3DApp {
   }
 
   updateAvatarPosition() {
-    if (!this.curve) return;
-    const pt = this.curve.getPointAt(this.progress);
-    const tangent = this.curve.getTangentAt(this.progress).normalize();
+    if (!this.curve || this.scenePoints.length < 2) return;
+    const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
+    const pt = this.curve.getPointAt(safeProgress);
+    const tangent = this.curve.getTangentAt(safeProgress).normalize();
 
-    if (this.avatarMesh) {
-      this.avatarMesh.position.copy(pt);
-      this.avatarMesh.lookAt(pt.clone().add(tangent));
-    }
+    const animDelta = this.isPlaying ? 0.016 * Math.max(0.2, this.playbackSpeed) : 0.0;
+    this.routeVisuals.forEach((visual) => {
+      if (!visual.rig || !visual.curve) return;
+      const visualPt = visual.key === this.activeProfileKey ? pt : visual.curve.getPointAt(safeProgress);
+      const visualTangent = visual.key === this.activeProfileKey
+        ? tangent
+        : visual.curve.getTangentAt(safeProgress).normalize();
+      visual.rig.root.position.copy(visualPt);
+      visual.rig.root.position.y += 0.2;
+      const targetYaw = Math.atan2(visualTangent.x, visualTangent.z);
+      let curYaw = visual.rig.root.rotation.y;
+      let diff = targetYaw - curYaw;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      visual.rig.root.rotation.y = curYaw + diff * 0.35;
+      const props = visual.feature?.properties || {};
+      const spd = Number(props.base_speed_kmh || 5.0);
+      visual.rig.updateKinematics(animDelta, spd, visualTangent, 0, false);
+    });
 
-    if (this.avatarRig && this.avatarRig.root) {
-      this.avatarRig.root.position.copy(pt);
-      this.avatarRig.root.lookAt(pt.clone().add(tangent));
-      const spd = this.routeData?.properties?.base_speed_kmh || 12.0;
-      this.avatarRig.updateKinematics(0.016, spd, tangent, 0, false);
+    if (this.pulseBeacon) {
+      const pulseProg = (safeProgress + (this.clock ? this.clock.getElapsedTime() * 0.1 : 0.0)) % 1.0;
+      const bPt = this.curve.getPointAt(pulseProg);
+      this.pulseBeacon.position.copy(bPt);
+      this.pulseBeacon.position.y += 1.8;
     }
 
     if (this.voiceSystem) {
-      this.voiceSystem.update(this.progress);
+      this.voiceSystem.update(safeProgress);
     }
 
     if (this.elScrubber) {
-      this.elScrubber.value = (this.progress * 1000.0).toFixed(0);
+      this.elScrubber.value = (safeProgress * 1000.0).toFixed(0);
     }
     if (this.elNeedle) {
-      this.elNeedle.style.left = `${this.progress * 100}%`;
+      this.elNeedle.style.left = `${safeProgress * 100}%`;
     }
 
-    // Camera following right along the road centerline
+    this.updateMetricLiveReadout();
+
+    // Camera following modes
     if (this.cameraMode === 'chase') {
-      const offset = tangent.clone().multiplyScalar(-38).add(new THREE.Vector3(0, 18, 0));
+      const offset = tangent.clone().multiplyScalar(-40).add(new THREE.Vector3(0, 20, 0));
       const targetPos = pt.clone().add(offset);
       this.camera.position.lerp(targetPos, 0.08);
       this.controls.target.lerp(pt.clone().add(new THREE.Vector3(0, 3, 0)), 0.1);
     } else if (this.cameraMode === 'pov') {
-      this.camera.position.copy(pt.clone().add(new THREE.Vector3(0, 4.5, 0)));
+      this.camera.position.copy(pt.clone().add(new THREE.Vector3(0, 5.0, 0)));
       this.controls.target.copy(pt.clone().add(tangent.clone().multiplyScalar(100)));
     } else if (this.cameraMode === 'tour') {
-      const tourOffset = new THREE.Vector3(Math.sin(this.progress * Math.PI * 4) * 60, 40, Math.cos(this.progress * Math.PI * 4) * 60);
+      const tourOffset = new THREE.Vector3(Math.sin(safeProgress * Math.PI * 4) * 65, 45, Math.cos(safeProgress * Math.PI * 4) * 65);
       this.camera.position.lerp(pt.clone().add(tourOffset), 0.05);
       this.controls.target.lerp(pt, 0.08);
     }
@@ -652,10 +1132,52 @@ class Studio3DApp {
     this.updateRadarMap();
   }
 
+  updateMetricLiveReadout() {
+    if (!this.elMetricLiveVal) return;
+    if (!this.routeData) {
+      this.elMetricLiveVal.textContent = '—';
+      return;
+    }
+    const coords = this.routeData?.geometry?.coordinates || [];
+    const profList = this.routeData?.properties?.elevation_profile || [];
+    if (coords.length === 0) {
+      this.elMetricLiveVal.textContent = '—';
+      return;
+    }
+    if (coords.length === 1) {
+      const eleVal = coords[0][2] !== undefined ? coords[0][2] : 0.0;
+      this.elMetricLiveVal.textContent = `${eleVal.toFixed(1)} m`;
+      return;
+    }
+
+    const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
+    const idx = Math.min(coords.length - 1, Math.max(0, Math.floor(safeProgress * coords.length)));
+    const pData = profList[idx] || {};
+
+    if (this.activeChartMetric === 'slope') {
+      const slopeVal = pData.slope_pct !== undefined ? pData.slope_pct : 0.0;
+      this.elMetricLiveVal.textContent = `${slopeVal >= 0 ? '+' : ''}${slopeVal.toFixed(1)}%`;
+      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Slope: ';
+    } else if (this.activeChartMetric === 'lst') {
+      const lstVal = 24.0 + (pData.thermal_comfort !== undefined ? (1.0 - pData.thermal_comfort) * 16.0 : 6.0);
+      this.elMetricLiveVal.textContent = `${lstVal.toFixed(1)} °C`;
+      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Heat (LST): ';
+    } else if (this.activeChartMetric === 'greenery') {
+      const greenVal = pData.ndvi !== undefined ? pData.ndvi * 100.0 : 65.0;
+      this.elMetricLiveVal.textContent = `${greenVal.toFixed(0)}%`;
+      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Greenery: ';
+    } else {
+      const eleVal = coords[idx] && coords[idx][2] !== undefined ? coords[idx][2] : 0.0;
+      this.elMetricLiveVal.textContent = `${eleVal.toFixed(1)} m`;
+      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Elevation: ';
+    }
+  }
+
   updateRadarMap() {
-    if (!this.radarCtx || !this.curve || !this.scenePoints.length) return;
+    if (!this.radarCtx) return;
     const ctx = this.radarCtx;
     ctx.clearRect(0, 0, 130, 130);
+    if (!this.curve || !this.scenePoints.length) return;
 
     const box = new THREE.Box3().setFromPoints(this.scenePoints);
     const size = new THREE.Vector3();
@@ -669,10 +1191,9 @@ class Studio3DApp {
       return { x: rx, y: ry };
     };
 
-    // Draw route path
     ctx.beginPath();
-    ctx.strokeStyle = '#0284c7';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = this.routeData?.properties?.profile_color || '#0284c7';
+    ctx.lineWidth = 3.5;
     this.scenePoints.forEach((p, i) => {
       const r = toRadar(p);
       if (i === 0) ctx.moveTo(r.x, r.y);
@@ -680,17 +1201,26 @@ class Studio3DApp {
     });
     ctx.stroke();
 
-    // Draw avatar current position
-    const pt = this.curve.getPointAt(this.progress);
-    const av = toRadar(pt);
-    ctx.beginPath();
-    ctx.fillStyle = '#ef4444';
-    ctx.arc(av.x, av.y, 4, 0, Math.PI * 2);
-    ctx.fill();
+    if (this.scenePoints.length >= 2 && this.curve) {
+      const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
+      const pt = this.curve.getPointAt(safeProgress);
+      const av = toRadar(pt);
+      ctx.beginPath();
+      ctx.fillStyle = '#ef4444';
+      ctx.arc(av.x, av.y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   snapToNorth() {
-    this.controls.reset();
+    if (!this.controls) return;
+    const target = this.controls.target.clone();
+    const offset = this.camera.position.clone().sub(target);
+    const radius = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+    const distance = Math.max(radius, 60);
+    this.camera.position.set(target.x, target.y + Math.max(offset.y, 40), target.z + distance);
+    this.controls.target.copy(target);
+    this.controls.update();
   }
 
   takeSnapshot() {
@@ -703,28 +1233,35 @@ class Studio3DApp {
   }
 
   toggleRecordVideo() {
+    const btnRecord = document.getElementById('btnRecord');
     if (this.isRecording) {
-      this.mediaRecorder.stop();
+      if (this.mediaRecorder) {
+        this.mediaRecorder.stop();
+      }
       this.isRecording = false;
-      document.getElementById('btnRecord').style.color = '';
+      if (btnRecord) btnRecord.style.color = '';
     } else {
       this.recordedChunks = [];
-      const stream = this.renderer.domElement.captureStream(60);
-      this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
-      this.mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.recordedChunks.push(e.data);
-      };
-      this.mediaRecorder.onstop = () => {
-        const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `02Route3D_${new Date().toISOString().slice(0, 19)}.webm`;
-        a.click();
-      };
-      this.mediaRecorder.start();
-      this.isRecording = true;
-      document.getElementById('btnRecord').style.color = '#ef4444';
+      try {
+        const stream = this.renderer.domElement.captureStream(60);
+        this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+        this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+        };
+        this.mediaRecorder.onstop = () => {
+          const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `02Route3D_${new Date().toISOString().slice(0, 19)}.webm`;
+          a.click();
+        };
+        this.mediaRecorder.start();
+        this.isRecording = true;
+        if (btnRecord) btnRecord.style.color = '#ef4444';
+      } catch (err) {
+        console.warn('Video recording error:', err);
+      }
     }
   }
 
@@ -736,44 +1273,83 @@ class Studio3DApp {
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    const maxDim = Math.max(size.x, size.z, 100);
-    this.camera.position.set(center.x, maxDim * 0.85, center.z + maxDim * 0.95);
+    const maxDim = Math.max(size.x, size.z, 120);
+    this.camera.position.set(center.x, center.y + maxDim * 0.9, center.z + maxDim * 1.0);
     this.controls.target.copy(center);
     this.controls.update();
+    if (this.controls.saveState) {
+      this.controls.saveState();
+    }
   }
 
   renderProfileChart() {
-    if (!this.elSvg || !this.routeData) return;
+    if (!this.elSvg) return;
+    if (!this.routeData) {
+      this.elSvg.innerHTML = '';
+      return;
+    }
     const coords = this.routeData?.geometry?.coordinates || [];
-    if (coords.length < 2) return;
+    const profList = this.routeData?.properties?.elevation_profile || [];
+    if (coords.length < 2) {
+      this.elSvg.innerHTML = '';
+      return;
+    }
 
-    const width = this.elSvg.clientWidth || 400;
-    const height = this.elSvg.clientHeight || 48;
+    const width = Math.max(10, this.elSvg.clientWidth || 400);
+    const height = Math.max(10, this.elSvg.clientHeight || 52);
 
-    const elevations = coords.map((c) => c[2] || 0.0);
-    const minEle = Math.min(...elevations);
-    const maxEle = Math.max(...elevations);
-    const eleRange = Math.max(1, maxEle - minEle);
+    let values = [];
+    let strokeColor = '#0284c7';
+    let gradColor = '#0284c7';
 
-    let pathD = '';
-    const points = coords.map((c, i) => {
-      const x = (i / (coords.length - 1)) * width;
-      const y = height - 8 - (((c[2] || 0.0) - minEle) / eleRange) * (height - 16);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    if (this.activeChartMetric === 'slope') {
+      values = coords.map((_, i) => (profList[i] && profList[i].slope_pct !== undefined ? profList[i].slope_pct : 0.0));
+      strokeColor = '#f59e0b';
+      gradColor = '#f59e0b';
+    } else if (this.activeChartMetric === 'lst') {
+      values = coords.map((_, i) => 24.0 + (profList[i] && profList[i].thermal_comfort !== undefined ? (1.0 - profList[i].thermal_comfort) * 16.0 : 6.0));
+      strokeColor = '#ef4444';
+      gradColor = '#ef4444';
+    } else if (this.activeChartMetric === 'greenery') {
+      values = coords.map((_, i) => (profList[i] && profList[i].ndvi !== undefined ? profList[i].ndvi * 100.0 : 65.0));
+      strokeColor = '#10b981';
+      gradColor = '#10b981';
+    } else {
+      values = coords.map((c) => (c && c[2] !== undefined ? c[2] : 0.0));
+      strokeColor = this.routeData?.properties?.profile_color || '#0284c7';
+      gradColor = strokeColor;
+    }
+
+    if (values.length < 2) {
+      this.elSvg.innerHTML = '';
+      return;
+    }
+
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    const valRange = Math.max(0.001, maxVal - minVal);
+    const count = values.length;
+    const denom = Math.max(1, count - 1);
+
+    const points = values.map((v, i) => {
+      const x = (i / denom) * width;
+      const y = height - 8 - ((v - minVal) / valRange) * (height - 16);
+      const safeY = isNaN(y) ? height / 2 : y;
+      return `${x.toFixed(1)},${safeY.toFixed(1)}`;
     });
 
-    pathD = `M ${points[0]} ` + points.slice(1).map((p) => `L ${p}`).join(' ');
-    const fillD = `${pathD} L ${width},${height} L 0,${height} Z`;
+    const pathD = `M ${points[0]} ` + points.slice(1).map((p) => `L ${p}`).join(' ');
+    const fillD = `${pathD} L ${width.toFixed(1)},${height.toFixed(1)} L 0,${height.toFixed(1)} Z`;
 
     this.elSvg.innerHTML = `
       <defs>
         <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#0284c7" stop-opacity="0.35"/>
-          <stop offset="100%" stop-color="#0284c7" stop-opacity="0.0"/>
+          <stop offset="0%" stop-color="${gradColor}" stop-opacity="0.38"/>
+          <stop offset="100%" stop-color="${gradColor}" stop-opacity="0.0"/>
         </linearGradient>
       </defs>
       <path d="${fillD}" fill="url(#chartGrad)"/>
-      <path d="${pathD}" fill="none" stroke="#0284c7" stroke-width="2"/>
+      <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.5"/>
     `;
   }
 
@@ -781,7 +1357,7 @@ class Studio3DApp {
     requestAnimationFrame(this.animate);
     const delta = this.clock.getDelta();
 
-    if (this.isPlaying && this.curve) {
+    if (this.isPlaying && this.curve && this.scenePoints.length >= 2) {
       this.progress += delta * 0.04 * this.playbackSpeed;
       if (this.progress > 1.0) {
         this.progress = 0.0;
@@ -789,12 +1365,18 @@ class Studio3DApp {
       this.updateAvatarPosition();
     }
 
-    if (this.cameraMode === 'orbit') {
+    if (this.pulseBeacon && this.curve && this.scenePoints.length >= 2) {
+      const beaconProg = ((this.clock ? this.clock.getElapsedTime() * 0.15 : 0.0)) % 1.0;
+      const bPt = this.curve.getPointAt(beaconProg);
+      this.pulseBeacon.position.copy(bPt);
+      this.pulseBeacon.position.y += 1.8;
+    }
+
+    if (this.cameraMode === 'orbit' && this.controls.enabled) {
       this.controls.update();
     }
 
-    // Sync compass rotation
-    if (this.compassRose) {
+    if (this.compassRose && this.controls) {
       const angle = this.controls.getAzimuthalAngle();
       this.compassRose.style.transform = `rotate(${angle}rad)`;
     }
@@ -811,7 +1393,6 @@ window.setRouteData = function (geojsonData) {
   }
 };
 
-// Auto-load latest route from data/current_route.json on browser startup
 fetch('data/current_route.json')
   .then((res) => (res.ok ? res.json() : null))
   .then((data) => {

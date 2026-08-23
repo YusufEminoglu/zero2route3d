@@ -188,6 +188,132 @@ html, body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
+/* QGIS-matched route/profile layer legend */
+.route-layer-panel {
+  top: 166px;
+  left: 14px;
+  width: 268px;
+  max-height: min(43vh, 420px);
+  padding: 11px;
+  overflow: hidden;
+}
+
+.layer-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.45px;
+}
+
+.layer-count {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  text-align: center;
+  font-size: 10px;
+}
+
+.layer-panel-help {
+  margin: 5px 0 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(min(43vh, 420px) - 76px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.layer-row {
+  display: grid;
+  grid-template-columns: 23px minmax(0, 1fr) 54px 18px;
+  gap: 6px;
+  align-items: center;
+  min-height: 31px;
+  padding: 5px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
+  cursor: pointer;
+}
+
+.layer-row:hover,
+.layer-row.active {
+  border-color: #7dd3fc;
+  background: #f0f9ff;
+}
+
+.layer-row.selected {
+  box-shadow: inset 3px 0 0 var(--layer-color, #0284c7);
+}
+
+.layer-toggle {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.layer-toggle.on {
+  border-color: var(--layer-color, #0284c7);
+  background: var(--layer-color, #0284c7);
+  color: #ffffff;
+}
+
+.layer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.layer-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.layer-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--layer-color, #0284c7);
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px var(--layer-color, #0284c7);
+}
+
+.layer-opacity {
+  width: 54px;
+  accent-color: var(--layer-color, #0284c7);
+  cursor: ew-resize;
+}
+
+.layer-empty {
+  padding: 12px 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
 /* Right Toolbar: Clean Light Cards */
 .right-tools {
   top: 68px;
@@ -300,9 +426,109 @@ html, body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
 
+/* Basemap Provider Grid */
+.basemap-provider-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.bmap-btn {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.bmap-btn:hover {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.bmap-btn.active {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+  font-weight: 700;
+}
+
+/* Bottom Controls Multi-Row Layout */
+.bottom-controls {
+  bottom: 14px;
+  left: 14px;
+  right: 14px;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chart-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart-metric-selector {
+  display: flex;
+  align-items: center;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
+}
+
+.metric-btn {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.metric-btn:hover {
+  color: #0f172a;
+}
+
+.metric-btn.active {
+  background: #ffffff;
+  color: #0284c7;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.metric-readout {
+  font-size: 12px;
+  color: #475569;
+}
+
+.metric-readout b {
+  color: #0284c7;
+  font-weight: 700;
+}
+
+.player-scrubber-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .elevation-profile-chart {
   width: 100%;
-  height: 48px;
+  height: 52px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 6px;

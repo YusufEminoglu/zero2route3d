@@ -5,9 +5,8 @@ calculation, and Saaty consistency ratio (CR < 0.10) validation.
 """
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Sequence
 
 
 # Saaty Random Consistency Index (RI) table for matrix sizes 1..10

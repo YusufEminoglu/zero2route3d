@@ -4,9 +4,10 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from .kinematics import haversine_distance_2d
+from .input_validation import normalize_time_intervals
 from .mobility_profiles import MobilityProfile, get_profile
 from .routing_engine import RoutingEngine3D, Waypoint
 
@@ -61,13 +62,16 @@ class IsochroneEngine3D:
     ) -> IsochroneResult:
         """Propagate Dijkstra wavefront along 3D graph up to maximum time interval."""
         profile = get_profile(profile_key)
+        intervals_min = normalize_time_intervals(time_intervals_min)
+        if not intervals_min:
+            return IsochroneResult(origin, profile, [], 0)
         start_node = self.engine.find_nearest_node((origin.lon, origin.lat))
 
         if start_node is None or not self.engine.nodes:
             return IsochroneResult(origin, profile, [], 0)
 
-        max_cutoff_s = max(time_intervals_min) * 60.0
-        sorted_intervals_s = sorted([t * 60.0 for t in time_intervals_min])
+        max_cutoff_s = max(intervals_min) * 60.0
+        sorted_intervals_s = [t * 60.0 for t in intervals_min]
 
         # Dijkstra queue: (travel_time_seconds, node_id)
         pq: List[Tuple[float, int]] = [(0.0, start_node)]
@@ -93,11 +97,14 @@ class IsochroneEngine3D:
                     is_steps=meta.get("is_steps", False),
                     hierarchy_rank=meta.get("hierarchy", 4),
                 )
-                if math.isinf(cost):
+                if not math.isfinite(cost):
                     continue
 
-                spd_kmh = max(1.0, profile.base_speed_kmh * (1.0 - abs(slope_pct) * 0.02))
-                seg_time_s = seg_len / (spd_kmh * 1000.0 / 3600.0)
+                seg_time_s = profile.travel_time_seconds(
+                    seg_len,
+                    slope_pct=slope_pct,
+                    hierarchy_rank=meta.get("hierarchy", 4),
+                )
                 tentative_t = t_curr + seg_time_s
 
                 if tentative_t < min_times.get(v, float("inf")) and tentative_t <= max_cutoff_s:

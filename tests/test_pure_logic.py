@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import math
 from pathlib import Path
 
 from zero2route3d.core.accessibility_equity import (
@@ -12,8 +13,14 @@ from zero2route3d.core.accessibility_equity import (
 )
 from zero2route3d.core.ahp_engine import AHPEngine
 from zero2route3d.core.environmental_raster import EnvironmentalSurfaceSampler
-from zero2route3d.core.evacuation import EvacuationRouter
+from zero2route3d.core.evacuation import EvacuationRouter, EvacuationRoutingError
 from zero2route3d.core.html_bundler import StandaloneHtmlBundler
+from zero2route3d.core.input_validation import (
+    deduplicate_adjacent_coordinates,
+    normalize_bbox,
+    normalize_time_intervals,
+    validate_waypoint_coordinates,
+)
 from zero2route3d.core.isochrone_engine import IsochroneEngine3D
 from zero2route3d.core.kinematics import (
     aerodynamic_drag_power,
@@ -33,16 +40,13 @@ from zero2route3d.core.map_matching_3d import GPXPoint, HMMMapMatcher3D
 from zero2route3d.core.micro_elevation import (
     BicubicSurfaceInterpolator,
     IDWSurfaceInterpolator,
-    MicroElevationEngine,
 )
 from zero2route3d.core.mobility_profiles import (
-    PROFILES,
-    MobilityProfile,
     get_profile,
     list_profile_keys,
 )
 from zero2route3d.core.multimodal import MultiModalRouter
-from zero2route3d.core.network_source import NetworkSourceManager
+from zero2route3d.core.network_source import NetworkSourceError, NetworkSourceManager, RoadSegment
 from zero2route3d.core.pareto_router import ParetoMultiObjectiveRouter
 from zero2route3d.core.profile_dxf import export_route_to_dxf_3d
 from zero2route3d.core.profile_stats import (
@@ -52,10 +56,29 @@ from zero2route3d.core.profile_stats import (
     smooth_elevation_series,
 )
 from zero2route3d.core.qml_generator import generate_route_qml_style
-from zero2route3d.core.report_generator import generate_analytical_report_html
-from zero2route3d.core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
-from zero2route3d.core.solar_shadow import calculate_solar_position, compute_shade_exposure_along_route
+from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
 from zero2route3d.core.tsp_solver import solve_tsp_order
+
+
+def fixture_network_segments() -> list[RoadSegment]:
+    """Return a small deterministic road-shaped fixture for pure engine tests."""
+    coordinates = [
+        (27.1000, 38.4000, 5.0),
+        (27.1000, 38.4100, 6.0),
+        (27.1100, 38.4100, 8.0),
+        (27.1100, 38.4200, 10.0),
+        (27.1200, 38.4200, 12.0),
+        (27.1200, 38.4300, 13.0),
+        (27.1300, 38.4300, 14.0),
+        (27.1300, 38.4400, 16.0),
+        (27.1400, 38.4400, 18.0),
+        (27.1400, 38.4500, 19.0),
+        (27.1500, 38.4500, 20.0),
+    ]
+    return [
+        RoadSegment(p1=a, p2=b, length_m=haversine_distance_2d(a, b), highway_type="residential")
+        for a, b in zip(coordinates, coordinates[1:])
+    ]
 
 
 class TestRoute3DPureLogic(unittest.TestCase):
@@ -155,8 +178,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_routing_graph_and_od_matrix(self) -> None:
         net_mgr = NetworkSourceManager()
-        bbox = (27.10, 38.40, 27.15, 38.45)
-        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        segments = fixture_network_segments()
 
         engine = RoutingEngine3D()
         engine.build_graph(segments)
@@ -175,8 +197,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_multimodal_router(self) -> None:
         net_mgr = NetworkSourceManager()
-        bbox = (27.10, 38.40, 27.15, 38.45)
-        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
 
@@ -195,8 +216,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_isochrone_engine(self) -> None:
         net_mgr = NetworkSourceManager()
-        bbox = (27.10, 38.40, 27.15, 38.45)
-        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
 
@@ -226,8 +246,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_pareto_multi_objective_router(self) -> None:
         net_mgr = NetworkSourceManager()
-        bbox = (27.10, 38.40, 27.15, 38.45)
-        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
 
@@ -255,8 +274,7 @@ class TestRoute3DPureLogic(unittest.TestCase):
 
     def test_map_matching_3d(self) -> None:
         net_mgr = NetworkSourceManager()
-        bbox = (27.10, 38.40, 27.15, 38.45)
-        segments = net_mgr.generate_synthetic_grid(bbox, grid_steps=6)
+        segments = fixture_network_segments()
         engine = RoutingEngine3D()
         engine.build_graph(segments)
 
@@ -288,6 +306,304 @@ class TestRoute3DPureLogic(unittest.TestCase):
         self.assertEqual(len(corridor), 1)
         self.assertEqual(corridor[0]["id"], "b1")
         self.assertEqual(corridor[0]["height_m"], 16.0)
+
+    def test_multi_profile_groups_and_colors(self) -> None:
+        from ..core.mobility_profiles import get_profile_color, list_profile_keys_for_group
+
+        all_keys = list_profile_keys_for_group("all")
+        self.assertEqual(len(all_keys), 15)
+
+        ped_keys = list_profile_keys_for_group("pedestrian")
+        self.assertIn("adult", ped_keys)
+        self.assertIn("senior", ped_keys)
+
+        veh_keys = list_profile_keys_for_group("vehicle")
+        self.assertIn("car", veh_keys)
+        self.assertIn("paramedic", veh_keys)
+
+        car_col = get_profile_color("car")
+        self.assertTrue(car_col.startswith("#"))
+
+    def test_animated_avatar_interpolation(self) -> None:
+        from ..core.kinematics import AnimatedAvatar
+
+        avatar = AnimatedAvatar(
+            profile_key="car",
+            profile_name="Passenger Car",
+            color_hex="#ef4444",
+            coordinates_3d=[(27.0, 38.0, 10.0), (27.1, 38.0, 10.0), (27.2, 38.0, 10.0)],
+            cumulative_distances_m=[0.0, 8000.0, 16000.0],
+            timestamps_s=[0.0, 100.0, 200.0],
+            total_duration_s=200.0,
+            total_distance_m=16000.0,
+        )
+
+        p_start = avatar.interpolate_position(0.0)
+        self.assertAlmostEqual(p_start[0], 27.0)
+
+        p_mid = avatar.interpolate_position(50.0)
+        self.assertAlmostEqual(p_mid[0], 27.05, places=2)
+
+        p_end = avatar.interpolate_position(250.0)
+        self.assertAlmostEqual(p_end[0], 27.2)
+
+    def test_global_dem_fetcher(self) -> None:
+        from ..core.dem_fetcher import GlobalDemFetcher
+
+        pts = [(27.1428, 38.4237), (27.1500, 38.4300)]
+        elevations = GlobalDemFetcher.fetch_elevations_for_coords(pts)
+        self.assertEqual(len(elevations), 2)
+        self.assertGreaterEqual(elevations[0], 0.0)
+
+        single = GlobalDemFetcher.get_elevation_single(27.1428, 38.4237)
+        self.assertGreaterEqual(single, 0.0)
+
+    def test_local_server_lifecycle_and_port_selection(self) -> None:
+        from ..core.local_server import Route3DLocalServer, _port_is_open
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            server = Route3DLocalServer(web_root=Path(tmpdir), start_port=18920, end_port=18930)
+            self.assertFalse(server.is_running)
+            self.assertEqual(server.url, "")
+
+            url = server.start()
+            self.assertTrue(server.is_running)
+            self.assertTrue(url.startswith("http://127.0.0.1:1892"))
+            self.assertIn("/index.html", url)
+            self.assertIsNotNone(server.port)
+
+            # Idempotent start
+            url2 = server.start()
+            self.assertEqual(url, url2)
+
+            # Check port is detected as open
+            self.assertTrue(_port_is_open(server.host, server.port))
+
+            # Stop gracefully
+            server.stop()
+            self.assertFalse(server.is_running)
+            self.assertEqual(server.url, "")
+
+            # Idempotent stop
+            server.stop()
+
+    def test_route_statistics_empty_and_single_point(self) -> None:
+        # Empty
+        stats_empty = compute_route_statistics([])
+        self.assertEqual(stats_empty.total_distance_m, 0.0)
+        self.assertEqual(stats_empty.elevation_gain_m, 0.0)
+
+        # Single point
+        stats_single = compute_route_statistics([(27.1, 38.4, 15.0)])
+        self.assertEqual(stats_single.total_distance_m, 0.0)
+        self.assertEqual(stats_single.min_elevation_m, 15.0)
+        self.assertEqual(stats_single.max_elevation_m, 15.0)
+
+    def test_dxf_export_edge_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dxf = Path(tmpdir) / "empty_route.dxf"
+            export_route_to_dxf_3d([], out_dxf)
+            self.assertTrue(out_dxf.exists())
+
+            out_dxf2 = Path(tmpdir) / "single_route.dxf"
+            export_route_to_dxf_3d([(27.1, 38.4, 15.0)], out_dxf2)
+            self.assertTrue(out_dxf2.exists())
+
+    def test_html_standalone_bundler(self) -> None:
+        bundler = StandaloneHtmlBundler()
+        geojson_mock = {
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [27.1428, 38.4237, 10.0],
+                    [27.1450, 38.4250, 20.0],
+                ],
+            },
+            "properties": {
+                "distance_km": 0.35,
+                "duration_min": 4.5,
+                "elevation_gain_m": 10.0,
+                "profile_name": "Standard Adult",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_html = Path(tmpdir) / "standalone_studio.html"
+            bundler.bundle_to_file(geojson_mock, out_html)
+            self.assertTrue(out_html.exists())
+            content = out_html.read_text(encoding="utf-8")
+            self.assertIn("02Route 3D Studio", content)
+            self.assertIn("27.1428", content)
+
+    def test_nan_inf_kinematics_robustness(self) -> None:
+        nan = float("nan")
+        inf = float("inf")
+
+        # Haversine with NaN / Inf / empty
+        self.assertEqual(haversine_distance_2d((nan, 38.0), (27.0, 38.0)), 0.0)
+        self.assertEqual(haversine_distance_2d((27.0, inf), (27.0, 38.0)), 0.0)
+        self.assertEqual(haversine_distance_2d([], (27.0, 38.0)), 0.0)
+        self.assertEqual(haversine_distance_2d((27.0, 38.0), (27.0, 38.0)), 0.0)
+
+        # 3D Distance with NaN elevation
+        d3 = haversine_distance_3d((27.0, 38.0, nan), (27.01, 38.0, inf))
+        self.assertGreater(d3, 0.0)
+        import math
+        self.assertTrue(math.isfinite(d3))
+
+        # Tobler walking speed
+        self.assertGreater(tobler_walking_speed(nan), 0.0)
+        self.assertGreater(tobler_walking_speed(inf), 0.0)
+        self.assertGreater(tobler_walking_speed(0.1, base_speed_kmh=nan), 0.0)
+
+        # Minetti energy cost
+        j, kcal = minetti_energy_cost(nan, mass_kg=nan, distance_m=nan)
+        self.assertGreaterEqual(kcal, 0.0)
+        self.assertTrue(math.isfinite(kcal))
+
+        # Cyclist, scooter, vehicle free flow speeds
+        c_spd = cyclist_speed(nan, base_speed_kmh=nan, rider_power_watts=nan, total_mass_kg=nan)
+        self.assertGreater(c_spd, 0.0)
+        self.assertTrue(math.isfinite(c_spd))
+
+        s_spd = scooter_speed(nan, base_speed_kmh=nan)
+        self.assertGreater(s_spd, 0.0)
+        self.assertTrue(math.isfinite(s_spd))
+
+        v_spd = vehicle_free_flow_speed(4, lanes=nan, slope_pct=nan)
+        self.assertGreater(v_spd, 0.0)
+        self.assertTrue(math.isfinite(v_spd))
+
+        # Irradiance & UTCI
+        irr = solar_irradiance_aspect_factor(nan, nan)
+        self.assertTrue(0.0 <= irr <= 1.0)
+        utci = universal_thermal_comfort_utci(nan, nan, nan, nan)
+        self.assertTrue(0.0 <= utci <= 1.0)
+
+    def test_dem_fetcher_batch_chunking_and_cache_corruption(self) -> None:
+        from zero2route3d.core.dem_fetcher import GlobalDemFetcher
+        import math
+
+        # Test batch with > 150 coordinates (tests chunking logic)
+        coords = [(27.0 + i * 0.001, 38.0 + i * 0.001) for i in range(160)]
+        results = GlobalDemFetcher.fetch_elevations_for_coords(coords, timeout_sec=0.5)
+        self.assertEqual(len(results), 160)
+        for val in results:
+            self.assertTrue(math.isfinite(val))
+            self.assertGreaterEqual(val, 0.0)
+
+        # Test NaN coordinate in DEM fetcher
+        single_nan = GlobalDemFetcher.get_elevation_single(float("nan"), float("nan"))
+        self.assertEqual(single_nan, 0.0)
+
+    def test_routing_engine_edge_cases(self) -> None:
+        engine = RoutingEngine3D()
+        nan = float("nan")
+
+        # Zero waypoints
+        res_empty = engine.calculate_route([], profile_key="adult")
+        self.assertEqual(len(res_empty.coordinates_3d), 0)
+        self.assertFalse(res_empty.is_network_matched)
+
+        # Single waypoint
+        w_single = Waypoint(lon=27.1, lat=38.4, name="Solo")
+        res_single = engine.calculate_route([w_single], profile_key="adult")
+        self.assertEqual(len(res_single.coordinates_3d), 1)
+        self.assertFalse(res_single.is_network_matched)
+
+        # Use the deterministic road fixture and route with identical start/end.
+        net_mgr = NetworkSourceManager()
+        segments = fixture_network_segments()
+        engine.build_graph(segments)
+
+        w1 = Waypoint(lon=27.11, lat=38.41)
+        res_same = engine.calculate_route([w1, w1], profile_key="adult")
+        self.assertTrue(res_same.is_network_matched)
+        self.assertEqual(len(res_same.coordinates_3d), 1)
+
+        # Nearest node lookup with NaN
+        self.assertIsNone(engine.find_nearest_node((nan, nan)))
+
+    def test_network_source_rejects_invalid_extent_without_fabrication(self) -> None:
+        manager = NetworkSourceManager()
+        nan = float("nan")
+        with self.assertRaises(NetworkSourceError):
+            manager.fetch_osm_network_bbox((nan, 38.4, 27.1, 38.5))
+
+        empty_engine = RoutingEngine3D()
+        result = empty_engine.calculate_route(
+            [Waypoint(27.1, 38.4), Waypoint(27.2, 38.5)],
+            profile_key="adult",
+        )
+        self.assertEqual(result.coordinates_3d, [])
+        self.assertFalse(result.is_network_matched)
+
+    def test_cue_sheet_2d_and_extreme_slopes(self) -> None:
+        # 2D coordinates (no Z index) passed into cue sheet generator
+        coords_2d = [(27.0, 38.0), (27.01, 38.0), (27.01, 38.01)]
+        cues = generate_cue_sheet(coords_2d, get_profile("adult"))
+        self.assertGreaterEqual(len(cues), 2)
+        self.assertEqual(cues[0].direction, "depart")
+        self.assertEqual(cues[-1].direction, "arrive")
+
+    def test_profile_dxf_sanitization_and_qml(self) -> None:
+        nan = float("nan")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Subdirectory that does not exist yet
+            target_dxf = Path(tmpdir) / "nested" / "sub" / "route.dxf"
+            export_route_to_dxf_3d([(27.1, 38.4, 10.0), (nan, 38.5, nan), (27.2, 38.6, 20.0)], target_dxf)
+            self.assertTrue(target_dxf.exists())
+            dxf_text = target_dxf.read_text(encoding="utf-8")
+            self.assertNotIn("nan", dxf_text.lower())
+            self.assertIn("3D_ROUTE", dxf_text)
+
+            target_qml = Path(tmpdir) / "nested" / "style.qml"
+            qml_str = generate_route_qml_style(target_qml, line_width_mm=1.5)
+            self.assertTrue(target_qml.exists())
+            self.assertIn("<qgis", qml_str)
+
+    def test_map_matcher_empty_and_nan(self) -> None:
+        matcher = HMMMapMatcher3D(nodes={}, adj={})
+        res = matcher.match_gps_track([GPXPoint(lon=float("nan"), lat=float("nan"))])
+        self.assertEqual(len(res.matched_points), 0)
+        self.assertEqual(res.status_message, "Graph is empty.")
+
+    def test_shared_input_validation_and_coordinate_deduplication(self) -> None:
+        bbox = normalize_bbox((27.1, 38.4, 27.1, 38.4))
+        self.assertGreater(bbox[2] - bbox[0], 0.004)
+        self.assertEqual(normalize_time_intervals([15, 5, 5, float("nan"), 0]), [5.0, 15.0])
+        self.assertIsNone(validate_waypoint_coordinates([Waypoint(27.1, 38.4), Waypoint(27.2, 38.5)]))
+        self.assertIsNotNone(validate_waypoint_coordinates([Waypoint(27.1, 95.0)]))
+
+        cleaned = deduplicate_adjacent_coordinates(
+            [(27.1, 38.4, 2.0), (27.1, 38.4, 2.0), (27.2, 38.5, 3.0)]
+        )
+        self.assertEqual(len(cleaned), 2)
+
+    def test_profile_travel_time_is_shared_by_accessibility_and_animation(self) -> None:
+        adult = get_profile("adult")
+        flat = adult.travel_time_seconds(1000.0, slope_pct=0.0)
+        uphill = adult.travel_time_seconds(1000.0, slope_pct=15.0)
+        self.assertGreater(uphill, flat)
+        self.assertTrue(all(math.isfinite(v) for v in (flat, uphill)))
+
+    def test_densification_has_a_memory_cap(self) -> None:
+        coords = [(27.0, 38.0, 0.0), (28.0, 38.0, 100.0)]
+        dense = densify_3d_linestring(coords, sample_interval_m=0.5, max_points=1_000)
+        self.assertLessEqual(len(dense), 1_002)
+
+    def test_isochrone_rejects_invalid_intervals_without_work(self) -> None:
+        engine = RoutingEngine3D()
+        engine.build_graph(fixture_network_segments())
+        result = IsochroneEngine3D(engine).compute_isochrones(
+            Waypoint(27.12, 38.42), time_intervals_min=[0, -5, float("nan")]
+        )
+        self.assertEqual(result.bands, [])
+
+    def test_evacuation_does_not_return_a_fake_origin_route(self) -> None:
+        router = EvacuationRouter(RoutingEngine3D())
+        with self.assertRaises(EvacuationRoutingError):
+            router.calculate_evacuation_route(Waypoint(27.1, 38.4), [])
 
 
 if __name__ == "__main__":

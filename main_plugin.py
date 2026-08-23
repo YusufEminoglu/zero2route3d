@@ -68,15 +68,22 @@ class Route3DPlugin:
     def unload(self) -> None:
         """Tear down GUI elements and deregister processing provider."""
         if self.action is not None:
-            self.iface.removePluginMenu("&02Route 3D", self.action)
-            self.iface.removeToolBarIcon(self.action)
+            with contextlib.suppress(Exception):
+                self.iface.removePluginMenu("&02Route 3D", self.action)
+            with contextlib.suppress(Exception):
+                self.iface.removeToolBarIcon(self.action)
+            self.action = None
 
         if self.dock is not None:
+            with contextlib.suppress(Exception):
+                if hasattr(self.dock, "teardown"):
+                    self.dock.teardown()
             with contextlib.suppress(Exception):
                 self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None
 
         if self.provider is not None:
-            QgsApplication.processingRegistry().removeProvider(self.provider)
+            with contextlib.suppress(Exception):
+                QgsApplication.processingRegistry().removeProvider(self.provider)
             self.provider = None

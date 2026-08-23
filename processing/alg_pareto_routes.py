@@ -14,6 +14,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
@@ -115,7 +116,7 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         dem_layer = self.parameterAsRasterLayer(parameters, self.INPUT_DEM, context)
         lst_layer = self.parameterAsRasterLayer(parameters, self.INPUT_LST, context)
         profile_idx = self.parameterAsEnum(parameters, self.PARAM_PROFILE, context)
-        profile_key = self.profiles[profile_idx]
+        profile_key = self.profiles[max(0, min(profile_idx, len(self.profiles) - 1))]
 
         fields = QgsFields()
         fields.append(QgsField("archetype", 10))
@@ -135,11 +136,14 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
 
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer, lst_layer=lst_layer)
         net_mgr = NetworkSourceManager()
-        if net_layer:
-            segments = net_mgr.extract_from_qgis_layer(net_layer)
-        else:
-            bbox = source_pts.sourceExtent()
-            segments = net_mgr.generate_synthetic_grid((bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()))
+        bbox = source_pts.sourceExtent()
+        try:
+            segments = net_mgr.require_segments(
+                vector_layer=net_layer,
+                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+            )
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         engine = RoutingEngine3D(sampler=sampler)
         engine.build_graph(segments)
@@ -147,7 +151,14 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         pareto_router = ParetoMultiObjectiveRouter(engine.nodes, engine.adj, sampler)
         node_keys = list(engine.nodes.keys())
         if len(node_keys) >= 2:
-            res = pareto_router.solve_pareto_frontier(node_keys[0], node_keys[-1], profile_key=profile_key)
+            points = [f.geometry().asPoint() for f in source_pts.getFeatures() if not f.geometry().isNull()]
+            if len(points) < 2:
+                raise QgsProcessingException("The input points layer must contain at least two valid points.")
+            start_node = engine.find_nearest_node((points[0].x(), points[0].y()))
+            end_node = engine.find_nearest_node((points[1].x(), points[1].y()))
+            if start_node is None or end_node is None:
+                raise QgsProcessingException("Could not snap the input points to the selected network.")
+            res = pareto_router.solve_pareto_frontier(start_node, end_node, profile_key=profile_key)
             for sol in res.solutions:
                 pts = [QgsPoint(c[0], c[1], c[2]) for c in sol.coordinates_3d]
                 geom = QgsGeometry.fromPolyline(pts)

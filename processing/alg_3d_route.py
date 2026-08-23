@@ -15,6 +15,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterPoint,
@@ -53,17 +54,8 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        profile_options = [
-            "Standard Adult (5 km/h)",
-            "Senior / Elderly (3.2 km/h)",
-            "Child / Safe Walk",
-            "Stroller / Pram (Max 6% slope)",
-            "Wheelchair / Barrier-Free (Max 5% slope)",
-            "City Bicycle (18 km/h)",
-            "E-Scooter (20 km/h)",
-            "Passenger Car",
-            "Heavy Freight Truck (Max 7% slope)",
-        ]
+        self.profile_keys = list_profile_keys()
+        profile_options = [get_profile(key).name for key in self.profile_keys]
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.PROFILE,
@@ -108,7 +100,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
 
         profile_keys = list_profile_keys()
-        profile_key = profile_keys[prof_idx] if prof_idx < len(profile_keys) else "adult"
+        profile_key = profile_keys[max(0, min(prof_idx, len(profile_keys) - 1))]
         profile = get_profile(profile_key)
 
         feedback.setProgressText("Initializing 3D spatial surfaces and road network...")
@@ -116,10 +108,10 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         net_mgr = NetworkSourceManager()
 
         bbox = (min(p1.x(), p2.x()), min(p1.y(), p2.y()), max(p1.x(), p2.x()), max(p1.y(), p2.y()))
-        if net_layer:
-            segments = net_mgr.extract_from_qgis_layer(net_layer)
-        else:
-            segments = net_mgr.fetch_osm_network_bbox(bbox)
+        try:
+            segments = net_mgr.require_segments(vector_layer=net_layer, bbox=bbox)
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         engine = RoutingEngine3D(sampler=sampler, weights=MCDAWeights())
         engine.build_graph(segments)
@@ -128,6 +120,8 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         w1 = Waypoint(lon=p1.x(), lat=p1.y())
         w2 = Waypoint(lon=p2.x(), lat=p2.y())
         res = engine.calculate_route([w1, w2], profile_key=profile_key)
+        if not res.coordinates_3d:
+            raise QgsProcessingException(res.status_message or "No route could be found between the selected points.")
 
         # Output Fields
         fields = QgsFields()

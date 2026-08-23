@@ -6,6 +6,7 @@ and vehicular transport modes, with custom profile building and JSON preset expo
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -42,17 +43,28 @@ class MobilityProfile:
         custom_weights: Optional[Dict[str, float]] = None,
     ) -> float:
         """Calculate generalized impedance (cost) for traversing a segment under this profile."""
+        len_m = float(length_m) if math.isfinite(length_m) and length_m > 0 else 0.01
+        s_pct = float(slope_pct) if math.isfinite(slope_pct) else 0.0
+        sq = max(0.0, min(1.0, float(surface_quality))) if math.isfinite(surface_quality) else 0.8
+        lst = max(0.0, min(1.0, float(lst_normalized))) if math.isfinite(lst_normalized) else 0.5
+        grn = max(0.0, min(1.0, float(green_normalized))) if math.isfinite(green_normalized) else 0.5
+
         weights = custom_weights or {}
         w_slope = weights.get("slope", self.slope_sensitivity)
         w_heat = weights.get("heat", self.heat_sensitivity)
         w_green = weights.get("green", self.green_preference)
 
+        w_slope = float(w_slope) if math.isfinite(w_slope) and w_slope >= 0 else self.slope_sensitivity
+        w_heat = float(w_heat) if math.isfinite(w_heat) and w_heat >= 0 else self.heat_sensitivity
+        w_green = float(w_green) if math.isfinite(w_green) and w_green >= 0 else self.green_preference
+
         # 1. Slope Penalty
-        abs_slope = abs(slope_pct)
-        if abs_slope > self.max_slope_pct:
-            if not self.category == "pedestrian":
+        abs_slope = abs(s_pct)
+        max_s = max(1.0, self.max_slope_pct) if math.isfinite(self.max_slope_pct) else 25.0
+        if abs_slope > max_s:
+            if self.category != "pedestrian":
                 return float("inf")
-            slope_mult = 1.0 + (abs_slope / max(1.0, self.max_slope_pct)) ** 3 * 20.0 * w_slope
+            slope_mult = 1.0 + (abs_slope / max_s) ** 3 * 20.0 * w_slope
         else:
             slope_mult = 1.0 + (abs_slope / 10.0) * w_slope * 1.5
 
@@ -60,26 +72,60 @@ class MobilityProfile:
         if is_steps:
             if not self.stair_allowed:
                 return float("inf")
-            stair_mult = self.stair_penalty
+            stair_mult = max(1.0, float(self.stair_penalty))
         else:
             stair_mult = 1.0
 
         # 3. Surface Smoothness Penalty
-        if surface_quality < self.surface_smoothness_req:
-            roughness_gap = self.surface_smoothness_req - surface_quality
+        if sq < self.surface_smoothness_req:
+            roughness_gap = self.surface_smoothness_req - sq
             smooth_mult = 1.0 + roughness_gap * 4.0
         else:
             smooth_mult = 1.0
 
         # 4. Thermal & Environmental Microclimate Resistance
-        thermal_cost = 1.0 + (lst_normalized * w_heat * 1.8) - (green_normalized * w_green * 0.4)
+        thermal_cost = 1.0 + (lst * w_heat * 1.8) - (grn * w_green * 0.4)
         thermal_mult = max(0.6, thermal_cost)
 
         # 5. Road Hierarchy Multiplier
         hier_mult = self.hierarchy_weights.get(hierarchy_rank, 1.0)
+        if not math.isfinite(hier_mult) or hier_mult <= 0:
+            hier_mult = 1.0
 
-        cost = length_m * slope_mult * stair_mult * smooth_mult * thermal_mult * hier_mult
+        cost = len_m * slope_mult * stair_mult * smooth_mult * thermal_mult * hier_mult
+        if math.isinf(cost):
+            return float("inf")
+        if not math.isfinite(cost) or cost <= 0:
+            return 0.01
         return max(0.01, cost)
+
+    def travel_time_seconds(
+        self,
+        length_m: float,
+        slope_pct: float = 0.0,
+        hierarchy_rank: int = 4,
+    ) -> float:
+        """Estimate physically consistent travel time for one network edge."""
+        from .kinematics import (
+            cyclist_speed,
+            scooter_speed,
+            tobler_walking_speed,
+            vehicle_free_flow_speed,
+        )
+
+        length = float(length_m) if math.isfinite(length_m) and length_m >= 0 else 0.0
+        slope = float(slope_pct) if math.isfinite(slope_pct) else 0.0
+        slope_fraction = slope / 100.0
+        if self.category == "pedestrian":
+            speed_kmh = tobler_walking_speed(slope_fraction, self.base_speed_kmh)
+        elif self.key in {"bicycle", "mtb"}:
+            speed_kmh = cyclist_speed(slope_fraction, self.base_speed_kmh)
+        elif self.key == "scooter":
+            speed_kmh = scooter_speed(slope_fraction, self.base_speed_kmh)
+        else:
+            speed_kmh = vehicle_free_flow_speed(hierarchy_rank, slope_pct=slope)
+        speed_mps = max(0.2, speed_kmh * 1000.0 / 3600.0)
+        return length / speed_mps
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -144,7 +190,7 @@ PROFILES: Dict[str, MobilityProfile] = {
     ),
     "stroller": MobilityProfile(
         key="stroller",
-        name="Stroller / Pram (Bebek Arabalı)",
+        name="Stroller / Pram",
         category="pedestrian",
         base_speed_kmh=4.0,
         max_slope_pct=6.0,
@@ -337,14 +383,70 @@ PROFILES: Dict[str, MobilityProfile] = {
 }
 
 
+PROFILE_CATEGORIES: Dict[str, Dict[str, Any]] = {
+    "pedestrian": {
+        "title": "Pedestrian & Active Walking",
+        "icon": "🚶",
+        "keys": ["adult", "senior", "child", "jogger", "sightseer", "night_walk"],
+    },
+    "accessibility": {
+        "title": "Barrier-Free & Universal Access",
+        "icon": "♿",
+        "keys": ["wheelchair", "stroller"],
+    },
+    "micromobility": {
+        "title": "Micromobility & Cycling",
+        "icon": "🚲",
+        "keys": ["bicycle", "mtb", "scooter"],
+    },
+    "vehicle": {
+        "title": "Vehicular & Logistics",
+        "icon": "🚗",
+        "keys": ["car", "delivery_van", "truck", "paramedic"],
+    },
+}
+
+PROFILE_COLORS: Dict[str, str] = {
+    "adult": "#0284c7",
+    "senior": "#059669",
+    "child": "#f59e0b",
+    "jogger": "#10b981",
+    "sightseer": "#84cc16",
+    "night_walk": "#6366f1",
+    "wheelchair": "#8b5cf6",
+    "stroller": "#d946ef",
+    "bicycle": "#06b6d4",
+    "mtb": "#14b8a6",
+    "scooter": "#3b82f6",
+    "car": "#ef4444",
+    "delivery_van": "#f97316",
+    "truck": "#78716c",
+    "paramedic": "#e11d48",
+}
+
+
 def get_profile(key: str) -> MobilityProfile:
     """Retrieve profile by key, falling back to 'adult' if unknown."""
     return PROFILES.get(key.lower(), PROFILES["adult"])
 
 
+def get_profile_color(key: str) -> str:
+    """Return the designated HEX color for a profile key."""
+    return PROFILE_COLORS.get(key.lower(), "#0ea5e9")
+
+
 def list_profile_keys() -> List[str]:
     """Return all registered profile keys."""
     return list(PROFILES.keys())
+
+
+def list_profile_keys_for_group(group_key: str) -> List[str]:
+    """Return profile keys belonging to a category group ('all', 'pedestrian', 'accessibility', 'micromobility', 'vehicle')."""
+    if group_key.lower() == "all":
+        return list_profile_keys()
+    if group_key.lower() in PROFILE_CATEGORIES:
+        return PROFILE_CATEGORIES[group_key.lower()]["keys"]
+    return [group_key.lower()] if group_key.lower() in PROFILES else ["adult"]
 
 
 def save_custom_profile_json(profile: MobilityProfile, target_path: Path) -> None:

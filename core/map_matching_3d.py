@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .kinematics import haversine_distance_2d
@@ -118,6 +118,9 @@ class HMMMapMatcher3D:
         v: int,
     ) -> Tuple[Tuple[float, float], float, float]:
         """Project (lon, lat) onto segment (u -> v). Returns (snapped_pt, distance_m, fraction)."""
+        if u not in self.nodes or v not in self.nodes:
+            return (pt[0], pt[1]), float("inf"), 0.0
+
         p1 = self.nodes[u]
         p2 = self.nodes[v]
 
@@ -125,11 +128,16 @@ class HMMMapMatcher3D:
         dy = p2[1] - p1[1]
         seg_len_sq = dx * dx + dy * dy
 
-        if seg_len_sq < 1e-12:
+        if not math.isfinite(seg_len_sq) or seg_len_sq < 1e-12:
             d = haversine_distance_2d(pt, p1)
             return (p1[0], p1[1]), d, 0.0
 
-        t = max(0.0, min(1.0, ((pt[0] - p1[0]) * dx + (pt[1] - p1[1]) * dy) / seg_len_sq))
+        num = (pt[0] - p1[0]) * dx + (pt[1] - p1[1]) * dy
+        if not math.isfinite(num):
+            d = haversine_distance_2d(pt, p1)
+            return (p1[0], p1[1]), d, 0.0
+
+        t = max(0.0, min(1.0, num / seg_len_sq))
         snap_lon = p1[0] + t * dx
         snap_lat = p1[1] + t * dy
         d_m = haversine_distance_2d(pt, (snap_lon, snap_lat))
@@ -137,12 +145,17 @@ class HMMMapMatcher3D:
 
     def _emission_log_prob(self, dist_m: float) -> float:
         """Log emission probability under Gaussian sensor error model."""
-        return -0.5 * ((dist_m / self.sigma_z) ** 2) - math.log(math.sqrt(2.0 * math.pi) * self.sigma_z)
+        sigma = max(1e-4, float(self.sigma_z)) if math.isfinite(self.sigma_z) else 4.07
+        d = float(dist_m) if math.isfinite(dist_m) and dist_m >= 0 else 100.0
+        return -0.5 * ((d / sigma) ** 2) - math.log(math.sqrt(2.0 * math.pi) * sigma)
 
     def _transition_log_prob(self, great_circle_dist_m: float, network_dist_m: float) -> float:
         """Log transition probability under exponential network difference model."""
-        delta = abs(great_circle_dist_m - network_dist_m)
-        return - (delta / self.beta) - math.log(self.beta)
+        beta = max(1e-4, float(self.beta)) if math.isfinite(self.beta) else 3.0
+        d_gc = float(great_circle_dist_m) if math.isfinite(great_circle_dist_m) and great_circle_dist_m >= 0 else 0.0
+        d_net = float(network_dist_m) if math.isfinite(network_dist_m) and network_dist_m >= 0 else 0.0
+        delta = abs(d_gc - d_net)
+        return - (delta / beta) - math.log(beta)
 
     def match_gps_track(
         self,
@@ -150,17 +163,26 @@ class HMMMapMatcher3D:
         search_radius_m: float = 35.0,
     ) -> MapMatching3DResult:
         """Execute Viterbi HMM decoding to match noisy GPS track onto topological 3D graph."""
-        if len(raw_points) < 2:
-            return MapMatching3DResult([], [], len(raw_points), 0.0, 0.0, 0.0, "Insufficient GPS points.")
+        if not self.nodes:
+            return MapMatching3DResult([], [], len(raw_points) if raw_points else 0, 0.0, 0.0, 0.0, "Graph is empty.")
 
+        valid_raw = [
+            p for p in raw_points
+            if p and math.isfinite(float(p.lon)) and math.isfinite(float(p.lat))
+        ]
+        if len(valid_raw) < 2:
+            return MapMatching3DResult([], [], len(raw_points) if raw_points else 0, 0.0, 0.0, 0.0, "Insufficient GPS points.")
+
+        s_rad = max(1.0, float(search_radius_m)) if math.isfinite(search_radius_m) else 35.0
         candidates_per_time: List[List[Dict[str, Any]]] = []
-        for pt in raw_points:
+
+        for pt in valid_raw:
             cands = []
             pt_coord = (pt.lon, pt.lat)
             for u in self.nodes:
                 for v, length_m, _slope, _meta in self.adj.get(u, []):
                     snap_pt, d_m, frac = self._project_point_to_edge(pt_coord, u, v)
-                    if d_m <= search_radius_m:
+                    if d_m <= s_rad:
                         cands.append({
                             "u": u,
                             "v": v,
@@ -184,7 +206,7 @@ class HMMMapMatcher3D:
                 })
             candidates_per_time.append(cands[:10])
 
-        T = len(raw_points)
+        T = len(valid_raw)
         viterbi_log = [{} for _ in range(T)]
         backpointer = [{} for _ in range(T)]
 
@@ -192,8 +214,8 @@ class HMMMapMatcher3D:
             viterbi_log[0][c_idx] = self._emission_log_prob(cand["dist_m"])
 
         for t in range(1, T):
-            pt_prev = (raw_points[t - 1].lon, raw_points[t - 1].lat)
-            pt_curr = (raw_points[t].lon, raw_points[t].lat)
+            pt_prev = (valid_raw[t - 1].lon, valid_raw[t - 1].lat)
+            pt_curr = (valid_raw[t].lon, valid_raw[t].lat)
             d_gc = haversine_distance_2d(pt_prev, pt_curr)
 
             for c_curr_idx, c_curr in enumerate(candidates_per_time[t]):
@@ -216,7 +238,11 @@ class HMMMapMatcher3D:
                 viterbi_log[t][c_curr_idx] = best_prob
                 backpointer[t][c_curr_idx] = best_prev
 
-        best_last_idx = max(viterbi_log[T - 1], key=viterbi_log[T - 1].get)
+        if viterbi_log[T - 1]:
+            best_last_idx = max(viterbi_log[T - 1], key=viterbi_log[T - 1].get)
+        else:
+            best_last_idx = 0
+
         optimal_cands = [candidates_per_time[T - 1][best_last_idx]]
         curr_idx = best_last_idx
 
@@ -251,6 +277,9 @@ class HMMMapMatcher3D:
             prev_z = z
             node_path.append(cand["u"])
 
+            spd_ms = valid_raw[idx].speed_ms
+            speed_val = spd_ms * 3.6 if spd_ms is not None and math.isfinite(spd_ms) and spd_ms > 0 else 15.0
+
             matched_points.append(
                 MatchedTrackPoint3D(
                     lon=lon,
@@ -260,18 +289,19 @@ class HMMMapMatcher3D:
                     snapped_edge_v=cand["v"],
                     lateral_residual_m=residual,
                     reconstructed_slope_pct=grad.slope_pct,
-                    speed_kmh=raw_points[idx].speed_ms * 3.6 if raw_points[idx].speed_ms else 15.0,
+                    speed_kmh=speed_val,
                 )
             )
 
+        mean_err = total_residual / max(1, len(matched_points))
         return MapMatching3DResult(
             matched_points=matched_points,
             matched_nodes_path=node_path,
-            total_raw_points=T,
-            mean_snapping_error_m=total_residual / max(1, T),
+            total_raw_points=len(raw_points),
+            mean_snapping_error_m=mean_err,
             total_matched_distance_m=total_dist,
             elevation_gain_m=elevation_gain,
-            status_message=f"Successfully snapped {T} GPS observations with mean residual {total_residual / max(1, T):.1f}m.",
+            status_message=f"Successfully snapped {T} GPS observations with mean residual {mean_err:.1f}m.",
         )
 
     @staticmethod

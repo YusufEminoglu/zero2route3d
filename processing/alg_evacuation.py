@@ -14,6 +14,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterRasterLayer,
@@ -121,11 +122,16 @@ class EvacuationRoutingAlgorithm(QgsProcessingAlgorithm):
 
         sampler = EnvironmentalSurfaceSampler(dem_layer=dem_layer)
         net_mgr = NetworkSourceManager()
-        if net_layer:
-            segments = net_mgr.extract_from_qgis_layer(net_layer)
-        else:
-            bbox = source_origin.sourceExtent()
-            segments = net_mgr.generate_synthetic_grid((bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()))
+        bbox = source_origin.sourceExtent()
+        muster_bbox = source_musters.sourceExtent()
+        bbox.combineExtentWith(muster_bbox)
+        try:
+            segments = net_mgr.require_segments(
+                vector_layer=net_layer,
+                bbox=(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()),
+            )
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         engine = RoutingEngine3D(sampler=sampler)
         engine.build_graph(segments)
@@ -148,7 +154,10 @@ class EvacuationRoutingAlgorithm(QgsProcessingAlgorithm):
             if not f.geometry().isNull()
         ]
 
-        plan = router.calculate_evacuation_route(orig_pt, musters, profile_key="adult")
+        try:
+            plan = router.calculate_evacuation_route(orig_pt, musters, profile_key="adult")
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
         if plan.route_result.coordinates_3d:
             pts = [QgsPoint(c[0], c[1], c[2]) for c in plan.route_result.coordinates_3d]

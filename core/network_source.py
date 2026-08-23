@@ -1,8 +1,8 @@
 """Road network data acquisition, vector layer ingestion, and geocoding engine.
 
 Supports fetching OpenStreetMap networks via Overpass API with local bounding
-box caching, reverse geocoding via Photon API, extracting topology from active
-QGIS vector layers, and generating topological test graphs.
+box caching, reverse geocoding via Photon API, and extracting topology from
+active QGIS vector layers.
 """
 from __future__ import annotations
 
@@ -10,13 +10,15 @@ import contextlib
 import hashlib
 import http.client
 import json
+import math
 import tempfile
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .kinematics import haversine_distance_2d
+from .input_validation import normalize_bbox
 
 
 @dataclass
@@ -32,6 +34,10 @@ class RoadSegment:
     is_steps: bool = False
     surface: str = "asphalt"
     is_oneway: bool = False
+
+
+class NetworkSourceError(RuntimeError):
+    """Raised when no usable real network can be loaded for an operation."""
 
 
 class NetworkSourceManager:
@@ -57,32 +63,45 @@ class NetworkSourceManager:
         return 5
 
     def search_place_photon(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Geocode place name using Photon API (HTTPS) with offline fallback."""
+        """Geocode place name using Photon API (HTTPS)."""
         if not query or len(query.strip()) < 2:
             return []
 
         results = []
         with contextlib.suppress(Exception):
             encoded = urllib.parse.quote(query.strip())
+            try:
+                lim = max(1, min(50, int(limit)))
+            except (TypeError, ValueError, OverflowError):
+                lim = 5
             conn = http.client.HTTPSConnection("photon.komoot.io", timeout=8)
-            conn.request("GET", f"/api/?q={encoded}&limit={limit}", headers={"User-Agent": "02Route3D-Plugin/0.1.0"})
-            resp = conn.getresponse()
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8"))
-                for feat in data.get("features", []):
-                    geom = feat.get("geometry", {})
-                    props = feat.get("properties", {})
-                    coords = geom.get("coordinates", [])
-                    if len(coords) >= 2:
-                        name = props.get("name") or props.get("street") or query
-                        city = props.get("city") or props.get("state") or props.get("country") or ""
-                        label = f"{name} ({city})" if city else name
-                        results.append({
-                            "label": label,
-                            "lon": float(coords[0]),
-                            "lat": float(coords[1]),
-                        })
-            conn.close()
+            try:
+                conn.request("GET", f"/api/?q={encoded}&limit={lim}", headers={"User-Agent": "02Route3D-Plugin/0.1.0"})
+                resp = conn.getresponse()
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict):
+                        for feat in data.get("features", []):
+                            geom = feat.get("geometry", {})
+                            props = feat.get("properties", {})
+                            coords = geom.get("coordinates", [])
+                            if len(coords) >= 2:
+                                try:
+                                    lon_val = float(coords[0])
+                                    lat_val = float(coords[1])
+                                    if math.isfinite(lon_val) and math.isfinite(lat_val):
+                                        name = props.get("name") or props.get("street") or query
+                                        city = props.get("city") or props.get("state") or props.get("country") or ""
+                                        label = f"{name} ({city})" if city else name
+                                        results.append({
+                                            "label": str(label),
+                                            "lon": lon_val,
+                                            "lat": lat_val,
+                                        })
+                                except (ValueError, TypeError):
+                                    continue
+            finally:
+                conn.close()
         return results
 
     def fetch_osm_network_bbox(
@@ -90,20 +109,28 @@ class NetworkSourceManager:
         bbox: Tuple[float, float, float, float],
         buffer_ratio: float = 0.15,
     ) -> List[RoadSegment]:
-        """Fetch OSM highway ways within bbox using Overpass API with SHA-256 disk caching."""
-        min_lon, min_lat, max_lon, max_lat = bbox
-        d_lon = max_lon - min_lon
-        d_lat = max_lat - min_lat
+        """Fetch OSM highway ways within bbox using Overpass API with disk caching.
 
-        d_lon = max(0.005, d_lon)
-        d_lat = max(0.005, d_lat)
+        A missing/invalid response is an input error, not a reason to invent a
+        network.  Callers can surface :class:`NetworkSourceError` directly to
+        QGIS users and let them choose a valid layer or retry the download.
+        """
+        try:
+            min_lon, min_lat, max_lon, max_lat = normalize_bbox(bbox)
+        except ValueError as exc:
+            raise NetworkSourceError(str(exc)) from exc
 
-        buf_lon = d_lon * buffer_ratio
-        buf_lat = d_lat * buffer_ratio
-        s = min_lat - buf_lat
-        w = min_lon - buf_lon
-        n = max_lat + buf_lat
-        e = max_lon + buf_lon
+        d_lon = max(0.005, max_lon - min_lon)
+        d_lat = max(0.005, max_lat - min_lat)
+
+        buf_r = float(buffer_ratio) if math.isfinite(buffer_ratio) and buffer_ratio >= 0 else 0.15
+        buf_r = min(1.0, buf_r)
+        buf_lon = d_lon * buf_r
+        buf_lat = d_lat * buf_r
+        s = max(-90.0, min_lat - buf_lat)
+        w = max(-180.0, min_lon - buf_lon)
+        n = min(90.0, max_lat + buf_lat)
+        e = min(180.0, max_lon + buf_lon)
 
         cache_key = hashlib.sha256(f"{s:.4f}_{w:.4f}_{n:.4f}_{e:.4f}".encode("utf-8")).hexdigest()
         cache_file = self.CACHE_DIR / f"osm_{cache_key}.json"
@@ -112,20 +139,53 @@ class NetworkSourceManager:
         if cache_file.exists():
             with contextlib.suppress(Exception):
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict) and "elements" in loaded:
+                        data = loaded
 
         if not data:
             query = f"""[out:json][timeout:25];(way["highway"]({s:.5f},{w:.5f},{n:.5f},{e:.5f}););out body;>;out skel qt;"""
             data = self._query_overpass(query)
-            if data and "elements" in data:
+            if data and isinstance(data, dict) and "elements" in data:
                 with contextlib.suppress(Exception):
-                    with open(cache_file, "w", encoding="utf-8") as f:
+                    temp_cache = cache_file.with_suffix(".tmp")
+                    with open(temp_cache, "w", encoding="utf-8") as f:
                         json.dump(data, f)
+                    temp_cache.replace(cache_file)
 
-        if not data or "elements" not in data:
-            return self.generate_synthetic_grid(bbox)
+        if not data or not isinstance(data, dict) or "elements" not in data:
+            raise NetworkSourceError(
+                "OpenStreetMap network download failed. Check the internet connection "
+                "or select a QGIS line network layer."
+            )
 
-        return self._parse_osm_json(data)
+        segments = self._parse_osm_json(data)
+        if not segments:
+            raise NetworkSourceError(
+                "OpenStreetMap returned no usable road segments for this extent. "
+                "Try a larger extent or select a QGIS line network layer."
+            )
+        return segments
+
+    def require_segments(
+        self,
+        vector_layer: Any = None,
+        bbox: Optional[Tuple[float, float, float, float]] = None,
+    ) -> List[RoadSegment]:
+        """Load a real network from a QGIS line layer or OSM, never fabricated data."""
+        if vector_layer is not None:
+            segments = self.extract_from_qgis_layer(vector_layer)
+            if not segments:
+                raise NetworkSourceError(
+                    "The selected network layer contains no usable line segments. "
+                    "Select a non-empty line layer with a valid CRS."
+                )
+            return segments
+        if bbox is None:
+            raise NetworkSourceError(
+                "No network source was provided. Select a QGIS line layer or enable OSM download."
+            )
+        return self.fetch_osm_network_bbox(bbox)
 
     def _query_overpass(self, query: str) -> Dict[str, Any] | None:
         """Safe HTTPS POST to Overpass API without generic urlopen."""
@@ -142,13 +202,16 @@ class NetworkSourceManager:
         for host, path in endpoints:
             with contextlib.suppress(Exception):
                 conn = http.client.HTTPSConnection(host, timeout=12)
-                conn.request("POST", path, body=body, headers=headers)
-                resp = conn.getresponse()
-                if resp.status == 200:
-                    raw = resp.read().decode("utf-8")
+                try:
+                    conn.request("POST", path, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    if resp.status == 200:
+                        raw = resp.read().decode("utf-8")
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            return parsed
+                finally:
                     conn.close()
-                    return json.loads(raw)
-                conn.close()
         return None
 
     def _parse_osm_json(self, data: Dict[str, Any]) -> List[RoadSegment]:
@@ -158,21 +221,28 @@ class NetworkSourceManager:
 
         for el in data.get("elements", []):
             if el.get("type") == "node":
-                nodes[int(el["id"])] = (float(el["lon"]), float(el["lat"]))
+                try:
+                    nid = int(el["id"])
+                    nlon = float(el["lon"])
+                    nlat = float(el["lat"])
+                    if math.isfinite(nlon) and math.isfinite(nlat):
+                        nodes[nid] = (nlon, nlat)
+                except (KeyError, ValueError, TypeError):
+                    continue
 
         for el in data.get("elements", []):
             if el.get("type") == "way":
-                tags = el.get("tags", {})
-                highway = tags.get("highway", "residential")
+                tags = el.get("tags") or {}
+                highway = str(tags.get("highway", "residential"))
                 hierarchy = self._highway_to_hierarchy(highway)
                 is_steps = highway == "steps"
-                surface = tags.get("surface", "asphalt")
+                surface = str(tags.get("surface", "asphalt"))
                 lanes = 1
                 with contextlib.suppress(Exception):
                     lanes = max(1, int(tags.get("lanes", 1)))
                 oneway = tags.get("oneway") in {"yes", "1", "true"}
 
-                way_nodes = el.get("nodes", [])
+                way_nodes = el.get("nodes") or []
                 for i in range(len(way_nodes) - 1):
                     n1 = way_nodes[i]
                     n2 = way_nodes[i + 1]
@@ -180,7 +250,7 @@ class NetworkSourceManager:
                         c1 = nodes[n1]
                         c2 = nodes[n2]
                         dist = haversine_distance_2d(c1, c2)
-                        if dist >= 0.1:
+                        if dist >= 0.1 and math.isfinite(dist):
                             seg = RoadSegment(
                                 p1=(c1[0], c1[1], 0.0),
                                 p2=(c2[0], c2[1], 0.0),
@@ -197,7 +267,20 @@ class NetworkSourceManager:
 
     def extract_from_qgis_layer(self, vector_layer: Any) -> List[RoadSegment]:
         """Extract road network edges from an active QGIS line vector layer."""
+        if vector_layer is None:
+            return []
         segments: List[RoadSegment] = []
+
+        def point_coordinate(point: Any, name: str, default: float = 0.0) -> float:
+            """Read QgsPoint or QgsPointXY coordinates across QGIS versions."""
+            value = getattr(point, name, None)
+            if callable(value):
+                value = value()
+            try:
+                return float(value) if value is not None else default
+            except (TypeError, ValueError):
+                return default
+
         with contextlib.suppress(Exception):
             from qgis.core import (
                 QgsCoordinateReferenceSystem,
@@ -219,7 +302,7 @@ class NetworkSourceManager:
                 if geom.isNull() or geom.isEmpty():
                     continue
 
-                if needs_transform:
+                if needs_transform and transform is not None:
                     geom.transform(transform)
 
                 lines = []
@@ -242,10 +325,20 @@ class NetworkSourceManager:
                     for i in range(len(line) - 1):
                         p1 = line[i]
                         p2 = line[i + 1]
-                        c1 = (p1.x(), p1.y(), p1.z() if p1.is3D() else 0.0)
-                        c2 = (p2.x(), p2.y(), p2.z() if p2.is3D() else 0.0)
+                        c1 = (
+                            point_coordinate(p1, "x"),
+                            point_coordinate(p1, "y"),
+                            point_coordinate(p1, "z"),
+                        )
+                        c2 = (
+                            point_coordinate(p2, "x"),
+                            point_coordinate(p2, "y"),
+                            point_coordinate(p2, "z"),
+                        )
+                        if not (math.isfinite(c1[0]) and math.isfinite(c1[1]) and math.isfinite(c2[0]) and math.isfinite(c2[1])):
+                            continue
                         dist = haversine_distance_2d(c1, c2)
-                        if dist >= 0.1:
+                        if dist >= 0.1 and math.isfinite(dist):
                             segments.append(
                                 RoadSegment(
                                     p1=c1,
@@ -256,50 +349,4 @@ class NetworkSourceManager:
                                     is_steps=is_steps,
                                 )
                             )
-        return segments
-
-    def generate_synthetic_grid(
-        self,
-        bbox: Tuple[float, float, float, float],
-        grid_steps: int = 8,
-    ) -> List[RoadSegment]:
-        """Generate a regular Manhattan-style topological grid for testing/resilience."""
-        min_lon, min_lat, max_lon, max_lat = bbox
-        d_lon = (max_lon - min_lon) / max(2, grid_steps)
-        d_lat = (max_lat - min_lat) / max(2, grid_steps)
-
-        segments: List[RoadSegment] = []
-        for i in range(grid_steps + 1):
-            lon = min_lon + i * d_lon
-            for j in range(grid_steps):
-                lat1 = min_lat + j * d_lat
-                lat2 = min_lat + (j + 1) * d_lat
-                c1 = (lon, lat1, 0.0)
-                c2 = (lon, lat2, 0.0)
-                segments.append(
-                    RoadSegment(
-                        p1=c1,
-                        p2=c2,
-                        length_m=haversine_distance_2d(c1, c2),
-                        highway_type="residential",
-                        hierarchy_rank=4,
-                    )
-                )
-
-        for j in range(grid_steps + 1):
-            lat = min_lat + j * d_lat
-            for i in range(grid_steps):
-                lon1 = min_lon + i * d_lon
-                lon2 = min_lon + (i + 1) * d_lon
-                c1 = (lon1, lat, 0.0)
-                c2 = (lon2, lat, 0.0)
-                segments.append(
-                    RoadSegment(
-                        p1=c1,
-                        p2=c2,
-                        length_m=haversine_distance_2d(c1, c2),
-                        highway_type="residential",
-                        hierarchy_rank=4,
-                    )
-                )
         return segments

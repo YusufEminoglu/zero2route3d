@@ -23,7 +23,7 @@
       <span class="brand-title">Mobility Studio</span>
     </div>
 
-    <!-- DİRİ-Inspired Scenario Switcher -->
+    <!-- Multi-Criteria Scenario Switcher -->
     <div class="scenario-selector">
       <button class="scenario-btn active" data-scenario="shortest" title="Standard Shortest Path">
         <span>⚡</span> Shortest
@@ -69,13 +69,25 @@
     <div class="compass-indicator" id="compassRose" title="Snap to North">N</div>
   </div>
 
+  <!-- QGIS-synchronised profile/layer legend -->
+  <div class="hud-panel route-layer-panel" id="routeLayerPanel">
+    <div class="layer-panel-heading">
+      <span>Animated Layers</span>
+      <span class="layer-count" id="layerCount">0</span>
+    </div>
+    <div class="layer-panel-help">Select a profile to show its QGIS-matching values. Toggle the eye to animate it.</div>
+    <div class="layer-list" id="layerList">
+      <div class="layer-empty">Waiting for QGIS routes…</div>
+    </div>
+  </div>
+
   <!-- Right Toolbar: Camera & View Modes -->
   <div class="hud-panel right-tools">
     <div class="tool-group-title">Camera Mode</div>
-    <button class="tool-btn cam-btn" data-cam="orbit" title="Free 360 Orbit Camera">
+    <button class="tool-btn cam-btn active" data-cam="orbit" title="Free 360 Orbit Camera (Default)">
       <span>🌐</span> Orbit
     </button>
-    <button class="tool-btn cam-btn active" data-cam="chase" title="Drone Chase Follow Camera">
+    <button class="tool-btn cam-btn" data-cam="chase" title="Drone Chase Follow Camera">
       <span>🛸</span> Chase
     </button>
     <button class="tool-btn cam-btn" data-cam="pov" title="First-Person Driver/Walker View">
@@ -85,8 +97,16 @@
       <span>🎬</span> Tour
     </button>
 
+    <div class="tool-group-title">Basemap Imagery</div>
+    <div class="basemap-provider-group">
+      <button class="bmap-btn active" data-provider="osm" title="Standard OpenStreetMap Vector Tiles">🗺️ OSM</button>
+      <button class="bmap-btn" data-provider="satellite" title="Esri High-Resolution World Satellite Imagery">🛰️ Satellite</button>
+      <button class="bmap-btn" data-provider="voyager" title="CartoDB Clean Voyager Map">🏙️ Voyager</button>
+      <button class="bmap-btn" data-provider="dark" title="CartoDB Dark Matter Night Style">🌙 Dark</button>
+    </div>
+
     <div class="tool-group-title">3D Layer Controls</div>
-    <button class="tool-btn active" id="btnBasemap" title="Toggle Real OpenStreetMap Ground Basemap">
+    <button class="tool-btn active" id="btnBasemap" title="Toggle Real Tile Ground Basemap">
       <span>🗺️</span> Basemap: <b>ON</b>
     </button>
     <button class="tool-btn active" id="btnBuildings" title="Toggle 3D Extruded OSM Buildings">
@@ -100,6 +120,9 @@
     </button>
     <button class="tool-btn" id="btnSlicer" title="Toggle 3D Underground Geological Slicer Plane">
       <span>🔪</span> Slicer
+    </button>
+    <button class="tool-btn" id="btnVoice" title="Toggle Turn-by-Turn Voice Audio Cues">
+      <span>🔊</span> Voice: <b id="lblVoice">OFF</b>
     </button>
 
     <div class="tool-group-title">Capture & Tools</div>
@@ -116,22 +139,34 @@
 
   <!-- Bottom Player & Scrubber -->
   <div class="hud-panel bottom-controls">
-    <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
-      <span id="playIcon">▶</span>
-    </button>
-
-    <div class="scrubber-container">
-      <div class="elevation-profile-chart" id="chartDrawer">
-        <svg id="profileSvg" width="100%" height="100%"></svg>
-        <div class="profile-needle" id="profileNeedle"></div>
+    <div class="chart-header-row">
+      <div class="chart-metric-selector">
+        <button class="metric-btn active" data-metric="elevation">📈 Elevation</button>
+        <button class="metric-btn" data-metric="slope">📐 Slope %</button>
+        <button class="metric-btn" data-metric="lst">🌡️ Heat (LST)</button>
+        <button class="metric-btn" data-metric="greenery">🌳 Greenery</button>
       </div>
-      <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
+      <div class="metric-readout" id="metricReadout">Elevation: <b id="metricLiveVal">—</b></div>
     </div>
 
-    <div class="speed-selector">
-      <button class="speed-opt active" data-speed="1.0">1x</button>
-      <button class="speed-opt" data-speed="2.0">2x</button>
-      <button class="speed-opt" data-speed="4.0">4x</button>
+    <div class="player-scrubber-row">
+      <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
+        <span id="playIcon">▶</span>
+      </button>
+
+      <div class="scrubber-container">
+        <div class="elevation-profile-chart" id="chartDrawer">
+          <svg id="profileSvg" width="100%" height="100%"></svg>
+          <div class="profile-needle" id="profileNeedle"></div>
+        </div>
+        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
+      </div>
+
+      <div class="speed-selector">
+        <button class="speed-opt active" data-speed="1.0">1x</button>
+        <button class="speed-opt" data-speed="2.0">2x</button>
+        <button class="speed-opt" data-speed="4.0">4x</button>
+      </div>
     </div>
   </div>
 

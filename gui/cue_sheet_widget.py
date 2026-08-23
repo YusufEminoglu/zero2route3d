@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Sequence
 
 from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -64,14 +65,17 @@ class CueSheetWidget(QWidget):
             "Instruction",
         ])
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        _ResizeToContents = getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "ResizeToContents", 3)
+        _Stretch = getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "Stretch", 1)
+        header.setSectionResizeMode(0, _ResizeToContents)
+        header.setSectionResizeMode(1, _ResizeToContents)
+        header.setSectionResizeMode(2, _ResizeToContents)
+        header.setSectionResizeMode(3, _ResizeToContents)
+        header.setSectionResizeMode(4, _ResizeToContents)
+        header.setSectionResizeMode(5, _Stretch)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        _SelectRows = getattr(getattr(QTableWidget, "SelectionBehavior", QTableWidget), "SelectRows", 1)
+        self.table.setSelectionBehavior(_SelectRows)
         layout.addWidget(self.table)
 
     def load_cues(self, cues: Sequence[CueInstruction]) -> None:
@@ -89,32 +93,52 @@ class CueSheetWidget(QWidget):
             "arrive": "🏁 Arrive",
         }
 
+        _AlignCenter = getattr(getattr(Qt, "AlignmentFlag", Qt), "AlignCenter", 0x0084)
+        _AlignRight = getattr(getattr(Qt, "AlignmentFlag", Qt), "AlignRight", 0x0002)
+        _AlignVCenter = getattr(getattr(Qt, "AlignmentFlag", Qt), "AlignVCenter", 0x0080)
+
         for row, c in enumerate(self.cues):
-            item_num = QTableWidgetItem(str(c.step_number))
-            item_num.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            step_no = getattr(c, "step_number", row + 1)
+            item_num = QTableWidgetItem(str(step_no))
+            item_num.setTextAlignment(_AlignCenter)
             self.table.setItem(row, 0, item_num)
 
-            item_dir = QTableWidgetItem(dir_icons.get(c.direction, c.direction))
+            direction = getattr(c, "direction", "straight")
+            dir_label = dir_icons.get(str(direction), str(direction))
+            item_dir = QTableWidgetItem(str(dir_label))
             self.table.setItem(row, 1, item_dir)
 
-            item_dist = QTableWidgetItem(f"{c.distance_m:.0f} m")
-            item_dist.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            try:
+                dist_val = float(getattr(c, "distance_m", 0.0))
+            except (ValueError, TypeError):
+                dist_val = 0.0
+            item_dist = QTableWidgetItem(f"{dist_val:.0f} m")
+            item_dist.setTextAlignment(_AlignRight | _AlignVCenter)
             self.table.setItem(row, 2, item_dist)
 
-            item_dz = QTableWidgetItem(f"{c.elevation_delta_m:+.1f} m")
-            item_dz.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            try:
+                dz_val = float(getattr(c, "elevation_delta_m", 0.0))
+            except (ValueError, TypeError):
+                dz_val = 0.0
+            item_dz = QTableWidgetItem(f"{dz_val:+.1f} m")
+            item_dz.setTextAlignment(_AlignRight | _AlignVCenter)
             self.table.setItem(row, 3, item_dz)
 
-            item_slope = QTableWidgetItem(f"{c.slope_pct:.1f}%")
-            item_slope.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if abs(c.slope_pct) > 10.0:
-                item_slope.setForeground(Qt.GlobalColor.red)
+            try:
+                slope_val = float(getattr(c, "slope_pct", 0.0))
+            except (ValueError, TypeError):
+                slope_val = 0.0
+            item_slope = QTableWidgetItem(f"{slope_val:.1f}%")
+            item_slope.setTextAlignment(_AlignRight | _AlignVCenter)
+            if abs(slope_val) > 10.0:
+                item_slope.setForeground(QColor("#dc2626"))
             self.table.setItem(row, 4, item_slope)
 
-            instr_text = c.instruction
-            if c.warning:
-                instr_text += f" [{c.warning}]"
-            item_instr = QTableWidgetItem(instr_text)
+            instr_text = str(getattr(c, "instruction", ""))
+            warning = str(getattr(c, "warning", ""))
+            if warning:
+                instr_text += f" [{warning}]"
+            item_instr = QTableWidgetItem(str(instr_text))
             self.table.setItem(row, 5, item_instr)
 
         self.btn_export_csv.setEnabled(len(self.cues) > 0)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .environmental_raster import EnvironmentalSurfaceSampler
 from .kinematics import (
@@ -238,8 +238,7 @@ class ParetoMultiObjectiveRouter:
                 heapq.heappush(pq, (new_g.time_s + h_val, new_g.time_s, v, path + (v,)))
 
         if not dest_solutions:
-            direct_path = (start_node, end_node)
-            dest_solutions.append((ParetoCostVector(300, 10, 0.5, 50), direct_path))
+            return ParetoFrontierResult([], 0.0, profile.name)
 
         return self._extract_archetypes(dest_solutions, profile)
 
@@ -258,19 +257,24 @@ class ParetoMultiObjectiveRouter:
         sol_least_effort = min(raw_solutions, key=lambda s: s[0].energy_kcal)
 
         min_t = sol_fastest[0].time_s
-        max_t = max(s[0].time_s for s in raw_solutions) or (min_t + 1.0)
+        max_t = max(s[0].time_s for s in raw_solutions)
         min_a = sol_flattest[0].ascent_m
-        max_a = max(s[0].ascent_m for s in raw_solutions) or (min_a + 1.0)
+        max_a = max(s[0].ascent_m for s in raw_solutions)
         min_h = sol_coolest[0].heat_dose
-        max_h = max(s[0].heat_dose for s in raw_solutions) or (min_h + 1.0)
+        max_h = max(s[0].heat_dose for s in raw_solutions)
         min_e = sol_least_effort[0].energy_kcal
-        max_e = max(s[0].energy_kcal for s in raw_solutions) or (min_e + 1.0)
+        max_e = max(s[0].energy_kcal for s in raw_solutions)
+
+        range_t = max(1.0, max_t - min_t)
+        range_a = max(1.0, max_a - min_a)
+        range_h = max(0.1, max_h - min_h)
+        range_e = max(1.0, max_e - min_e)
 
         def utopia_dist(s: Tuple[ParetoCostVector, Tuple[int, ...]]) -> float:
-            nt = (s[0].time_s - min_t) / (max_t - min_t)
-            na = (s[0].ascent_m - min_a) / (max_a - min_a)
-            nh = (s[0].heat_dose - min_h) / (max_h - min_h)
-            ne = (s[0].energy_kcal - min_e) / (max_e - min_e)
+            nt = (s[0].time_s - min_t) / range_t
+            na = (s[0].ascent_m - min_a) / range_a
+            nh = (s[0].heat_dose - min_h) / range_h
+            ne = (s[0].energy_kcal - min_e) / range_e
             return math.sqrt(nt**2 + na**2 + nh**2 + ne**2)
 
         sol_knee = min(raw_solutions, key=utopia_dist)

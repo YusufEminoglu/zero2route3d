@@ -16,17 +16,21 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterNumber,
     QgsProcessingParameterPoint,
     QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterVectorLayer,
     QgsWkbTypes,
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
+from ..core.isochrone_engine import IsochroneEngine3D
 from ..core.mobility_profiles import list_profile_keys, get_profile
 from ..core.network_source import NetworkSourceManager
+from ..core.routing_engine import RoutingEngine3D, Waypoint
 
 
 class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
@@ -36,6 +40,7 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
     PROFILE = "PROFILE"
     TIME_MINUTES = "TIME_MINUTES"
     DEM_LAYER = "DEM_LAYER"
+    NETWORK_LAYER = "NETWORK_LAYER"
     OUTPUT = "OUTPUT"
 
     def initAlgorithm(self, config: Dict[str, Any] = None) -> None:
@@ -83,6 +88,14 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
+            QgsProcessingParameterVectorLayer(
+                self.NETWORK_LAYER,
+                "Road Network (Line Layer)",
+                [QgsProcessing.TypeVectorLine],
+                optional=True,
+            )
+        )
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "3D Isochrone Polygon",
@@ -99,34 +112,33 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         center = self.parameterAsPoint(parameters, self.CENTER_POINT, context)
         time_min = self.parameterAsDouble(parameters, self.TIME_MINUTES, context)
         prof_idx = self.parameterAsEnum(parameters, self.PROFILE, context)
+        dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
+        net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
 
         profile_keys = list_profile_keys()
-        profile_key = profile_keys[prof_idx] if prof_idx < len(profile_keys) else "adult"
+        profile_key = profile_keys[max(0, min(prof_idx, len(profile_keys) - 1))]
         profile = get_profile(profile_key)
 
-        feedback.setProgressText("Generating 3D isochrone boundary...")
+        feedback.setProgressText("Loading the real road network...")
         speed_m_per_min = (profile.base_speed_kmh * 1000.0) / 60.0
-        # Account for typical network circuity (~1.35) and grade reduction (~0.85)
-        approx_reach_radius_m = (time_min * speed_m_per_min) / 1.35 * 0.85
-
-        # Degree distance conversion around center latitude
+        max_radius_m = max(100.0, time_min * speed_m_per_min)
         lat_rad = math.radians(center.y())
-        deg_lat = approx_reach_radius_m / 110574.0
-        deg_lon = approx_reach_radius_m / (111320.0 * math.cos(lat_rad))
+        deg_lat = max_radius_m / 110574.0
+        deg_lon = max_radius_m / max(1.0, 111320.0 * math.cos(lat_rad))
+        bbox = (center.x() - deg_lon, center.y() - deg_lat, center.x() + deg_lon, center.y() + deg_lat)
 
-        # Generate smoothed isochrone polygon
-        num_vertices = 32
-        poly_pts = []
-        for i in range(num_vertices):
-            angle = (i / num_vertices) * 2.0 * math.pi
-            # Natural topographic contour fluctuation
-            dist_factor = 1.0 + 0.12 * math.sin(angle * 3.0) - 0.08 * math.cos(angle * 2.0)
-            px = center.x() + deg_lon * math.cos(angle) * dist_factor
-            py = center.y() + deg_lat * math.sin(angle) * dist_factor
-            poly_pts.append(QgsPointXY(px, py))
-        poly_pts.append(poly_pts[0])
+        try:
+            segments = NetworkSourceManager().require_segments(vector_layer=net_layer, bbox=bbox)
+        except Exception as exc:
+            raise QgsProcessingException(str(exc)) from exc
 
-        geom = QgsGeometry.fromPolygonXY([poly_pts])
+        engine = RoutingEngine3D(sampler=EnvironmentalSurfaceSampler(dem_layer=dem_layer))
+        engine.build_graph(segments)
+        iso_result = IsochroneEngine3D(engine).compute_isochrones(
+            Waypoint(center.x(), center.y(), name="Origin"),
+            profile_key=profile_key,
+            time_intervals_min=(time_min,),
+        )
 
         fields = QgsFields()
         fields.append(QgsField("profile", 10))
@@ -143,14 +155,18 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             crs_wgs84,
         )
 
-        feat = QgsFeature(fields)
-        feat.setGeometry(geom)
-        feat.setAttributes([
-            profile.name,
-            time_min,
-            round(approx_reach_radius_m / 1000.0, 2),
-        ])
-        sink.addFeature(feat, QgsFeatureSink.FastInsert)
+        for band in iso_result.bands:
+            if len(band.boundary_points) < 3:
+                continue
+            points = [QgsPointXY(x, y) for x, y in band.boundary_points]
+            geom = QgsGeometry.fromMultiPointXY(points).convexHull()
+            if geom.isNull() or geom.isEmpty():
+                continue
+            feat = QgsFeature(fields)
+            feat.setGeometry(geom)
+            reach_km = math.sqrt(max(0.0, band.approx_area_ha) * 10000.0 / math.pi) / 1000.0
+            feat.setAttributes([profile.name, band.time_cutoff_min, round(reach_km, 2)])
+            sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
         return {self.OUTPUT: dest_id}
 

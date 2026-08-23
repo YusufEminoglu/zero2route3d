@@ -1,10 +1,8 @@
 """QGIS Processing Provider for 02Route 3D Studio."""
 from __future__ import annotations
 
-from typing import List
-
 from qgis.PyQt.QtGui import QIcon
-from qgis.core import QgsProcessingAlgorithm, QgsProcessingProvider
+from qgis.core import QgsProcessingProvider
 
 from .alg_3d_isochrone import ServiceArea3DAlgorithm
 from .alg_3d_map_matching import MapMatching3DAlgorithm

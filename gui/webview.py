@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
-import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from qgis.PyQt.QtCore import Qt, QUrl
-from qgis.PyQt.QtGui import QColor, QDesktopServices, QPainter, QPen
+from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -17,7 +15,6 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -172,9 +169,19 @@ class Studio3DWebViewport(QWidget):
 
     def send_route(self, geojson_data: Dict[str, Any]) -> None:
         """Save computed route GeoJSON and optionally pop the 3D WebGL Studio."""
+        geometry = geojson_data.get("geometry", {}) if isinstance(geojson_data, dict) else {}
+        if not isinstance(geometry, dict):
+            geometry = {}
+        coordinates = geometry.get("coordinates", []) if isinstance(geometry, dict) else []
+        if geometry.get("type") != "LineString" or len(coordinates) < 2:
+            self.lbl_profile_chart.setText("A valid route with at least two points is required for 3D preview.")
+            return
         self._current_geojson = geojson_data
         with contextlib.suppress(Exception):
-            self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+            payload = json.dumps(geojson_data, indent=2, allow_nan=False)
+            temp_file = self.current_route_file.with_suffix(".tmp")
+            temp_file.write_text(payload, encoding="utf-8")
+            temp_file.replace(self.current_route_file)
 
         self._render_qt_elevation_profile(geojson_data)
 
