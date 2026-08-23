@@ -828,13 +828,10 @@ class Route3DStudioDock(QDockWidget):
                 point_a_removed = True
             if "Route Point B" in layer_name or layer.customProperty("zero2route3d/route_point", "") == "B":
                 point_b_removed = True
-        avatar_id = ""
-        with contextlib.suppress(Exception):
-            avatar_id = self.canvas_animator.avatar_layer.id() if self.canvas_animator.avatar_layer else ""
         road_layer = self.cmb_route_road_layer.currentLayer()
         building_layer = self.cmb_route_building_layer.currentLayer()
         source_removed = bool(road_layer and road_layer.id() in removed) or bool(building_layer and building_layer.id() in removed)
-        transient_removed = bool(avatar_id and avatar_id in removed) or bool(removed & self._managed_route_layer_ids)
+        route_layers_removed = bool(removed & self._managed_route_layer_ids)
         if source_removed:
             self.cached_osm_buildings = []
         if point_a_removed:
@@ -845,7 +842,7 @@ class Route3DStudioDock(QDockWidget):
             self.lbl_coord_b.setText("🎯 Not selected (Pick on map or choose layer)")
         if point_a_removed or point_b_removed:
             self.waypoints = [point for point in (self.point_a, self.point_b) if point is not None]
-        if transient_removed or source_removed:
+        if route_layers_removed or source_removed:
             self._handling_layer_removal = True
             try:
                 self._clear_animation_state()

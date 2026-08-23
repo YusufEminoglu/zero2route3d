@@ -184,8 +184,11 @@ class Route2DCanvasAnimator(QObject):
     def _remove_avatar_layer(self) -> None:
         """Remove the transient SVG avatar layer without touching user layers."""
         if self.avatar_layer is not None:
+            layer_id = self.avatar_layer.id()
+            self.avatar_layer = None
+            self._avatar_feature_ids = []
             with contextlib.suppress(Exception):
-                QgsProject.instance().removeMapLayer(self.avatar_layer.id())
+                QgsProject.instance().removeMapLayer(layer_id)
         self.avatar_layer = None
         self._avatar_feature_ids = []
 
@@ -195,7 +198,8 @@ class Route2DCanvasAnimator(QObject):
             return
         if self.current_time_s >= self.max_duration_s:
             self.current_time_s = 0.0
-        self._init_canvas_markers()
+        if self.avatar_layer is None or not self.avatar_layer.isValid() or not self._avatar_feature_ids:
+            self._init_canvas_markers()
         self.is_playing = True
         self.timer.start()
         self.playback_state_changed.emit(True)
@@ -309,6 +313,9 @@ class Route2DCanvasAnimator(QObject):
             with contextlib.suppress(Exception):
                 self.avatar_layer.updateExtents()
                 self.avatar_layer.triggerRepaint()
+        if self.canvas is not None:
+            with contextlib.suppress(Exception):
+                self.canvas.refresh()
 
         if self.auto_pan and leader_canvas_pt is not None:
             with contextlib.suppress(Exception):

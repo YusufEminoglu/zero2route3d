@@ -259,6 +259,50 @@ def test_gui_canvas_animator(iface):
     return _ok("Route2DCanvasAnimator multi-route playback and teardown", True)
 
 
+def test_dock_animation_playback(iface):
+    from zero2route3d.core.mobility_profiles import get_profile
+    from zero2route3d.core.profile_stats import compute_route_statistics
+    from zero2route3d.core.routing_engine import RouteResult3D
+    from zero2route3d.gui.dock import Route3DStudioDock
+
+    dock = Route3DStudioDock(iface=iface)
+    coords = [(27.14, 38.42, 10.0), (27.15, 38.43, 15.0), (27.16, 38.44, 20.0)]
+    stats = compute_route_statistics(coords, profile=get_profile("adult"))
+    res = RouteResult3D(
+        coordinates_3d=coords,
+        statistics=stats,
+        profile=get_profile("adult"),
+        status_message="OK",
+    )
+    dock.multi_route_results = {"adult": res}
+    dock.current_route_result = res
+    dock.canvas_animator.load_routes([res])
+    dock.btn_anim_play.setEnabled(True)
+    dock.btn_anim_stop.setEnabled(True)
+
+    if dock.btn_anim_play.text() != "▶️ Play":
+        dock.teardown()
+        return _ok("Dock btn_anim_play initial state", False)
+
+    # Click play
+    dock.btn_anim_play.click()
+    if not dock.canvas_animator.is_playing or "Pause" not in dock.btn_anim_play.text():
+        dock.teardown()
+        return _ok("Dock btn_anim_play play toggle", False)
+
+    # Tick animation
+    dock.canvas_animator._on_tick()
+
+    # Click pause
+    dock.btn_anim_play.click()
+    if dock.canvas_animator.is_playing or "Play" not in dock.btn_anim_play.text():
+        dock.teardown()
+        return _ok("Dock btn_anim_play pause toggle", False)
+
+    dock.teardown()
+    return _ok("Route3DStudioDock unified start/pause animation toggle", True)
+
+
 def run_all(iface):
     print("=" * 60)
     print(" zero2route3d - lifecycle & GUI component audit tests")
@@ -273,6 +317,7 @@ def run_all(iface):
         test_gui_canvas_overlay(iface),
         test_gui_map_tools(iface),
         test_gui_canvas_animator(iface),
+        test_dock_animation_playback(iface),
     ]
     passed = sum(1 for r in results if r)
     print("-" * 60)
