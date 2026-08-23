@@ -657,6 +657,22 @@ class TestRoute3DPureLogic(unittest.TestCase):
         with self.assertRaises(EvacuationRoutingError):
             router.calculate_evacuation_route(Waypoint(27.1, 38.4), [])
 
+    def test_copernicus_eo_suite_multispectral_stack(self) -> None:
+        from ..core.copernicus_eo_suite import CopernicusEOSuite
+        bbox = (27.13, 38.41, 27.15, 38.43)
+        corridor = [(27.135, 38.415, 10.0), (27.145, 38.425, 25.0)]
+        results = CopernicusEOSuite.fetch_and_clip_multispectral_stack(
+            bbox=bbox, corridor_coords=corridor, buffer_meters=30.0, resolution_deg=0.001
+        )
+        self.assertEqual(len(results), 4)
+        keys = {r.key for r in results}
+        self.assertEqual(keys, {"dem", "ndvi", "lst", "ndbi"})
+        for r in results:
+            self.assertTrue(r.file_path.exists())
+            self.assertGreater(r.file_path.stat().st_size, 0)
+            self.assertTrue(math.isfinite(r.min_val))
+            self.assertTrue(math.isfinite(r.max_val))
+
 
 if __name__ == "__main__":
     unittest.main()

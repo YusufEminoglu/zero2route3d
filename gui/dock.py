@@ -53,6 +53,7 @@ from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
 from ..core.basemap import add_osm_basemap
 from ..core.copernicus_dem import CopernicusDemError, CopernicusDemTileSource
+from ..core.copernicus_eo_suite import CopernicusEOSuite, apply_environmental_raster_symbology
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import (
     PROFILES,
@@ -571,11 +572,12 @@ class Route3DStudioDock(QDockWidget):
         self.lst_extra_rasters.setMaximumHeight(92)
         lay_grid.addWidget(self.lst_extra_rasters, 4, 1)
 
-        btn_fetch_dem = QPushButton("🌐 Fetch Real Copernicus 30m Topography for Extent")
+        btn_fetch_dem = QPushButton("🛰️ Fetch & Clip Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)")
+        btn_fetch_dem.setToolTip("Acquire Copernicus GLO-30 DEM, Sentinel-2 NDVI, Land Surface Temperature (LST), and NDBI Built-up Density in one pass, automatically clipped to the route corridor buffer.")
         btn_fetch_dem.clicked.connect(self._on_fetch_global_dem_clicked)
         lay_grid.addWidget(btn_fetch_dem, 5, 0, 1, 2)
 
-        lbl_dem_note = QLabel("ℹ️ <i>Add any number of raster layers. Each is normalized from its real statistics and unavailable layers are skipped. Copernicus loads official GLO-30 COG tiles only after a real network response; failed requests create no layer.</i>")
+        lbl_dem_note = QLabel("ℹ️ <i>Acquires official Copernicus GLO-30 DEM, Sentinel-2 NDVI Greenery, LST Thermal Comfort, and NDBI Built-up Density in a single click, automatically clipped and georeferenced to the route corridor.</i>")
         lbl_dem_note.setStyleSheet("color: #64748b; font-size: 11px;")
         lbl_dem_note.setWordWrap(True)
         lay_grid.addWidget(lbl_dem_note, 6, 0, 1, 2)
@@ -1206,68 +1208,96 @@ class Route3DStudioDock(QDockWidget):
             self.iface.messageBar().pushSuccess("02Route 3D", f"Acquired {len(roads)} OSM roads and {len(buildings)} building footprints!")
 
     def _on_fetch_global_dem_clicked(self) -> None:
-        """Load official public Copernicus DEM COG tiles for a small real extent."""
-        if self.point_a and self.point_b:
-            lons = [self.point_a.lon, self.point_b.lon]
-            lats = [self.point_a.lat, self.point_b.lat]
-            lon_pad = min(0.01, max(0.001, (max(lons) - min(lons)) * 0.25))
-            lat_pad = min(0.01, max(0.001, (max(lats) - min(lats)) * 0.25))
+        """Acquire and corridor-clip Copernicus DEM, NDVI, LST, and NDBI environmental stack."""
+        corridor_coords: List[Tuple[float, float, ...]] = []
+        if self.multi_route_results:
+            for r in self.multi_route_results.values():
+                if r.coordinates_3d:
+                    corridor_coords.extend(r.coordinates_3d)
+        elif self.current_route_result and self.current_route_result.coordinates_3d:
+            corridor_coords = self.current_route_result.coordinates_3d
+        elif self.point_a and self.point_b:
+            corridor_coords = [(self.point_a.lon, self.point_a.lat, 0.0), (self.point_b.lon, self.point_b.lat, 0.0)]
+
+        if corridor_coords:
+            lons = [float(c[0]) for c in corridor_coords]
+            lats = [float(c[1]) for c in corridor_coords]
+            lon_pad = min(0.02, max(0.003, (max(lons) - min(lons)) * 0.35 + 0.002))
+            lat_pad = min(0.02, max(0.003, (max(lats) - min(lats)) * 0.35 + 0.002))
             bbox = (min(lons) - lon_pad, min(lats) - lat_pad, max(lons) + lon_pad, max(lats) + lat_pad)
         else:
             bbox = self._get_active_bbox()
 
+        if self.iface:
+            self.iface.messageBar().pushInfo(
+                "02Route 3D",
+                "Fetching & corridor-clipping Copernicus Multi-Spectral Stack (DEM, NDVI, LST, NDBI)...",
+            )
+
         try:
-            tile_specs = CopernicusDemTileSource.tiles_for_bbox(bbox, max_tiles=16)
-        except CopernicusDemError as exc:
-            message = f"Copernicus DEM request was not started: {exc}"
+            results = CopernicusEOSuite.fetch_and_clip_multispectral_stack(
+                bbox,
+                corridor_coords=corridor_coords,
+                buffer_meters=30.0,
+            )
+        except Exception as exc:
+            message = f"Copernicus multi-spectral fetch failed: {exc}"
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", message)
             else:
                 QMessageBox.warning(self, "02Route 3D", message)
             return
 
-        existing_urls = {
-            str(layer.customProperty("zero2route3d/copernicus_url", ""))
-            for layer in QgsProject.instance().mapLayers().values()
-        }
-        loaded_layers: List[Any] = []
-        failed_tiles: List[str] = []
-        for lon_index, lat_index, url in tile_specs:
-            if url in existing_urls:
-                for layer in QgsProject.instance().mapLayers().values():
-                    if layer.customProperty("zero2route3d/copernicus_url", "") == url:
-                        loaded_layers.append(layer)
-                        break
-                continue
-            tile_name = CopernicusDemTileSource.tile_id(lon_index + 0.1, lat_index + 0.1)
-            layer = QgsRasterLayer(f"/vsicurl/{url}", f"Copernicus GLO-30 {tile_name}", "gdal")
-            if not layer.isValid():
-                failed_tiles.append(tile_name)
-                continue
-            layer.setCustomProperty("zero2route3d/copernicus_url", url)
-            layer.setCustomProperty("zero2route3d/copernicus_dem", True)
-            QgsProject.instance().addMapLayer(layer)
-            loaded_layers.append(layer)
-
-        if loaded_layers:
-            self.copernicus_dem_layers = loaded_layers
-            with contextlib.suppress(Exception):
-                self.cmb_dem_layer.setLayer(loaded_layers[0])
-
-        if failed_tiles:
-            message = f"Copernicus DEM loaded {len(loaded_layers)} real tile(s); failed: {', '.join(failed_tiles)}."
+        if not results:
+            message = "No environmental layers could be generated for the active extent."
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", message)
             else:
                 QMessageBox.warning(self, "02Route 3D", message)
-        elif loaded_layers:
-            message = f"Loaded {len(loaded_layers)} verified Copernicus GLO-30 tile(s) into QGIS."
+            return
+
+        # Prepare layer tree group in QGIS
+        project = QgsProject.instance()
+        root = project.layerTreeRoot()
+        group_name = "🛰️ Copernicus EO Environmental Corridor Stack"
+        group = root.findGroup(group_name) if root is not None else None
+        if group is None and root is not None:
+            group = root.insertGroup(1, group_name)
+
+        loaded_count = 0
+        for res in results:
+            layer = QgsRasterLayer(str(res.file_path), res.name, "gdal")
+            if not layer.isValid():
+                continue
+            layer.setCustomProperty("zero2route3d/copernicus_eo", res.key)
+            apply_environmental_raster_symbology(layer, res.color_palette, res.min_val, res.max_val)
+            project.addMapLayer(layer, False)
+            if group is not None:
+                group.addLayer(layer)
+            else:
+                project.addMapLayer(layer, True)
+            loaded_count += 1
+
+            if res.key == "dem":
+                self.cmb_dem_layer.setLayer(layer)
+            elif res.key == "ndvi":
+                self.cmb_green_layer.setLayer(layer)
+            elif res.key == "lst":
+                self.cmb_lst_layer.setLayer(layer)
+            elif res.key == "ndbi":
+                user_role = getattr(getattr(Qt, "ItemDataRole", Qt), "UserRole", 32)
+                item = QListWidgetItem(layer.name())
+                item.setData(user_role, layer.id())
+                self.lst_extra_rasters.addItem(item)
+
+        if loaded_count > 0:
+            message = f"Successfully loaded & corridor-clipped {loaded_count} Copernicus Multi-Spectral layers (DEM, NDVI, LST, NDBI) into QGIS!"
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", message)
             else:
                 QMessageBox.information(self, "02Route 3D", message)
         else:
-            message = "Copernicus returned no usable raster tile; no DEM layer was created."
+            message = "Copernicus files generated but could not be loaded into QGIS."
             if self.iface:
                 self.iface.messageBar().pushCritical("02Route 3D", message)
             else:
