@@ -41,6 +41,9 @@ class GenerateAnalyticalReportAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["report", "html", "scorecard", "elevation chart", "profile chart", "audit", "cue sheet", "turn by turn", "summary", "analytics"]
+
     def shortHelpString(self) -> str:
         return "Produces a standalone HTML report with elevation profile charts, slope distribution analysis, ADA accessibility audit, solar shade exposure, and turn cue sheet."
 

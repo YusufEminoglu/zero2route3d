@@ -52,6 +52,9 @@ class EvacuationRoutingAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["evacuation", "emergency", "hazard", "muster point", "shelter", "egress", "disaster", "safety", "fire", "flood", "seismic"]
+
     def shortHelpString(self) -> str:
         return "Calculates safest emergency evacuation route to the optimal muster/assembly point avoiding hazard zones."
 

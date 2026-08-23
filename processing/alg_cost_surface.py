@@ -39,6 +39,9 @@ class MultiCriteriaCostSurfaceAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["cost surface", "mcda", "ahp", "raster", "impedance", "resistance", "slope", "heat", "dem", "saaty", "friction"]
+
     def shortHelpString(self) -> str:
         return "Calculates normalized multi-criteria weight distribution and raster impedance factors."
 

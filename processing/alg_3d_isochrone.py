@@ -182,5 +182,9 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "mobility3d"
 
+    def tags(self) -> list[str]:
+        return ["isochrone", "service area", "catchment", "travel time", "accessibility", "3d", "wavefront", "tobler", "contour", "15 minute city"]
+
     def createInstance(self) -> ServiceArea3DAlgorithm:
         return ServiceArea3DAlgorithm()
+

@@ -54,6 +54,9 @@ class Batch3DRouteAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["batch", "points", "origin destination", "many to many", "multi route", "layer routing", "3d paths", "automated routing"]
+
     def shortHelpString(self) -> str:
         return "Computes 3D paths connecting corresponding features in origin and destination point layers."
 

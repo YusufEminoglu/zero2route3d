@@ -51,6 +51,9 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["map matching", "gps", "gpx", "hmm", "hidden markov model", "viterbi", "snapping", "track", "elevation profile", "trajectory"]
+
     def shortHelpString(self) -> str:
         return "Snaps noisy GPS points onto road networks using Hidden Markov Models (HMM) and reconstructs smooth 3D elevation profiles."
 

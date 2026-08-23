@@ -43,6 +43,9 @@ class SolarExposureAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["solar", "sun", "shade", "thermal", "shadow", "microclimate", "heat", "aspect", "radiation", "comfort"]
+
     def shortHelpString(self) -> str:
         return "Calculates direct sunlight percentage, shaded length, and solar energy exposure along a 3D route at any given hour."
 

@@ -50,6 +50,9 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["accessibility", "equity", "e2sfca", "gini", "spatial justice", "palma", "catchment", "transit desert", "social vulnerability"]
+
     def shortHelpString(self) -> str:
         return "Computes population accessibility indices (E2SFCA), Gini coefficient, Palma ratio, and equity tiers (Transit Deserts vs Oases)."
 

@@ -43,6 +43,9 @@ class WalkabilityAuditAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["walkability", "ada", "barrier-free", "wheelchair", "stroller", "pedestrian audit", "slope compliance", "cross-slope", "active transport"]
+
     def shortHelpString(self) -> str:
         return "Audits road and footpath networks for steep slopes, ADA 1:12 barrier-free compliance, and scores 3D pedestrian walkability (0-100)."
 

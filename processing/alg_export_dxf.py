@@ -40,6 +40,9 @@ class ExportRouteToDxfAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["dxf", "autocad", "cad", "export", "3d polyline", "elevation profile", "cross section", "vector export", "engineering"]
+
     def shortHelpString(self) -> str:
         return "Exports 3D LineStringZ route geometries and cross-sectional elevation profile drawings into AutoCAD DXF format."
 

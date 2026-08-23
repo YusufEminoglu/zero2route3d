@@ -55,6 +55,9 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["pareto", "multi-objective", "namoa", "frontier", "trade-off", "alternative routes", "3d", "climb", "heat", "calories", "optimization"]
+
     def shortHelpString(self) -> str:
         return "Generates non-dominated Pareto alternative routes optimizing Time vs Slope vs Thermal Heat vs Calories."
 

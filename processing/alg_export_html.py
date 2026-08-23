@@ -39,6 +39,9 @@ class ExportStandalone3DHtmlAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["html", "export", "webgl", "threejs", "3d viewer", "offline viewer", "standalone", "dashboard", "interactive 3d"]
+
     def shortHelpString(self) -> str:
         return "Converts 3D route geometry into a self-contained single-file HTML report with embedded Three.js 3D viewer."
 

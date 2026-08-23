@@ -52,6 +52,9 @@ class OriginDestinationMatrix3DAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "route3d"
 
+    def tags(self) -> list[str]:
+        return ["od matrix", "origin destination", "cost matrix", "distance matrix", "travel time matrix", "n by m", "network analysis", "transport planning"]
+
     def shortHelpString(self) -> str:
         return "Calculates pairwise 3D distance, travel time, elevation gain, and caloric expenditure between an origin point layer and destination point layer."
 

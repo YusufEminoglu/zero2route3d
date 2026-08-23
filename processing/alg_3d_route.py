@@ -171,5 +171,11 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
     def groupId(self) -> str:
         return "mobility3d"
 
+    def tags(self) -> list[str]:
+        return ["routing", "3d", "kinematics", "tobler", "minetti", "least cost path", "elevation", "slope", "profile", "shortest path", "network"]
+
     def createInstance(self) -> Compute3DRouteAlgorithm:
         return Compute3DRouteAlgorithm()
+
+
+

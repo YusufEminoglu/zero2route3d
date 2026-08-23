@@ -14,7 +14,7 @@ repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://yusufeminoglu.github.io/zero2route3d/
 
 category=Analysis
-tags=routing,3d,network analysis,mobility,accessibility,walkability,least cost path,threejs,elevation,slope,tobler,kinematics,isochrone
+tags=routing, 3d, network analysis, mobility, accessibility, walkability, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, catchment, e2sfca, spatial equity, wheelchair, ada compliance, evacuation, hazard routing, solar shadow, microclimate, map matching, gps, gpx, dxf, cad, micromobility, bicycle routing, e-bike, e-scooter, od matrix, copernicus dem, urban analytics, zero2
 
 icon=icons/icon.png
 
