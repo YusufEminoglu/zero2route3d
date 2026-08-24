@@ -18,7 +18,7 @@ tags=routing, 3d, network analysis, mobility, accessibility, walkability, least 
 
 icon=icons/icon.png
 
-experimental=False
+experimental=True
 deprecated=False
 hasProcessingProvider=yes
 license=GPL-2.0-or-later
