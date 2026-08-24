@@ -1093,9 +1093,28 @@ class Route3DStudioDock(QDockWidget):
             self.current_route_file.unlink()
         if hasattr(self, "table_comparison"):
             self.table_comparison.setRowCount(0)
-        for label in (getattr(self, "kpi_dist", None), getattr(self, "kpi_time", None), getattr(self, "kpi_climb", None), getattr(self, "kpi_slope", None), getattr(self, "kpi_kcal", None)):
+        # Both widget sets must be reset. Only the Advanced labels were cleared,
+        # so after "New Route" the Quick tab still showed the previous run's
+        # distance, time and calories.
+        for name in (
+            "kpi_dist", "kpi_time", "kpi_climb", "kpi_slope", "kpi_kcal",
+            "quick_kpi_dist", "quick_kpi_time", "quick_kpi_climb",
+            "quick_kpi_slope", "quick_kpi_kcal",
+        ):
+            label = getattr(self, name, None)
             if label is not None:
                 label.setText("—")
+
+        # Likewise the export buttons: they stayed enabled and silently no-opped
+        # against a cleared result.
+        for name in (
+            "btn_export_gpx", "btn_export_geojson", "btn_export_html", "btn_export_dxf",
+            "btn_quick_export_gpx", "btn_quick_export_geojson",
+            "btn_quick_export_html", "btn_quick_export_dxf",
+        ):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(False)
         if hasattr(self, "lbl_anim_status"):
             self.lbl_anim_status.setText("00:00 / 00:00 (0%) | Ready to animate")
         for button in (getattr(self, "btn_anim_play", None), getattr(self, "btn_anim_stop", None)):
@@ -1168,6 +1187,27 @@ class Route3DStudioDock(QDockWidget):
             finally:
                 self._handling_layer_removal = False
 
+    def _release_active_tool(self) -> None:
+        """Unset and dispose the current map tool before another replaces it.
+
+        Each picker toggle used to construct a fresh RoutePointMapTool and connect
+        its signal without ever unsetting or deleting the previous one, leaving an
+        orphaned vertex marker painted on the canvas and a Python object eligible
+        for garbage collection while QGIS still held the C++ tool.
+        """
+        tool = self.active_tool
+        if tool is None:
+            return
+        with contextlib.suppress(Exception):
+            if self.canvas is not None:
+                self.canvas.unsetMapTool(tool)
+            tool.deactivate()
+        with contextlib.suppress(Exception):
+            tool.point_captured.disconnect()
+        with contextlib.suppress(Exception):
+            tool.deleteLater()
+        self.active_tool = None
+
     def _toggle_specific_picker(self, target: str, checked: bool) -> None:
         if not self.canvas:
             return
@@ -1178,15 +1218,20 @@ class Route3DStudioDock(QDockWidget):
             elif target == "B" and self.btn_pick_a.isChecked():
                 self.btn_pick_a.setChecked(False)
 
-            self.active_tool = RoutePointMapTool(self.canvas)
+            # Dispose the previous tool first; arming B while A was armed used to
+            # leave A's tool and its vertex marker behind.
+            self._release_active_tool()
+            # point_type drives the marker style; it was never passed, so Point B
+            # always drew Point A's green origin marker.
+            self.active_tool = RoutePointMapTool(
+                self.canvas, point_type="start" if target == "A" else "end"
+            )
             self.active_tool.point_captured.connect(self._on_point_captured)
             self.canvas.setMapTool(self.active_tool)
             if self.iface:
                 self.iface.messageBar().pushInfo("02Route 3D", f"Click on map canvas to set Point {target}...")
         else:
-            if self.active_tool:
-                self.canvas.unsetMapTool(self.active_tool)
-                self.active_tool = None
+            self._release_active_tool()
 
     def _on_point_captured(self, point: Any) -> None:
         lon = float(point.x())
@@ -1202,9 +1247,7 @@ class Route3DStudioDock(QDockWidget):
             if hasattr(self, "btn_quick_pick_b"):
                 self.btn_quick_pick_b.setChecked(False)
 
-        if self.active_tool:
-            self.canvas.unsetMapTool(self.active_tool)
-            self.active_tool = None
+        self._release_active_tool()
 
         self.waypoints = [w for w in (self.point_a, self.point_b) if w is not None]
         self._update_point_labels()
@@ -1512,6 +1555,29 @@ class Route3DStudioDock(QDockWidget):
         else:
             QMessageBox.warning(self, "02Route 3D", message)
 
+    def _write_route_payload(self, geojson_data: Any) -> bool:
+        """Write current_route.json atomically, reporting failure instead of hiding it.
+
+        The 3D studio polls this file every 1.5 s. Writing in place meant a poll
+        landing mid-write read truncated JSON, which the viewer swallowed, leaving
+        a stale scene with no explanation.
+        """
+        tmp_path = self.current_route_file.with_suffix(".json.tmp")
+        try:
+            tmp_path.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+            tmp_path.replace(self.current_route_file)
+            return True
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
+            message = (
+                f"Could not hand the route to the 3D studio: {exc}. "
+                f"The plugin folder may be read-only."
+            )
+            if self.iface:
+                self.iface.messageBar().pushWarning("02Route 3D", message)
+            return False
+
     def _get_active_bbox(self) -> Optional[Tuple[float, float, float, float]]:
         """WGS84 bounding box from the canvas or the waypoints, or None if neither.
 
@@ -1794,8 +1860,35 @@ class Route3DStudioDock(QDockWidget):
             else:
                 QMessageBox.critical(self, "02Route 3D", message)
 
+    def _set_compute_busy(self, busy: bool) -> None:
+        """Disable the compute buttons while a computation is running.
+
+        compute_route blocks the UI thread for seconds at a time (Overpass, DEM),
+        so a second click re-entered it on a frozen UI.
+        """
+        for name in ("btn_compute", "btn_quick_compute"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(not busy)
+                if busy:
+                    button.setText("Computing...")
+                elif getattr(self, "_compute_button_labels", None):
+                    original = self._compute_button_labels.get(name)
+                    if original:
+                        button.setText(original)
+        if busy and not getattr(self, "_compute_button_labels", None):
+            self._compute_button_labels = {
+                name: getattr(self, name).text()
+                for name in ("btn_compute", "btn_quick_compute")
+                if getattr(self, name, None) is not None
+            }
+
     def compute_route(self) -> None:
-        """Compute 3D shortest path(s) for active profile or multi-profile groups, output unified QGIS layer, and load canvas animation."""
+        """Compute 3D route(s), add the layer to QGIS and start the canvas animation."""
+        if getattr(self, "_computing", False):
+            # The work below blocks the UI thread, so without this a second click
+            # re-entered it on a frozen window.
+            return
         if not self.point_a or not self.point_b:
             msg = "Please select both Point A (Origin) and Point B (Destination) first using 'Pick on Map' or 'Use Layer'."
             if self.iface:
@@ -1804,10 +1897,30 @@ class Route3DStudioDock(QDockWidget):
                 QMessageBox.warning(self, "02Route 3D", msg)
             return
 
+        self._computing = True
+        self._set_compute_busy(True)
+        try:
+            self._compute_route_inner()
+        finally:
+            self._computing = False
+            self._set_compute_busy(False)
+            self.progress_bar.setVisible(False)
+            if hasattr(self, "quick_progress_bar"):
+                self.quick_progress_bar.setVisible(False)
+
+    def _compute_route_inner(self) -> None:
+        """The actual computation; always run inside compute_route's busy guard."""
         self.waypoints = [self.point_a, self.point_b]
 
+        # Both progress bars are driven, so the Quick tab is no longer blank for
+        # the whole (multi-second, network-bound) run.
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(15)
+        if hasattr(self, "quick_progress_bar"):
+            self.quick_progress_bar.setValue(15)
+        if hasattr(self, "quick_progress_bar"):
+            self.quick_progress_bar.setVisible(True)
+            self.quick_progress_bar.setValue(15)
 
         # Bounding box calculation scaled to route extent
         lons = [w.lon for w in self.waypoints]
@@ -1819,6 +1932,10 @@ class Route3DStudioDock(QDockWidget):
         bbox = (min(lons) - buf_lon, min(lats) - buf_lat, max(lons) + buf_lon, max(lats) + buf_lat)
 
         self.progress_bar.setValue(35)
+
+        if hasattr(self, "quick_progress_bar"):
+
+            self.quick_progress_bar.setValue(35)
 
         # Environmental raster sampling
         weights = MCDAWeights(
@@ -1863,6 +1980,10 @@ class Route3DStudioDock(QDockWidget):
 
         self.progress_bar.setValue(55)
 
+        if hasattr(self, "quick_progress_bar"):
+
+            self.quick_progress_bar.setValue(55)
+
         # Determine which profile keys to calculate
         scope_key = self.cmb_mode_scope.currentData() or "single"
         if scope_key == "single":
@@ -1893,6 +2014,10 @@ class Route3DStudioDock(QDockWidget):
 
         self.progress_bar.setValue(80)
 
+        if hasattr(self, "quick_progress_bar"):
+
+            self.quick_progress_bar.setValue(80)
+
         # Update KPIs
         self._update_kpi_display(result)
 
@@ -1921,7 +2046,7 @@ class Route3DStudioDock(QDockWidget):
         geojson_data = self._build_web_route_payload(result)
 
         with contextlib.suppress(Exception):
-            self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+            self._write_route_payload(geojson_data)
 
         # Automatically add the unified categorized multi-profile route layer to QGIS
         self.add_route_layer_to_qgis()
@@ -1951,6 +2076,10 @@ class Route3DStudioDock(QDockWidget):
             self.sld_quick_progress.setEnabled(True)
 
         self.progress_bar.setValue(100)
+
+        if hasattr(self, "quick_progress_bar"):
+
+            self.quick_progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
         if hasattr(self, "quick_progress_bar"):
             self.quick_progress_bar.setValue(100)
@@ -2072,7 +2201,7 @@ class Route3DStudioDock(QDockWidget):
         if self.current_route_result is not None or self.multi_route_results:
             geojson_data = self._build_web_route_payload(self.current_route_result)
             with contextlib.suppress(Exception):
-                self.current_route_file.write_text(json.dumps(geojson_data, indent=2), encoding="utf-8")
+                self._write_route_payload(geojson_data)
         server_url = self.local_server.start()
         QDesktopServices.openUrl(QUrl(server_url))
 
@@ -2328,8 +2457,14 @@ class Route3DStudioDock(QDockWidget):
                 project.removeMapLayer(layer_id)
         self._managed_route_layer_ids.clear()
 
-    def teardown(self) -> None:
-        """Clean up active tools, canvas animator markers, and background server."""
+    def teardown(self, remove_layers: bool = True) -> None:
+        """Release map tools, animator markers and the background server.
+
+        remove_layers=False is used when the dock is merely hidden: closing the
+        panel used to delete the route layers the user had just added to their
+        project, without asking, and permanently disconnect the project signal so
+        the reopened dock no longer tracked layer removal at all.
+        """
         if self.active_tool is not None and self.canvas is not None:
             with contextlib.suppress(Exception):
                 self.canvas.unsetMapTool(self.active_tool)
@@ -2341,10 +2476,13 @@ class Route3DStudioDock(QDockWidget):
         if hasattr(self, "btn_pick_b") and self.btn_pick_b:
             self.btn_pick_b.setChecked(False)
 
-        with contextlib.suppress(Exception):
-            QgsProject.instance().layersWillBeRemoved.disconnect(self._on_project_layers_removed)
         self._clear_animation_state()
-        self._remove_transient_project_layers()
+        if remove_layers:
+            with contextlib.suppress(Exception):
+                QgsProject.instance().layersWillBeRemoved.disconnect(
+                    self._on_project_layers_removed
+                )
+            self._remove_transient_project_layers()
 
         if hasattr(self, "local_server") and self.local_server:
             with contextlib.suppress(Exception):
@@ -2354,5 +2492,7 @@ class Route3DStudioDock(QDockWidget):
             self.current_route_file.unlink()
 
     def closeEvent(self, event: Any) -> None:
-        self.teardown()
+        # Hiding the panel must not destroy the user's work. Full teardown only
+        # happens on plugin unload, which calls teardown() directly.
+        self.teardown(remove_layers=False)
         super().closeEvent(event)
