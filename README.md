@@ -1,33 +1,33 @@
 <h1 align="center">02Route 3D — Multi-Criteria 3D Mobility Studio</h1>
 
 <p align="center">
-  <strong>Routes that understand terrain, body, and urban microclimates.</strong>
+ <strong>Routes that understand terrain, body, and urban microclimates.</strong>
 </p>
 
 <p align="center">
-  A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 14 headless Processing algorithms, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces (DEM slope, LST heat, canopy shade, road hierarchy), and an embedded 60 FPS Three.js WebGL 3D cockpit.
+ A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 14 headless Processing algorithms, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces (DEM slope, LST heat, canopy shade, road hierarchy), and an embedded Three.js WebGL 3D cockpit.
 </p>
 
 <p align="center">
-  <a href="metadata.txt"><img alt="QGIS" src="https://img.shields.io/badge/QGIS-3.28%2B%20LTR%20%7C%204.x%20Ready-5da85d?style=for-the-badge"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-111827?style=for-the-badge"></a>
-  <a href="https://yusufeminoglu.github.io/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
-  <a href="https://yusufeminoglu.github.io/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
-  <img alt="Three.js WebGL" src="https://img.shields.io/badge/viewer-60_FPS_WebGL-2f4858?style=for-the-badge">
+ <a href="metadata.txt"><img alt="QGIS" src="https://img.shields.io/badge/QGIS-3.28%2B%20LTR%20%7C%204.x%20Ready-5da85d?style=for-the-badge"></a>
+ <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-111827?style=for-the-badge"></a>
+ <a href="https://yusufeminoglu.github.io/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
+ <a href="https://yusufeminoglu.github.io/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
+ <img alt="Three.js WebGL" src="https://img.shields.io/badge/viewer-WebGL-2f4858?style=for-the-badge">
 </p>
 
 <p align="center">
-  <a href="#the-product-promise">Product Promise</a> |
-  <a href="#quick-start">Quick Start</a> |
-  <a href="#why-it-matters">Why It Matters</a> |
-  <a href="#signature-features">Signature Features</a> |
-  <a href="#mobility-profiles-catalog">15 Profiles</a> |
-  <a href="#processing-algorithms-catalog">14 Algorithms</a> |
-  <a href="#scientific--mathematical-foundations">Science &amp; Math</a> |
-  <a href="#viewer-experience">WebGL Studio</a> |
-  <a href="#showcase-playbook">Showcase Playbook</a> |
-  <a href="#repository-map">Repo Map</a> |
-  <a href="#-part-of-the-planx-ecosystem">PlanX Ecosystem</a>
+ <a href="#the-product-promise">Product Promise</a> |
+ <a href="#quick-start">Quick Start</a> |
+ <a href="#why-it-matters">Why It Matters</a> |
+ <a href="#signature-features">Signature Features</a> |
+ <a href="#mobility-profiles-catalog">15 Profiles</a> |
+ <a href="#processing-algorithms-catalog">14 Algorithms</a> |
+ <a href="#scientific--mathematical-foundations">Science &amp; Math</a> |
+ <a href="#viewer-experience">WebGL Studio</a> |
+ <a href="#showcase-playbook">Showcase Playbook</a> |
+ <a href="#repository-map">Repo Map</a> |
+ <a href="#-part-of-the-planx-ecosystem">PlanX Ecosystem</a>
 </p>
 
 ---
@@ -50,7 +50,7 @@ Traditional GIS shortest-path engines treat cities as flat Euclidean planes, com
 3. **Biomechanical Human Kinematics:** Dynamically computes travel velocity using Tobler's hiking function and metabolic energy cost using Minetti's 5th-order polynomial equations.
 4. **Multi-Objective Pareto Optimization:** Solves NAMOA* 4D non-dominated trade-offs across travel time, cumulative climb, thermal heat dose, and calories.
 5. **Universal Accessibility Auditing:** Enforces strict ADA barrier-free thresholds (5% maximum grade, stair blocking, surface smoothness).
-6. **Embedded 60 FPS WebGL 3D Studio:** Inspect routes in real-time with chase/orbit/driver cameras, glowing GLSL heat stress ribbons, 24-hour solar simulations, and longitudinal profile HUDs.
+6. **Embedded WebGL 3D Studio:** Inspect routes in real-time with chase/orbit/driver cameras, glowing GLSL heat stress ribbons, 24-hour solar simulations, and longitudinal profile HUDs.
 
 ---
 
@@ -66,11 +66,11 @@ Restart QGIS, enable **02Route 3D** in **Plugins > Installed**, then open the st
 
 ### Use it inside QGIS
 
-1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"🌐 Fetch Real Copernicus 30m Topography for Extent"** to download official GLO-30 COG tiles.
+1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"Fetch &amp; Clip Corridor Elevation Raster"** to download official GLO-30 COG tiles.
 2. **Select Origin & Destination:** Use the map canvas picker tools to select Point A (Origin) and Point B (Destination).
 3. **Pick Mobility Profile:** Choose from 15 profiles (e.g. *Wheelchair ADA*, *Senior*, *Commuter Bike*, *Emergency EMS*).
 4. **Tune AHP Weights (Optional):** In Tab 2 (MCDA & AHP), adjust the relative weights for Slope, Heat Island, Greenery, and Road Hierarchy.
-5. **Compute & Inspect:** Click **"Compute 3D Least-Cost Route"** to generate the 3D `LineStringZ` layer and launch the embedded 60 FPS WebGL 3D Studio.
+5. **Compute & Inspect:** Click **"Compute 3D Least-Cost Route"** to generate the 3D `LineStringZ` layer and launch the embedded WebGL 3D Studio.
 
 ---
 
@@ -121,19 +121,19 @@ Every analytical module is fully scriptable in QGIS Graphical Modeler, PyQGIS, a
 | Algorithm Name | Processing ID | Key Output | Tags |
 | :--- | :--- | :--- | :--- |
 | **3D Least-Cost Route** | `zero2route3d:compute_3d_route` | `LineStringZ` layer | Routing, 3D |
-| **3D Isochrones** | `zero2route3d:service_area_3d` | Multi-tier Polygon layer | Catchment, Wavefront |
-| **E2SFCA Accessibility Score** | `zero2route3d:accessibility_equity` | Equity Score Point/Grid | Equity, Justice, Gini |
-| **Multi-Criteria Cost Surface** | `zero2route3d:multi_criteria_cost_surface` | Normalized Friction Raster | Raster, AHP, MCDA |
+| **3D Isochrones** | `zero2route3d:generate_3d_isochrone` | Multi-tier Polygon layer | Catchment, Wavefront |
+| **E2SFCA Accessibility Score** | `zero2route3d:accessibility_equity_scorecard` | Equity Score Point/Grid | Equity, Justice, Gini |
+| **Multi-Criteria Cost Surface** | `zero2route3d:mcda_cost_surface` | Normalized Friction Raster | Raster, AHP, MCDA |
 | **NAMOA\* Pareto Routing** | `zero2route3d:pareto_3d_routes` | Non-Dominated Routes | Pareto, Multi-Objective |
-| **GPS 3D Map Matching** | `zero2route3d:map_matching_3d` | Snapped 3D Track Layer | GPX, HMM, Viterbi |
-| **ADA Walkability Audit** | `zero2route3d:walkability_audit` | Compliance Gradient Audit | Audit, ADA, Barrier-Free |
-| **Hazard Evacuation Routing** | `zero2route3d:evacuation_routing` | Dynamic Egress Paths | Emergency, Hazard |
-| **Solar Exposure Analysis** | `zero2route3d:solar_exposure` | Sun/Shade Polyline Layer | Climate, Solar, Shade |
-| **Batch 3D Routing** | `zero2route3d:batch_3d_route` | Batch Route Vector Layer | Batch, Vector, OD |
+| **GPS 3D Map Matching** | `zero2route3d:map_match_3d_track` | Snapped 3D Track Layer | GPX, HMM, Viterbi |
+| **ADA Walkability Audit** | `zero2route3d:walkability_3d_audit` | Compliance Gradient Audit | Audit, ADA, Barrier-Free |
+| **Hazard Evacuation Routing** | `zero2route3d:emergency_evacuation_3d` | Dynamic Egress Paths | Emergency, Hazard |
+| **Solar Exposure Analysis** | `zero2route3d:solar_shade_exposure` | Sun/Shade Polyline Layer | Climate, Solar, Shade |
+| **Batch 3D Routing** | `zero2route3d:batch_3d_routes` | Batch Route Vector Layer | Batch, Vector, OD |
 | **3D OD Cost Matrix** | `zero2route3d:od_matrix_3d` | N×M Matrix CSV / Table | Matrix, OD, Distance |
-| **Analytical Report Generator** | `zero2route3d:generate_analytical_report` | HTML Scorecard Document | Report, HTML, SVG |
-| **Export Route to AutoCAD DXF** | `zero2route3d:export_route_to_dxf` | AutoCAD DXF (AC1009) | CAD, DXF, Polyline |
-| **Export Standalone 3D HTML** | `zero2route3d:export_standalone_html` | Self-Contained HTML | Export, WebGL, 3D |
+| **Analytical Report Generator** | `zero2route3d:generate_route_report_html` | HTML Scorecard Document | Report, HTML, SVG |
+| **Export Route to AutoCAD DXF** | `zero2route3d:export_3d_route_dxf` | AutoCAD DXF (AC1009) | CAD, DXF, Polyline |
+| **Export Standalone 3D HTML** | `zero2route3d:export_3d_html_report` | Self-Contained HTML | Export, WebGL, 3D |
 
 ---
 
@@ -166,7 +166,7 @@ $$f(d) = \frac{\exp\left(-\frac{1}{2}(d/d_0)^2\right) - \exp(-0.5)}{1 - \exp(-0.
 
 ## Viewer Experience
 
-The embedded Three.js WebGL 3D Studio delivers 60 FPS hardware acceleration directly inside QGIS:
+The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering directly inside QGIS:
 
 | Feature | Description |
 | :--- | :--- |
@@ -176,7 +176,7 @@ The embedded Three.js WebGL 3D Studio delivers 60 FPS hardware acceleration dire
 | **24-Hour Solar Trajectory** | Real-time astronomical sun position and shadow casting based on latitude, date, and hour of day. |
 | **Subsurface Geological Slicer** | Clip plane tool to slice through 3D terrain and inspect subterranean elevation profiles. |
 | **Audio Voice Navigation** | Web Speech API integration delivering turn-by-turn spoken audio cues with gradient warnings. |
-| **Media Capture** | Export 4K PNG screenshots or record live 60 FPS WebM/MP4 video clips directly from the canvas. |
+| **Media Capture** | Export 4K PNG screenshots or record live WebM/MP4 video clips directly from the canvas. |
 
 ---
 
@@ -201,13 +201,13 @@ The embedded Three.js WebGL 3D Studio delivers 60 FPS hardware acceleration dire
 | `core/kinematics.py` | Tobler, Minetti, Keys bicubic spline, and aerodynamic drag kinematics. |
 | `core/mobility_profiles.py` | Definitions and constraints for all 15 mobility profiles. |
 | `core/environmental_raster.py` | Multi-criteria raster impedance sampler and AHP consistency engine. |
-| `core/copernicus_dem.py` | Official Copernicus GLO-30 30m elevation COG tile downloader. |
+| `core/copernicus_dem.py` | Removed in 0.2.0: this module only ever built URL strings and was never called. |
 | `core/pareto_router.py` | NAMOA* 4D multi-objective Pareto frontier solver. |
 | `core/isochrone_engine.py` | Anisotropic Dijkstra wavefront isochrone propagation. |
-| `core/map_matching_3d.py` | Hidden Markov Model 3D GPS map matching with Viterbi decoding. |
+| `core/map_match_3d_track.py` | Hidden Markov Model 3D GPS map matching with Viterbi decoding. |
 | `core/profile_dxf.py` | AutoCAD DXF AC1009 3D Polyline and longitudinal profile exporter. |
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
-| `web/` | Embedded Three.js WebGL 60 FPS studio (HTML, CSS, JS, GLSL shaders). |
+| `web/` | Embedded Three.js WebGL studio (HTML, CSS, JS, GLSL shaders). |
 | `docs/` | GitHub Pages landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
 | `tests/` | Pure logic unit tests and QGIS headless smoke tests. |
 

@@ -291,7 +291,7 @@ class Route3DStudioDock(QDockWidget):
         prof_row.addWidget(self.cmb_quick_profile)
         prof_layout.addLayout(prof_row)
 
-        self.lbl_quick_profile_info = QLabel("Speed: 5.0 km/h | Max Slope: 25.0% | Stairs: Allowed")
+        self.lbl_quick_profile_info = QLabel("Select a mobility profile to see its speed, gradient limit and stair policy.")
         self.lbl_quick_profile_info.setProperty("class", "route3dBadgeInfo")
         prof_layout.addWidget(self.lbl_quick_profile_info)
         layout.addWidget(card_prof)
@@ -390,7 +390,7 @@ class Route3DStudioDock(QDockWidget):
         status_row.addStretch()
         play_layout.addLayout(status_row)
 
-        self.btn_quick_open_3d = QPushButton("🎬 Open 3D WebGL Studio & Diorama (60 FPS)")
+        self.btn_quick_open_3d = QPushButton("🎬 Open 3D WebGL Studio & Diorama")
         self.btn_quick_open_3d.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
@@ -673,7 +673,7 @@ class Route3DStudioDock(QDockWidget):
         prof_row.addWidget(self.cmb_profile)
         prof_layout.addLayout(prof_row)
 
-        self.lbl_profile_info = QLabel("Speed: 5.0 km/h | Max Slope: 25.0% | Stairs: Allowed")
+        self.lbl_profile_info = QLabel("Select a mobility profile to see its speed, gradient limit and stair policy.")
         self.lbl_profile_info.setProperty("class", "route3dBadgeInfo")
         prof_layout.addWidget(self.lbl_profile_info)
         layout.addWidget(card_prof)
@@ -743,7 +743,7 @@ class Route3DStudioDock(QDockWidget):
         act_layout.addWidget(self.btn_compute)
 
         # Open 3D WebGL Studio Button
-        self.btn_open_3d = QPushButton("🎬 Open 3D WebGL Studio & 50m Building Corridor (60 FPS)")
+        self.btn_open_3d = QPushButton("🎬 Open 3D WebGL Studio (30 m building corridor)")
         self.btn_open_3d.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
@@ -825,7 +825,7 @@ class Route3DStudioDock(QDockWidget):
         card_anim = QFrame()
         card_anim.setProperty("class", "route3dCard")
         anim_layout = QVBoxLayout(card_anim)
-        anim_layout.addWidget(QLabel("<b>7. Real-Time 2D Canvas Animation (QGIS Tuvali)</b>"))
+        anim_layout.addWidget(QLabel("<b>7. Real-Time 2D Canvas Animation (QGIS Canvas)</b>"))
 
         anim_ctrl_row = QHBoxLayout()
         self.btn_anim_play = QPushButton("▶️ Play")
@@ -934,7 +934,7 @@ class Route3DStudioDock(QDockWidget):
             "• <b>Energy:</b> Minetti Metabolic Cost Polynomial (2002)<br>"
             "• <b>Cyclist:</b> Cycling Power Balance (Aerodynamic Drag + Rolling Resistance)<br>"
             "• <b>Comfort:</b> UTCI (Universal Thermal Climate Index) Stress Penalty<br>"
-            "• <b>Corridor Buffer:</b> 50-meter 3D building footprint extrusion along route centerline"
+            "• <b>Corridor Buffer:</b> 30-metre 3D building footprint extrusion along the route centreline"
         )
         _RichText = getattr(getattr(Qt, "TextFormat", Qt), "RichText", 1)
         info_text.setTextFormat(_RichText)
@@ -2068,7 +2068,7 @@ class Route3DStudioDock(QDockWidget):
             self.canvas_animator.set_speed_multiplier(float(speed_str))
 
     def open_3d_studio(self) -> None:
-        """Start local HTTP server and launch the 3D WebGL studio with 50m building corridor in browser."""
+        """Start the local HTTP server and open the 3D WebGL studio (30 m building corridor)."""
         if self.current_route_result is not None or self.multi_route_results:
             geojson_data = self._build_web_route_payload(self.current_route_result)
             with contextlib.suppress(Exception):

@@ -373,7 +373,7 @@
                 <li><a href="#kinematics">4. Kinematics &amp; Math</a></li>
                 <li><a href="#mcda">5. MCDA &amp; AHP Surface</a></li>
                 <li><a href="#pareto">6. NAMOA* Pareto Routing</a></li>
-                <li><a href="#webgl-studio">7. 60 FPS WebGL Studio</a></li>
+                <li><a href="#webgl-studio">7. WebGL Studio</a></li>
                 <li><a href="#exports">8. Data Formats &amp; DXF</a></li>
                 <li><a href="#pyqgis">9. PyQGIS Automation</a></li>
                 <li><a href="#faq">10. Troubleshooting &amp; FAQ</a></li>
@@ -397,7 +397,7 @@
                         <li><strong>1. Core Graph Engine:</strong> Builds 3D topological graphs draped with continuous elevation values from digital elevation models (DEMs). Features bicubic Catmull-Rom spline sampling, A* search, and Dijkstra wavefront propagation.</li>
                         <li><strong>2. Processing Provider:</strong> Exposes 14 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
                         <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation.</li>
-                        <li><strong>4. Embedded WebGL 3D Studio:</strong> A dedicated Three.js cockpit embedded within QGIS via <code>QWebEngineView</code> or local browser for 60 FPS hardware-accelerated 3D inspection.</li>
+                        <li><strong>4. Embedded WebGL 3D Studio:</strong> A dedicated Three.js cockpit embedded within QGIS via <code>QWebEngineView</code> or local browser for  hardware-accelerated 3D inspection.</li>
                     </ul>
                 </div>
             </section>
@@ -450,43 +450,43 @@
                     <h3>1. <code>zero2route3d:compute_3d_route</code> (3D Least-Cost Route)</h3>
                     <p>Calculates single-source shortest path using 3D node elevations. Outputs a <code>LineStringZ</code> layer with cumulative climb, energy expenditure, and slope attributes.</p>
 
-                    <h3>2. <code>zero2route3d:service_area_3d</code> (3D Isochrones)</h3>
+                    <h3>2. <code>zero2route3d:generate_3d_isochrone</code> (3D Isochrones)</h3>
                     <p>Generates multi-tier temporal/metabolic catchments via anisotropic wavefront Dijkstra accounting for slope resistance.</p>
 
-                    <h3>3. <code>zero2route3d:accessibility_equity</code> (E2SFCA Equity Score)</h3>
+                    <h3>3. <code>zero2route3d:accessibility_equity_scorecard</code> (E2SFCA Equity Score)</h3>
                     <p>Calculates spatial equity scores for healthcare and amenity distribution with Gini coefficient, Lorenz curve, and Palma ratio.</p>
 
-                    <h3>4. <code>zero2route3d:multi_criteria_cost_surface</code> (AHP Friction Surface)</h3>
+                    <h3>4. <code>zero2route3d:mcda_cost_surface</code> (AHP Friction Surface)</h3>
                     <p>Combines raster layers into a normalized friction surface using Saaty pairwise comparison weights.</p>
 
                     <h3>5. <code>zero2route3d:pareto_3d_routes</code> (NAMOA* Pareto Routing)</h3>
                     <p>Yields multiple non-dominated routes trading off travel duration, cumulative climb, heat exposure, and metabolic energy.</p>
 
-                    <h3>6. <code>zero2route3d:map_matching_3d</code> (GPS 3D Map Matching)</h3>
+                    <h3>6. <code>zero2route3d:map_match_3d_track</code> (GPS 3D Map Matching)</h3>
                     <p>Snaps noisy GPX tracks to the 3D road graph via Hidden Markov Models and Viterbi trellis dynamic programming.</p>
 
-                    <h3>7. <code>zero2route3d:walkability_audit</code> (ADA Compliance Audit)</h3>
+                    <h3>7. <code>zero2route3d:walkability_3d_audit</code> (ADA Compliance Audit)</h3>
                     <p>Audits pedestrian paths against ADA cross-slope and maximum gradient thresholds, highlighting non-compliant segments.</p>
 
-                    <h3>8. <code>zero2route3d:evacuation_routing</code> (Hazard Egress Routing)</h3>
-                    <p>Dynamic egress pathfinding avoiding expanding fire, flood, or toxic hazard barrier polygons.</p>
+                    <h3>8. <code>zero2route3d:emergency_evacuation_3d</code> (Hazard Egress Routing)</h3>
+                    <p>Shortest egress routing from an origin to the nearest muster points across the real network.</p>
 
-                    <h3>9. <code>zero2route3d:solar_exposure</code> (Sun / Shade Analysis)</h3>
-                    <p>Calculates shadowed paths based on solar azimuth/altitude, building massing, and DEM aspect.</p>
+                    <h3>9. <code>zero2route3d:solar_shade_exposure</code> (Sun / Shade Analysis)</h3>
+                    <p>Calculates solar geometry along the route from solar azimuth and altitude. No building massing is used.</p>
 
-                    <h3>10. <code>zero2route3d:batch_3d_route</code> (Batch Point-Pair Routing)</h3>
-                    <p>Calculates least-cost 3D paths for thousands of origin-destination point pairs simultaneously.</p>
+                    <h3>10. <code>zero2route3d:batch_3d_routes</code> (Batch Point-Pair Routing)</h3>
+                    <p>Calculates least-cost 3D paths for many origin-destination point pairs, paired in feature order.</p>
 
                     <h3>11. <code>zero2route3d:od_matrix_3d</code> (3D OD Cost Matrix)</h3>
                     <p>Computes N×M travel times, distances, and calorie matrices across the 3D network.</p>
 
-                    <h3>12. <code>zero2route3d:generate_analytical_report</code> (HTML Scorecard)</h3>
+                    <h3>12. <code>zero2route3d:generate_route_report_html</code> (HTML Scorecard)</h3>
                     <p>Generates a publication-grade HTML audit scorecard with embedded SVG elevation profiles.</p>
 
-                    <h3>13. <code>zero2route3d:export_route_to_dxf</code> (AutoCAD DXF Exporter)</h3>
+                    <h3>13. <code>zero2route3d:export_3d_route_dxf</code> (AutoCAD DXF Exporter)</h3>
                     <p>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawings directly to DXF format.</p>
 
-                    <h3>14. <code>zero2route3d:export_standalone_html</code> (Standalone 3D HTML)</h3>
+                    <h3>14. <code>zero2route3d:export_3d_html_report</code> (Standalone 3D HTML)</h3>
                     <p>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D WebGL viewer.</p>
                 </div>
             </section>
@@ -546,10 +546,10 @@ print("Route generated with length:", route_layer.featureCount())
                 <h2>10. Troubleshooting &amp; FAQ</h2>
                 <div class="glass-panel">
                     <h3>Q: Does 02Route 3D require external pip dependencies?</h3>
-                    <p><strong>No.</strong> 02Route 3D is designed strictly using core QGIS (PyQt, <code>qgis.core</code>, <code>qgis.gui</code>, <code>numpy</code>, <code>scipy</code>) and has zero pip dependencies.</p>
+                    <p><strong>No.</strong> 02Route 3D is designed strictly using core QGIS (PyQt, <code>qgis.core</code>, <code>qgis.gui</code>, the Python standard library) and has zero pip dependencies.</p>
 
                     <h3>Q: How does the plugin handle areas without a local DEM?</h3>
-                    <p>You can use the built-in <strong>"Fetch Real Copernicus 30m Topography"</strong> button in the Dock panel. It fetches official Copernicus GLO-30 COG elevation tiles for the canvas extent.</p>
+                    <p>You can use the built-in <strong>"Fetch Real Copernicus 30m Topography"</strong> button in the Dock panel. It queries real elevation for the canvas extent from the Open-Elevation API and clips it to the route corridor.</p>
 
                     <h3>Q: Are the 3D exports compatible with CAD software?</h3>
                     <p><strong>Yes.</strong> The DXF exporter produces AC1009 standard 3D Polylines that open natively in AutoCAD, Civil 3D, Rhino, and SketchUp with real elevations.</p>

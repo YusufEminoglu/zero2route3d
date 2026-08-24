@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>02Route 3D — Multi-Criteria 3D Mobility Studio for QGIS</title>
-    <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded 60 FPS Three.js WebGL animation." />
+    <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded  Three.js WebGL animation." />
     <meta property="og:title" content="02Route 3D QGIS Plugin" />
-    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 14 Processing algorithms, Tobler/Minetti kinematics, and 60 FPS WebGL 3D cockpit." />
+    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 14 Processing algorithms, Tobler/Minetti kinematics, and WebGL 3D cockpit." />
     <meta property="og:type" content="website" />
 
     <!-- Google Fonts -->
@@ -1065,10 +1065,10 @@
                 <span class="gradient-text">terrain, body & climate</span>
             </h1>
             <p class="subtitle">
-                Multi-profile 3D route planning with biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded 60 FPS WebGL animation. From wheelchair-accessible paths to emergency evacuation — every route respects slope, heat, energy, and human limits.
+                Multi-profile 3D route planning with biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded WebGL animation. From wheelchair-accessible paths to emergency evacuation — every route respects slope, heat, energy, and human limits.
             </p>
             <div class="hero-actions">
-                <a href="https://plugins.qgis.org/plugins/zero2route3d/" class="btn btn-primary pulse-btn" target="_blank">
+                <a href="https://github.com/YusufEminoglu/zero2route3d/releases" class="btn btn-primary pulse-btn" target="_blank">
                     Install from Plugin Hub ⇓
                 </a>
                 <a href="https://github.com/YusufEminoglu/zero2route3d" class="btn btn-secondary" target="_blank">
@@ -1105,7 +1105,7 @@
             <span class="badge badge-cyan">✔ QGIS 3.28+ LTR</span>
             <span class="badge badge-cyan">✔ QGIS 4.x / Qt6</span>
             <span class="badge badge-amber">✔ 3D Network Routing</span>
-            <span class="badge badge-amber">✔ 60 FPS WebGL Studio</span>
+            <span class="badge badge-amber">✔ WebGL Studio</span>
             <span class="badge badge-emerald">✔ Zero Pip Dependencies</span>
             <span class="badge badge-gray">✔ GPL-2.0-or-later</span>
             <span class="badge badge-gray">👤 Yusuf Eminoğlu · Dokuz Eylül University</span>
@@ -1119,7 +1119,7 @@
                 <span class="eyebrow">About</span>
                 <h2>3D mobility intelligence for every traveler</h2>
                 <p><strong>02Route 3D</strong> bridges topological network analysis with physical terrain realities and urban microclimates. Traditional GIS shortest-path engines treat cities as flat planes, overlooking the punishing physiological impact of steep grades, extreme urban heat, and barrier-rich environments.</p>
-                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a state-of-the-art embedded Three.js WebGL studio for 60 FPS 3D cockpit simulation, gait animation, and instant scorecards.</p>
+                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a embedded Three.js WebGL studio for an interactive 3D cockpit view, gait animation, and instant scorecards.</p>
                 <div class="author-buttons">
                     <a href="https://github.com/YusufEminoglu" class="btn btn-secondary" target="_blank">👤 Yusuf Eminoğlu</a>
                     <a href="mailto:yusuf.eminoglu@deu.edu.tr" class="btn btn-secondary">✉ yusuf.eminoglu@deu.edu.tr</a>
@@ -1216,7 +1216,7 @@
             </div>
             <div class="glass-card feature-card fade-up">
                 <span class="feature-icon">🌐</span>
-                <h3>60 FPS WebGL Studio</h3>
+                <h3>WebGL Studio</h3>
                 <p>An embedded Three.js cockpit directly within QGIS. Features chase/orbit cameras, procedural avatars, GLSL heat ribbons, solar simulation, and sub-surface terrain slicing.</p>
             </div>
             <div class="glass-card feature-card fade-up">
@@ -1731,19 +1731,19 @@
                     </tr>
                     <tr>
                         <td>3D Isochrones (Catchments)</td>
-                        <td class="td-code">zero2route3d:service_area_3d</td>
+                        <td class="td-code">zero2route3d:generate_3d_isochrone</td>
                         <td>Generates multi-tier temporal/metabolic catchments via wavefront Dijkstra.</td>
                         <td><span class="tag">Catchment</span> <span class="tag purple">Polygon</span></td>
                     </tr>
                     <tr>
                         <td>E2SFCA Spatial Accessibility</td>
-                        <td class="td-code">zero2route3d:accessibility_equity</td>
+                        <td class="td-code">zero2route3d:accessibility_equity_scorecard</td>
                         <td>Calculates spatial equity scores, Gini coefficient, and Palma ratio for amenity justice.</td>
                         <td><span class="tag">Equity</span> <span class="tag amber">Justice</span></td>
                     </tr>
                     <tr>
                         <td>Multi-Criteria Cost Surface</td>
-                        <td class="td-code">zero2route3d:multi_criteria_cost_surface</td>
+                        <td class="td-code">zero2route3d:mcda_cost_surface</td>
                         <td>Combines raster layers into a normalized friction/impedance surface using AHP weights.</td>
                         <td><span class="tag">Raster</span> <span class="tag emerald">AHP</span></td>
                     </tr>
@@ -1755,32 +1755,32 @@
                     </tr>
                     <tr>
                         <td>GPS 3D Map Matching (HMM)</td>
-                        <td class="td-code">zero2route3d:map_matching_3d</td>
+                        <td class="td-code">zero2route3d:map_match_3d_track</td>
                         <td>Snaps noisy GPX tracks to the 3D road graph via Hidden Markov Models and Viterbi.</td>
                         <td><span class="tag">GPX</span> <span class="tag amber">HMM</span></td>
                     </tr>
                     <tr>
                         <td>ADA Walkability Audit</td>
-                        <td class="td-code">zero2route3d:walkability_audit</td>
+                        <td class="td-code">zero2route3d:walkability_3d_audit</td>
                         <td>Validates pedestrian paths against strict ADA cross-slope and gradient thresholds.</td>
                         <td><span class="tag">Audit</span> <span class="tag emerald">ADA</span></td>
                     </tr>
                     <tr>
                         <td>Hazard Evacuation Routing</td>
-                        <td class="td-code">zero2route3d:evacuation_routing</td>
+                        <td class="td-code">zero2route3d:emergency_evacuation_3d</td>
                         <td>Dynamic egress pathfinding avoiding expanding fire, flood, or toxic hazard polygons.</td>
                         <td><span class="tag">Hazard</span> <span class="tag amber">Emergency</span></td>
                     </tr>
                     <tr>
                         <td>Sun / Shade Solar Exposure</td>
-                        <td class="td-code">zero2route3d:solar_exposure</td>
+                        <td class="td-code">zero2route3d:solar_shade_exposure</td>
                         <td>Calculates shadowed paths based on solar azimuth/altitude, buildings, and DEM aspect.</td>
                         <td><span class="tag">Climate</span> <span class="tag purple">Solar</span></td>
                     </tr>
                     <tr>
                         <td>Batch 3D Routing</td>
-                        <td class="td-code">zero2route3d:batch_3d_route</td>
-                        <td>Calculates least-cost 3D paths for thousands of origin-destination point pairs.</td>
+                        <td class="td-code">zero2route3d:batch_3d_routes</td>
+                        <td>Calculates least-cost 3D paths for many origin-destination point pairs, paired in feature order.</td>
                         <td><span class="tag">Batch</span> <span class="tag">Vector</span></td>
                     </tr>
                     <tr>
@@ -1791,19 +1791,19 @@
                     </tr>
                     <tr>
                         <td>Analytical Report Generator</td>
-                        <td class="td-code">zero2route3d:generate_analytical_report</td>
+                        <td class="td-code">zero2route3d:generate_route_report_html</td>
                         <td>Generates a publication-grade HTML audit scorecard with embedded SVG elevation profiles.</td>
                         <td><span class="tag">Report</span> <span class="tag purple">HTML</span></td>
                     </tr>
                     <tr>
                         <td>Export Route to AutoCAD DXF</td>
-                        <td class="td-code">zero2route3d:export_route_to_dxf</td>
+                        <td class="td-code">zero2route3d:export_3d_route_dxf</td>
                         <td>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawing directly to DXF.</td>
                         <td><span class="tag">CAD</span> <span class="tag amber">DXF</span></td>
                     </tr>
                     <tr>
                         <td>Export Standalone 3D HTML</td>
-                        <td class="td-code">zero2route3d:export_standalone_html</td>
+                        <td class="td-code">zero2route3d:export_3d_html_report</td>
                         <td>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D viewer.</td>
                         <td><span class="tag">Export</span> <span class="tag emerald">WebGL</span></td>
                     </tr>
@@ -1816,7 +1816,7 @@
     <section id="webgl" class="container">
         <div class="section-header fade-up">
             <span class="eyebrow">WebGL 3D Studio</span>
-            <h2>60 FPS hardware-accelerated 3D cockpit</h2>
+            <h2> hardware-accelerated 3D cockpit</h2>
             <p>Powered by Three.js, directly integrated inside the QGIS interface. Analyze routes visually without leaving your workspace.</p>
         </div>
 
@@ -1884,7 +1884,7 @@
                     <div class="arch-connector-h"></div>
                     <div class="arch-node" style="border-color:var(--kinetic-cyan-light)">
                         <h4>WebGL Studio</h4>
-                        <p>Three.js 60 FPS Engine</p>
+                        <p>Three.js  Engine</p>
                     </div>
                 </div>
             </div>
@@ -1941,7 +1941,7 @@
     <section id="install" class="container">
         <div class="section-header fade-up">
             <span class="eyebrow">Get Started</span>
-            <h2>Up and Running in 30 Seconds</h2>
+            <h2>Getting Started</h2>
             <p>Compatible with QGIS 3.28+ across Windows, macOS, and Linux with zero external pip dependencies.</p>
         </div>
 
@@ -1949,7 +1949,7 @@
             <div class="glass-card install-step fade-up">
                 <div class="step-number">01</div>
                 <h3>Plugin Manager (Recommended)</h3>
-                <p>Open QGIS, go to <strong>Plugins &gt; Manage and Install Plugins</strong>, search for <em>02Route 3D</em>, and click Install.</p>
+                <p>Download the release ZIP, then in QGIS go to <strong>Plugins &gt; Manage and Install Plugins &gt; Install from ZIP</strong>. The plugin is not yet published on the QGIS Plugin Hub.</p>
                 <div class="code-block">zero2route3d</div>
             </div>
             <div class="glass-card install-step fade-up">
@@ -1967,7 +1967,7 @@
         </div>
         
         <div style="text-align: center; margin-top: 3rem;" class="fade-up">
-            <a href="https://plugins.qgis.org/plugins/zero2route3d/" class="btn btn-primary pulse-btn" target="_blank">Open in QGIS Plugin Hub ⇓</a>
+            <a href="https://github.com/YusufEminoglu/zero2route3d/releases" class="btn btn-primary pulse-btn" target="_blank">Open in QGIS Plugin Hub ⇓</a>
         </div>
     </section>
 
@@ -2007,7 +2007,7 @@
             <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
                 <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
                 <li>✨ Integrated 14 headless QGIS Processing algorithms with modeler support</li>
-                <li>✨ Launched embedded Three.js WebGL 60 FPS studio with chase/POV/orbit cameras</li>
+                <li>✨ Launched embedded Three.js WebGL  studio with chase/POV/orbit cameras</li>
                 <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
                 <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>
                 <li>✨ Implemented NAMOA* 4D Pareto frontier multi-objective optimization</li>
@@ -2031,7 +2031,7 @@
                     <h4>Documentation</h4>
                     <ul class="footer-links">
                         <li><a href="MANUAL.html">Reference Manual</a></li>
-                        <li><a href="https://plugins.qgis.org/plugins/zero2route3d/">QGIS Plugin Hub</a></li>
+                        <li><a href="https://github.com/YusufEminoglu/zero2route3d/releases">Releases</a></li>
                         <li><a href="https://github.com/YusufEminoglu/zero2route3d">GitHub Repository</a></li>
                         <li><a href="https://github.com/YusufEminoglu/zero2route3d/releases">Releases</a></li>
                     </ul>

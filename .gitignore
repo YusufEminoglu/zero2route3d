@@ -6,3 +6,6 @@ __pycache__/
 .vscode/
 *.swp
 *.bak
+zero2route3d_cache/
+*_eo_cache/
+.secrets.report.json

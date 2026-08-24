@@ -26,8 +26,8 @@ license=GPL-2.0-or-later
 changelog=
     0.1.0 - Initial release:
         - Interactive card-based QGIS Dock with adaptive dark/light styling.
-        - Multi-profile 3D routing engine (Adult, Senior, Stroller, Wheelchair, Bicycle, Scooter, Car, Truck).
+        - 15 mobility profiles across pedestrian, micromobility and vehicle categories.
         - Multi-criteria raster cost surfaces (DEM, Slope, LST, Tree Canopy, Road Hierarchy).
-        - Hardware-accelerated embedded 3D WebGL studio with 60 FPS animation, chase and drone cam, and elevation HUD.
+        - Hardware-accelerated embedded 3D WebGL studio with animation, chase and drone cam, and elevation HUD.
         - 3D LineStringZ vector layer creation and GPX/GeoJSON export.
-        - Native QGIS Processing provider with 3D shortest path and 3D isochrone algorithms.
+        - Native QGIS Processing provider with 14 headless algorithms.

@@ -18,19 +18,63 @@ jobs:
           python-version: "3.12"
 
       - name: Install quality tools
-        run: python -m pip install --disable-pip-version-check flake8 bandit
+        run: >
+          python -m pip install --disable-pip-version-check
+          flake8 bandit detect-secrets pytest
 
       - name: Compile every shipped module
         run: >
           python -m compileall -q .
-          -x '(^|[\\/])(tests?|e2e|scratch|\.git|__pycache__|node_modules)([\\/]|$)'
+          -x '(^|[\\/])(e2e|scratch|\.git|__pycache__|node_modules)([\\/]|$)'
 
       - name: Flake8 (Hub-blocking codes)
         run: >
           python -m flake8 .
           --select=E901,E902,E999,F821,F823,F831,E741,E742,E743
           --max-line-length=1000
-          --exclude=.git,__pycache__,tests,e2e,scratch,node_modules
+          --exclude=.git,__pycache__,e2e,scratch,node_modules
 
+      # Every Bandit finding blocks a Hub upload, including B110/B112/B311, and
+      # a blocked version number is burned forever. Tests are scanned too: they
+      # ship inside the zip.
       - name: Bandit (any finding blocks the Hub)
-        run: python -m bandit -q -r . -x ./tests,./e2e,./scratch,./node_modules
+        run: python -m bandit -q -r . -x ./e2e,./scratch,./node_modules
+
+      - name: detect-secrets
+        run: |
+          python -m detect_secrets scan \
+            --exclude-files '(^|/)(\.git|__pycache__|node_modules)/' \
+            --exclude-files 'web/js/three\.module\.js' \
+            > .secrets.report.json
+          python - <<'PY'
+          import json, sys
+          with open(".secrets.report.json", encoding="utf-8") as fh:
+              report = json.load(fh)
+          findings = report.get("results", {})
+          if findings:
+              for path, items in findings.items():
+                  for item in items:
+                      print(f"{path}:{item.get('line_number')}: {item.get('type')}")
+              sys.exit("detect-secrets found candidate secrets")
+          print("detect-secrets: clean")
+          PY
+
+  # The 858-line suite used to be excluded from every step, so it never ran in
+  # CI at all. It is pure Python and needs no QGIS runtime.
+  pure-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zero2route3d
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Run the pure-logic suite
+        working-directory: zero2route3d
+        run: python -m pytest -o pythonpath=.. -q -p no:cacheprovider tests/test_pure_logic.py
