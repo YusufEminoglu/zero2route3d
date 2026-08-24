@@ -172,6 +172,14 @@ class EvacuationRoutingAlgorithm(QgsProcessingAlgorithm):
             for f in source_musters.getFeatures()
             if not f.geometry().isNull()
         ]
+        if not musters:
+            raise QgsProcessingException(
+                "The muster-point layer contains no point feature to evacuate to."
+            )
+        if feedback.isCanceled():
+            return {}
+        feedback.setProgress(60)
+        feedback.pushInfo(f"Evaluating {len(musters)} muster point(s)...")
 
         try:
             plan = router.calculate_evacuation_route(orig_pt, musters, profile_key="adult")

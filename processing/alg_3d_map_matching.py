@@ -134,7 +134,10 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
         matcher = HMMMapMatcher3D(engine.nodes, engine.adj, micro_elevation=micro_ele)
 
         gpx_pts = []
+        feedback.setProgress(30)
         for f in source_track.getFeatures():
+            if feedback.isCanceled():
+                break
             p = point_to_wgs84(f.geometry().asPoint(), source_track.sourceCrs(), context)
             gpx_pts.append(GPXPoint(lon=p.x(), lat=p.y()))
 

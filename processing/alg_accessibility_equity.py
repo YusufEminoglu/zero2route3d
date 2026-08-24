@@ -13,7 +13,9 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
+    QgsProcessingException,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterField,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterNumber,
     QgsWkbTypes,
@@ -29,12 +31,35 @@ from ..core.accessibility_equity import (
 )
 
 
+def _numeric_attribute(feature, field_name, label):
+    """Read a required numeric attribute, or fail loudly.
+
+    Substituting a default here would silently turn a data problem into a
+    plausible-looking equity score.
+    """
+    value = feature.attribute(field_name)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise QgsProcessingException(
+            f"Feature {feature.id()} has no usable {label} value in field "
+            f"'{field_name}' (found {value!r})."
+        )
+    if number < 0:
+        raise QgsProcessingException(
+            f"Feature {feature.id()} has a negative {label} value ({number})."
+        )
+    return number
+
+
 class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
     """Computes Enhanced 2-Step Floating Catchment Area (E2SFCA) accessibility & Gini equity indices."""
 
     INPUT_DEMAND = "INPUT_DEMAND"
     INPUT_FACILITIES = "INPUT_FACILITIES"
     CATCHMENT_RADIUS = "CATCHMENT_RADIUS"
+    POPULATION_FIELD = "POPULATION_FIELD"
+    CAPACITY_FIELD = "CAPACITY_FIELD"
     OUTPUT_ZONES = "OUTPUT_ZONES"
 
     def createInstance(self) -> QgsProcessingAlgorithm:
@@ -74,6 +99,22 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
+            QgsProcessingParameterField(
+                self.POPULATION_FIELD,
+                "Population field (demand zones)",
+                parentLayerParameterName=self.INPUT_DEMAND,
+                type=QgsProcessingParameterField.Numeric,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.CAPACITY_FIELD,
+                "Capacity field (facilities)",
+                parentLayerParameterName=self.INPUT_FACILITIES,
+                type=QgsProcessingParameterField.Numeric,
+            )
+        )
+        self.addParameter(
             QgsProcessingParameterNumber(
                 self.CATCHMENT_RADIUS,
                 "Catchment Radius Buffer (meters)",
@@ -102,6 +143,8 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
             ("facilities", source_facs.sourceCrs() if source_facs else None),
         ])
         radius = self.parameterAsDouble(parameters, self.CATCHMENT_RADIUS, context)
+        pop_field = self.parameterAsString(parameters, self.POPULATION_FIELD, context)
+        cap_field = self.parameterAsString(parameters, self.CAPACITY_FIELD, context)
 
         fields = QgsFields()
         fields.append(make_field("zone_id", STRING))
@@ -119,10 +162,16 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
             wgs84(),
         )
 
+        # Population and capacity are chosen by the user. They used to be read from
+        # magic field names, defaulting to a flat 1000 people and 100 capacity when
+        # absent -- so E2SFCA scores, the Gini coefficient and the equity tiers were
+        # computed from invented uniform inputs while looking entirely legitimate.
         demand_records = []
         for f in source_demand.getFeatures():
+            if feedback.isCanceled():
+                break
             p = point_to_wgs84(f.geometry().asPoint(), source_demand.sourceCrs(), context)
-            pop = float(f["population"]) if "population" in f.fields().names() else 1000.0
+            pop = _numeric_attribute(f, pop_field, "population")
             demand_records.append(
                 ZoneAccessibilityRecord(
                     zone_id=str(f.id()),
@@ -135,8 +184,10 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
 
         facility_records = []
         for f in source_facs.getFeatures():
+            if feedback.isCanceled():
+                break
             p = point_to_wgs84(f.geometry().asPoint(), source_facs.sourceCrs(), context)
-            cap = float(f["capacity"]) if "capacity" in f.fields().names() else 100.0
+            cap = _numeric_attribute(f, cap_field, "capacity")
             facility_records.append(
                 SupplyFacility(
                     facility_id=str(f.id()),
@@ -147,6 +198,16 @@ class AccessibilityEquityAlgorithm(QgsProcessingAlgorithm):
                 )
             )
 
+        if not demand_records:
+            raise QgsProcessingException(
+                "The demand layer contains no usable point features."
+            )
+        if not facility_records:
+            raise QgsProcessingException(
+                "The facilities layer contains no usable point features."
+            )
+
+        feedback.setProgress(50)
         engine = AccessibilityEquityEngine(catchment_radius_m=radius)
         res = engine.compute_e2sfca(demand_records, facility_records)
 

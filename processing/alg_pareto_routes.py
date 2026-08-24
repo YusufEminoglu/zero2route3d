@@ -151,6 +151,9 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
 
+        if feedback.isCanceled():
+            return {}
+        feedback.setProgress(40)
         engine = RoutingEngine3D(sampler=sampler)
         engine.build_graph(segments)
 

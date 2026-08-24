@@ -31,6 +31,28 @@ class MobilityProfile:
     description: str = ""
     icon_name: str = "adult"
 
+    def min_cost_per_metre(self) -> float:
+        """Smallest impedance this profile can charge for one metre of edge.
+
+        calculate_edge_resistance multiplies length by slope, stair, smoothness,
+        thermal and hierarchy factors. Slope, stair and smoothness multipliers are
+        all >= 1.0; the thermal term floors at 0.6 and the hierarchy weight can be
+        below 1.0 for preferred road classes. The product of those two floors is
+        therefore a valid lower bound on cost per metre, which is exactly what an
+        admissible A* heuristic needs.
+        """
+        thermal_floor = 0.6
+        hierarchy_floor = 1.0
+        if self.hierarchy_weights:
+            finite = [
+                float(v)
+                for v in self.hierarchy_weights.values()
+                if isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0
+            ]
+            if finite:
+                hierarchy_floor = min(min(finite), 1.0)
+        return max(1e-6, thermal_floor * hierarchy_floor)
+
     def calculate_edge_resistance(
         self,
         length_m: float,

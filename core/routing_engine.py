@@ -356,9 +356,16 @@ class RoutingEngine3D:
         w_dict = self.weights.normalized_dict()
         avoid_set = avoid_edges or set()
 
+        # A* is only optimal when the heuristic never over-estimates the remaining
+        # cost. g accumulates impedance, not metres, and impedance can be well
+        # below 1.0 per metre (a car on a motorway, a paramedic, a shaded edge),
+        # so a raw great-circle distance in metres over-estimated and produced
+        # non-optimal routes. Scaling by the profile's own floor fixes that.
+        cost_floor = profile.min_cost_per_metre()
+
         def heuristic(u_coord: Tuple[float, float, float]) -> float:
             h = haversine_distance_2d(u_coord, dest_coord)
-            return h if math.isfinite(h) else 0.0
+            return (h * cost_floor) if math.isfinite(h) else 0.0
 
         h_start = heuristic(self.nodes[start_node])
         pq: List[Tuple[float, float, int]] = [(h_start, 0.0, start_node)]
@@ -646,13 +653,25 @@ class RoutingEngine3D:
         origins: Sequence[Waypoint],
         destinations: Sequence[Waypoint],
         profile_key: str = "adult",
+        progress_callback: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
-        """Compute complete N x M Origin-Destination 3D cost matrix."""
+        """Compute complete N x M Origin-Destination 3D cost matrix.
+
+        progress_callback(done, total) is invoked after each pair and may return
+        False to abort. An N x M matrix is N x M Dijkstra runs, so without this
+        the caller had no way to cancel or to report progress.
+        """
         matrix_rows = []
         profile = get_profile(profile_key)
+        total_pairs = max(1, len(origins) * len(destinations))
+        done_pairs = 0
 
         for i, orig in enumerate(origins):
             for j, dest in enumerate(destinations):
+                if progress_callback is not None:
+                    if progress_callback(done_pairs, total_pairs) is False:
+                        return matrix_rows
+                done_pairs += 1
                 res = self.calculate_route([orig, dest], profile_key=profile_key, compute_alternatives=False)
                 matrix_rows.append(
                     {

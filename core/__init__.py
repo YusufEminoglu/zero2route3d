@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from .accessibility_equity import (
+    compute_gini_coefficient,
+    compute_median,
+)
+from .accessibility_equity import (
     AccessibilityEquityEngine,
     EquityScorecardResult,
     SupplyFacility,
@@ -140,6 +144,8 @@ __all__ = [
     "filter_buildings_in_corridor",
     "CueInstruction",
     "RouteStatistics",
+    "compute_gini_coefficient",
+    "compute_median",
     "compute_route_statistics",
     "densify_3d_linestring",
     "generate_cue_sheet",

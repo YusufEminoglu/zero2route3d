@@ -7,9 +7,39 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 from .kinematics import haversine_distance_2d
+
+
+def project_wgs84_to_local_metres(
+    coords_3d: Sequence[Tuple[float, float, float]],
+) -> List[Tuple[float, float, float]]:
+    """Project WGS84 lon/lat/z onto a local tangent plane in metres.
+
+    A DXF has no CRS: X, Y and Z are plain drawing units. Writing lon/lat degrees
+    for X/Y while Z stayed in metres meant a 1 km route spanned about 0.01 units
+    horizontally and 100 vertically, so it opened in CAD as a vertical line.
+
+    The origin is the first vertex, so the drawing sits near (0, 0) and one unit
+    is one metre on all three axes.
+    """
+    points = [c for c in coords_3d if c and len(c) >= 2]
+    if not points:
+        return []
+
+    lon0 = float(points[0][0])
+    lat0 = float(points[0][1])
+    metres_per_deg_lat = 110540.0
+    metres_per_deg_lon = 111320.0 * math.cos(math.radians(lat0))
+
+    projected: List[Tuple[float, float, float]] = []
+    for c in points:
+        x = (float(c[0]) - lon0) * metres_per_deg_lon
+        y = (float(c[1]) - lat0) * metres_per_deg_lat
+        z = float(c[2]) if len(c) > 2 and math.isfinite(float(c[2])) else 0.0
+        projected.append((x, y, z))
+    return projected
 
 
 def export_route_to_dxf_3d(
@@ -18,9 +48,17 @@ def export_route_to_dxf_3d(
     include_profile_section: bool = True,
     profile_vertical_scale: float = 5.0,
     layer_name: str = "3D_ROUTE",
+    project_to_metres: bool = True,
 ) -> None:
-    """Write 3D route coordinates to standard AutoCAD DXF file."""
+    """Write 3D route coordinates to a standard AutoCAD DXF file.
+
+    With project_to_metres (the default) the WGS84 input is projected onto a local
+    tangent plane so that all three axes share one unit. Pass False only when the
+    coordinates are already in a projected CRS.
+    """
     target_path = Path(target_path)
+    if project_to_metres:
+        coords_3d = project_wgs84_to_local_metres(coords_3d)
 
     def finite(value: object, default: float = 0.0) -> float:
         try:
@@ -126,11 +164,11 @@ def export_route_to_dxf_3d(
             "70",
             "32",  # 3D Polyline vertex
             "10",
-            f"{pt[0]:.6f}",
+            f"{pt[0]:.3f}",
             "20",
-            f"{pt[1]:.6f}",
+            f"{pt[1]:.3f}",
             "30",
-            f"{pt[2]:.2f}",
+            f"{pt[2]:.3f}",
         ])
 
     lines.extend(["0", "SEQEND"])

@@ -350,6 +350,173 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertIn("dimensions_estimated", tree)
             self.assertTrue(tree["dimensions_estimated"])
 
+    # ------------------------------------------------------------------
+    # Reference-value tests.
+    #
+    # Every equation used to be asserted only by inequality ("uphill costs more
+    # than flat"), which a wrong coefficient satisfies just as well as a right
+    # one. The Minetti polynomial shipped with three wrong coefficients and a
+    # ~5x error, and the whole suite stayed green. These pin the published
+    # values instead.
+    # ------------------------------------------------------------------
+
+    def test_minetti_matches_published_reference_values(self) -> None:
+        """Minetti et al. (2002), J Appl Physiol 93:1039, walking cost of transport."""
+        from ..core.kinematics import minetti_energy_cost
+
+        def cw(gradient):
+            joules, _kcal = minetti_energy_cost(gradient, mass_kg=1.0, distance_m=1.0)
+            return joules
+
+        # Level walking is ~2.5 J/kg/m.
+        self.assertAlmostEqual(cw(0.0), 2.5, delta=0.05)
+        # The curve has its minimum on a shallow descent, not on the flat.
+        descent_min = min(cw(g / 100.0) for g in range(-30, 1))
+        self.assertLess(descent_min, cw(0.0))
+        self.assertTrue(0.7 < descent_min < 1.6, f"minimum was {descent_min}")
+        # +10% costs roughly twice the flat value; +45% roughly seven times.
+        self.assertAlmostEqual(cw(0.10), 4.90, delta=0.20)
+        self.assertAlmostEqual(cw(0.45), 17.60, delta=0.60)
+        # Monotonic once climbing.
+        uphill = [cw(g / 100.0) for g in range(0, 46, 5)]
+        self.assertEqual(uphill, sorted(uphill))
+
+    def test_tobler_matches_published_reference_values(self) -> None:
+        """Tobler's hiking function peaks at -5% grade at 6 km/h."""
+        from ..core.kinematics import tobler_walking_speed
+
+        peak = tobler_walking_speed(-0.05, base_speed_kmh=5.0)
+        self.assertAlmostEqual(peak, 6.0, delta=0.05)
+        # The peak really is at -5%, not on the flat.
+        self.assertGreater(peak, tobler_walking_speed(0.0, base_speed_kmh=5.0))
+        self.assertGreater(peak, tobler_walking_speed(-0.20, base_speed_kmh=5.0))
+        # W(0) = 6 * exp(-3.5 * 0.05) = 5.036 km/h
+        self.assertAlmostEqual(
+            tobler_walking_speed(0.0, base_speed_kmh=5.0), 5.036, delta=0.05
+        )
+
+    def test_gini_matches_hand_computable_cases(self) -> None:
+        """Gini of a perfectly equal set is 0; of a maximally unequal set, near 1."""
+        from ..core.accessibility_equity import compute_gini_coefficient
+
+        self.assertAlmostEqual(compute_gini_coefficient([5.0] * 8), 0.0, delta=1e-6)
+        # One holder of everything among n: Gini -> (n-1)/n.
+        self.assertAlmostEqual(
+            compute_gini_coefficient([0.0, 0.0, 0.0, 0.0, 10.0]), 0.8, delta=0.02
+        )
+        # Textbook case: [1,2,3,4] has Gini = 0.25.
+        self.assertAlmostEqual(
+            compute_gini_coefficient([1.0, 2.0, 3.0, 4.0]), 0.25, delta=0.02
+        )
+
+    def test_dxf_export_writes_metres_not_degrees(self) -> None:
+        """A DXF has no CRS, so X/Y must be metres like Z or the route is a line."""
+        from ..core.profile_dxf import project_wgs84_to_local_metres
+
+        coords = [(27.140, 38.420, 10.0), (27.150, 38.422, 40.0)]
+        projected = project_wgs84_to_local_metres(coords)
+        span_x = abs(projected[-1][0] - projected[0][0])
+        span_z = abs(projected[-1][2] - projected[0][2])
+        # ~870 m east for 0.01 degrees of longitude at 38 N.
+        self.assertTrue(800 < span_x < 950, f"x span {span_x}")
+        # Horizontal and vertical extents must be the same order of magnitude
+        # as reality: previously span_x was 0.01 against span_z of 30.
+        self.assertGreater(span_x, span_z)
+
+    def test_astar_heuristic_is_admissible(self) -> None:
+        """The heuristic must never exceed the profile's cheapest possible cost."""
+        from ..core.mobility_profiles import get_profile, list_profile_keys
+
+        for key in list_profile_keys():
+            profile = get_profile(key)
+            floor = profile.min_cost_per_metre()
+            self.assertGreater(floor, 0.0, key)
+            # One metre of edge can never cost less than the floor.
+            cheapest = profile.calculate_edge_resistance(
+                length_m=1.0, slope_pct=0.0, hierarchy_rank=1, surface_quality=1.0
+            )
+            self.assertLessEqual(
+                floor, cheapest + 1e-9,
+                f"{key}: floor {floor} exceeds cheapest edge {cheapest}",
+            )
+
+    def test_oneway_reverse_is_not_bidirectional(self) -> None:
+        """oneway=-1 and roundabouts must be treated as one-way."""
+        from ..core.network_source import NetworkSourceManager
+
+        payload = {
+            "elements": [
+                {"type": "node", "id": 1, "lat": 38.42, "lon": 27.14},
+                {"type": "node", "id": 2, "lat": 38.42, "lon": 27.15},
+                {"type": "way", "id": 10, "nodes": [1, 2],
+                 "tags": {"highway": "residential", "oneway": "-1"}},
+                {"type": "way", "id": 11, "nodes": [1, 2],
+                 "tags": {"highway": "residential", "junction": "roundabout"}},
+                {"type": "way", "id": 12, "nodes": [1, 2],
+                 "tags": {"highway": "residential", "name": "Real Street Name"}},
+            ]
+        }
+        segments = NetworkSourceManager()._parse_osm_json(payload)
+        self.assertGreaterEqual(len(segments), 3)
+        self.assertTrue(segments[0].is_oneway, "oneway=-1 must be one-way")
+        self.assertTrue(segments[1].is_oneway, "a roundabout is implicitly one-way")
+        # Real OSM names must survive parsing (cues used to say "Urban Path").
+        self.assertEqual(segments[2].name, "Real Street Name")
+
+    def test_missing_environmental_rasters_stay_neutral(self) -> None:
+        """No LST/NDVI raster means the criterion is dropped, not averaged in."""
+        from ..core.environmental_raster import EnvironmentalSurfaceSampler
+        from ..core.mobility_profiles import get_profile
+
+        sampler = EnvironmentalSurfaceSampler()
+        self.assertIsNone(sampler.sample_lst(27.14, 38.42))
+        self.assertIsNone(sampler.sample_greenery(27.14, 38.42))
+        self.assertFalse(sampler.has_elevation_source)
+
+        profile = get_profile("adult")
+        neutral = profile.calculate_edge_resistance(length_m=100.0, slope_pct=0.0)
+        explicit = profile.calculate_edge_resistance(
+            length_m=100.0, slope_pct=0.0, lst_normalized=None, green_normalized=None
+        )
+        self.assertAlmostEqual(neutral, explicit)
+        # A real hot reading must actually change the cost.
+        hot = profile.calculate_edge_resistance(
+            length_m=100.0, slope_pct=0.0, lst_normalized=1.0
+        )
+        self.assertGreater(hot, neutral)
+
+    def test_thermal_comfort_is_none_without_lst_data(self) -> None:
+        """thermal_comfort_score used to be a constant 0.5 for every route."""
+        from ..core.profile_stats import compute_route_statistics
+
+        coords = [(27.140, 38.420, 10.0), (27.145, 38.421, 12.0)]
+        stats = compute_route_statistics(coords)
+        self.assertIsNone(stats.thermal_comfort_score)
+        self.assertIsNone(stats.to_dict()["thermal_comfort_score"])
+
+        with_lst = compute_route_statistics(coords, lst_samples=[0.8] * 400)
+        self.assertIsNotNone(with_lst.thermal_comfort_score)
+
+    def test_compute_route_statistics_accepts_no_profile(self) -> None:
+        """Used to raise AttributeError by dereferencing the raw profile argument."""
+        from ..core.profile_stats import compute_route_statistics
+
+        stats = compute_route_statistics(
+            [(27.140, 38.420, 10.0), (27.150, 38.425, 30.0)]
+        )
+        self.assertGreater(stats.total_distance_m, 0.0)
+
+    def test_ahp_diagonal_cannot_be_corrupted(self) -> None:
+        """set_pairwise_comparison(x, x, v) must not break the reciprocal matrix."""
+        from ..core.ahp_engine import AHPEngine
+
+        engine = AHPEngine(["slope", "heat", "green"])
+        engine.set_pairwise_comparison("slope", "slope", 7.0)
+        self.assertEqual(engine.matrix[0][0], 1.0)
+        result = engine.calculate()
+        self.assertTrue(result.is_consistent)
+        self.assertAlmostEqual(sum(result.weights.values()), 1.0, delta=1e-6)
+
     def test_multi_profile_groups_and_colors(self) -> None:
         from ..core.mobility_profiles import get_profile_color, list_profile_keys_for_group
 

@@ -177,8 +177,28 @@ class OriginDestinationMatrix3DAlgorithm(QgsProcessingAlgorithm):
             if not f.geometry().isNull()
         ]
 
-        rows = engine.calculate_od_matrix(origins, dests, profile_key=profile_key)
+        if not origins or not dests:
+            raise QgsProcessingException(
+                "Both the origins and the destinations layer must contain at least "
+                "one point feature."
+            )
+
+        def _progress(done, total):
+            if feedback.isCanceled():
+                return False
+            feedback.setProgress(int((done / total) * 100.0))
+            return True
+
+        feedback.pushInfo(
+            f"Computing a {len(origins)} x {len(dests)} matrix "
+            f"({len(origins) * len(dests)} routes)..."
+        )
+        rows = engine.calculate_od_matrix(
+            origins, dests, profile_key=profile_key, progress_callback=_progress
+        )
         for r in rows:
+            if feedback.isCanceled():
+                break
             feat = QgsFeature(fields)
             feat.setAttributes([
                 r["origin_id"],

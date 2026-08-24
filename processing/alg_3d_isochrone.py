@@ -141,6 +141,9 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
 
+        if feedback.isCanceled():
+            return {}
+        feedback.setProgress(45)
         engine = RoutingEngine3D(sampler=EnvironmentalSurfaceSampler(dem_layer=dem_layer))
         engine.build_graph(segments)
         iso_result = IsochroneEngine3D(engine).compute_isochrones(

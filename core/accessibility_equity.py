@@ -78,6 +78,39 @@ class EquityScorecardResult:
         }
 
 
+def compute_gini_coefficient(values: Sequence[float]) -> float:
+    """Gini coefficient of a set of values, 0.0 (equal) to 1.0 (maximally unequal).
+
+    Extracted from compute_e2sfca so it can be tested against hand-computable
+    cases. It was previously inlined and only ever asserted to lie in [0, 1] --
+    a range the implementation clamps to anyway, so the assertion proved nothing.
+    """
+    finite = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+    n = len(finite)
+    if n == 0:
+        return 0.0
+    if any(v < 0 for v in finite):
+        raise ValueError("Gini is undefined for negative values")
+    total = sum(finite)
+    if total <= 0:
+        return 0.0
+    ordered = sorted(finite)
+    weighted = sum((i + 1) * v for i, v in enumerate(ordered))
+    return max(0.0, min(1.0, (2.0 * weighted) / (n * total) - (n + 1.0) / n))
+
+
+def compute_median(values: Sequence[float]) -> float:
+    """True median, averaging the two central values for an even-sized set."""
+    ordered = sorted(float(v) for v in values if v is not None and math.isfinite(float(v)))
+    count = len(ordered)
+    if count == 0:
+        return 0.0
+    mid = count // 2
+    if count % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
 class AccessibilityEquityEngine:
     """Spatial accessibility computation and distributional justice scorecard."""
 
@@ -141,6 +174,10 @@ class AccessibilityEquityEngine:
 
         # Step 3: Equity Diagnostics (Gini, Lorenz Curve, Theil Index)
         sorted_zones = sorted(zones_list, key=lambda x: x.accessibility_score)
+        if not sorted_zones:
+            raise ValueError(
+                "No demand zones were supplied; equity statistics are undefined."
+            )
         total_pop = sum(z.population for z in sorted_zones) or 1.0
         total_acc_weighted = sum(z.population * z.accessibility_score for z in sorted_zones) or 1.0
 
@@ -152,8 +189,10 @@ class AccessibilityEquityEngine:
         prev_a = 0.0
 
         for idx, z in enumerate(sorted_zones):
-            z.percentile_rank = (idx + 1) / len(sorted_zones) * 100.0
             cum_pop += z.population
+            # Population-weighted percentile: a zone's rank is the share of people
+            # at or below its accessibility, not its position in the zone list.
+            z.percentile_rank = (cum_pop / total_pop) * 100.0
             cum_acc += z.population * z.accessibility_score
 
             p_curr = cum_pop / total_pop
@@ -188,7 +227,7 @@ class AccessibilityEquityEngine:
 
         # Tier Categorization
         tier_counts = {"Transit Desert": 0, "Underserved": 0, "Adequate": 0, "Mobility Oasis": 0}
-        median_acc = sorted_zones[len(sorted_zones) // 2].accessibility_score
+        median_acc = compute_median([z.accessibility_score for z in sorted_zones])
 
         for z in sorted_zones:
             if z.accessibility_score <= 0.0001:
