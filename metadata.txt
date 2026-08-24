@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=Interactive 3D route planning studio with real QGIS or OpenStreetMap networks, multi-profile kinematics, raster resistance surfaces, and embedded WebGL animation.
-version=0.1.0
+version=0.2.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -24,10 +24,37 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.2.0 - Correctness and honesty release:
+        - Removed fabricated data: the NDVI, LST and NDBI rasters labelled as
+          Copernicus Sentinel-2 products were generated from a hash of the pixel
+          indices and fed into the routing cost; the 3D studio displayed a
+          built-in demo route as if it were real; trees were placed
+          procedurally; four algorithms substituted a hard-coded line in Izmir
+          when input geometry was missing.
+        - Missing elevation, heat and greenery data are now reported as absent
+          instead of being replaced by 0.0, 0.5 and 0.4, which made a network
+          with no DEM look flat and fully barrier-free compliant.
+        - Corrected the Minetti metabolic cost equation, which overstated
+          walking energy roughly fivefold.
+        - Fixed field construction that raised TypeError on QGIS 4, so every
+          algorithm producing a layer failed there before writing a feature.
+        - Added coordinate reprojection throughout: projected inputs were being
+          consumed as WGS84 degrees.
+        - Fixed the isochrone profile list, which mapped Passenger Car to a
+          mountain bike and left six profiles unreachable.
+        - Fixed the accessibility, walkability, cost surface, DXF, HTML and
+          solar algorithms, each of which crashed, produced nothing, or scored
+          against invented inputs.
+        - The standalone HTML export rendered a blank page for every user.
+        - Processing outputs now carry symbology, field aliases and metadata.
+        - Closing the dock no longer deletes the route layers you just added.
+        - Restored the complete GPL-2 licence text and corrected the documented
+          algorithm identifiers, 11 of which were wrong.
+
     0.1.0 - Initial release:
         - Interactive card-based QGIS Dock with adaptive dark/light styling.
         - 15 mobility profiles across pedestrian, micromobility and vehicle categories.
         - Multi-criteria raster cost surfaces (DEM, Slope, LST, Tree Canopy, Road Hierarchy).
-        - Hardware-accelerated embedded 3D WebGL studio with animation, chase and drone cam, and elevation HUD.
+        - Hardware-accelerated embedded 3D WebGL studio with chase and drone cam, and elevation HUD.
         - 3D LineStringZ vector layer creation and GPX/GeoJSON export.
         - Native QGIS Processing provider with 14 headless algorithms.
