@@ -2,28 +2,32 @@
 name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
-description=Interactive 3D route planning studio with real QGIS or OpenStreetMap networks, multi-profile kinematics, raster resistance surfaces, and embedded WebGL animation.
-version=0.2.9
+description=UX urban mobility and shortest path studio with 15 user-centric avatar profiles (Adult, Elderly, Child, Stroller, Wheelchair ADA, Commuter Bike, MTB, E-Scooter, Night Walk, Sightseer, Jogger, Car, Delivery Van, Truck, Paramedic EMS), 3D kinematics, AHP cost surfaces, OD matrix, and WebGL animation.
+version=0.3.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
-about=02Route 3D is a unified multi-criteria 3D mobility and pathfinding studio for QGIS. It computes optimal 3D routes across real QGIS line layers or successfully downloaded OpenStreetMap networks with slope, aspect, surface temperature (LST), tree shade, and road hierarchy resistances. Missing network or elevation data is reported explicitly; no fabricated terrain or road network is used. Features include specialised mobility profiles, Tobler and Minetti biomechanical energy and time equations, an embedded 3D WebGL viewport, elevation profile HUD, and 3D LineStringZ export.
+about=02Route 3D is a unified multi-criteria UX urban mobility, shortest path, and 3D pathfinding studio for QGIS. Inspired by human-centric inclusive mobility research, it computes realistic 3D shortest path routes across real QGIS network layers or OpenStreetMap networks with slope, aspect, surface temperature (LST), tree shade, and road hierarchy resistances.\n\nKey Capabilities:\n- 15 Distinct Avatar User Profiles: Pedestrians (Standard Adult, Senior Elderly, Safe Child, Stroller Pram, Wheelchair ADA with strict 5 pct slope limit, Jogger Runner, Sightseer Scenic, Illuminated Night Walk), Micromobility (Commuter Bicycle, Mountain Bike MTB, E-Scooter), and Motorized (Passenger Car, Delivery Van, Heavy Logistics Truck, Emergency Paramedic EMS).\n- Shortest Path & Multi-Objective Routing: Classical Dijkstra shortest path, A* topological routing, and NAMOA* 4D Pareto trade-offs across travel time, cumulative climb, heat exposure, and metabolic energy expenditure.\n- Biomechanical Kinematics: Real-time velocity from Tobler hiking formula and metabolic energy from Minetti 5th-order equations.\n- Multi-Tier Catchment & OD Matrices: 3D wavefront isochrones, N x M origin-destination cost matrices, and E2SFCA spatial accessibility equity scorecards (Gini, Theil, Palma indices).\n- Interactive 3D WebGL Studio: Real-time Three.js cockpit embedded in QGIS with chase, orbit, POV, and tour camera modes, 24-hour solar simulations, and longitudinal profile HUD.\n- Interoperability & Export: LineStringZ GeoPackage, GPX 1.1 with elevation, GeoJSON 3D, AutoCAD DXF (AC1009) 3D Polylines with elevation profiles, and self-contained offline 3D HTML reports.\n\nInspiration & Acknowledgment:\nThe multi-user UX walkability and inclusive mobility persona framework in 02Route 3D is inspired by the research and methodology of Transform Transport / Systematica (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
 
 tracker=https://github.com/YusufEminoglu/zero2route3d/issues
 repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://yusufeminoglu.github.io/zero2route3d/
 
 category=Analysis
-tags=routing, 3d, network analysis, mobility, accessibility, walkability, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, catchment, e2sfca, spatial equity, wheelchair, ada compliance, evacuation, hazard routing, solar shadow, microclimate, map matching, gps, gpx, dxf, cad, micromobility, bicycle routing, e-bike, e-scooter, od matrix, copernicus dem, urban analytics, zero2
+tags=network, shortest path, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, ux mobility, pedestrian, wheelchair, ada compliance, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, catchment, e2sfca, spatial equity, evacuation, hazard routing, solar shadow, microclimate, map matching, gps, gpx, dxf, cad, copernicus dem, urban analytics, zero2
 
 icon=icons/icon.png
 
-experimental=True
+experimental=False
 deprecated=False
 hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.3.0 - Official QGIS Hub Release & UX Urban Mobility Evolution:
+        - Transitioned out of experimental status for official QGIS Plugin Hub publication.
+        - Enhanced metadata, shortest path descriptions, and added formal research acknowledgment for Transform Transport inclusive mobility inspiration.
+
     0.2.9 - Full Map Extent DEM & -5m Relative Skirt Extrusion:
         - Query Open-Elevation DEM for the full map canvas extent and normalized Web 3D terrain skirts to scene minimum elevation with -5m base plinth.
 

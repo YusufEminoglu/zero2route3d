@@ -227,10 +227,19 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 
 ---
 
+## Research Inspiration & Acknowledgment
+
+The multi-user persona framework and human-centric accessibility paradigm in **02Route 3D** was inspired by the pioneering inclusive mobility research by **Transform Transport / Systematica**:
+- 🌐 [UX-Mobility: Multi-User Walkability Route Planner](https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/) — *Transform Transport (Systematica Research & Innovation)*.
+
+We gratefully acknowledge their innovative work on inclusive pedestrian accessibility and multi-profile routing design.
+
+---
+
 ## Data, Credits & License
 
 - **Author:** **Yusuf Eminoğlu** (<yusuf.eminoglu@deu.edu.tr>)
 - **Affiliation:** Dokuz Eylül University, Department of City and Regional Planning
-- **Elevation Data:** Optional Copernicus DEM GLO-30 (European Space Agency / Sinergise).
+- **Elevation Data:** Real Open-Elevation / Copernicus DEM 30m API topography.
 - **License:** GNU General Public License v2.0 or later ([GPL-2.0-or-later](LICENSE)).
 - **Attribution:** Shipped under Yusuf Eminoğlu's name alone in accordance with monorepo standards.
