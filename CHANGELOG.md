@@ -5,6 +5,11 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-08-25
+
+### Fixed
+- **Web 3D Canvas Compatibility & Layer Rendering:** Resolved uncaught `ctx.roundRect` exception in WebGL pin billboard generation for cross-browser and QtWebEngine compatibility, ensuring 3D routes, animated layers, and urban environments load instantly and flawlessly.
+
 ## [0.2.5] - 2026-08-25
 
 ### Fixed
