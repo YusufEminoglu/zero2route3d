@@ -5,6 +5,11 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-08-25
+
+### Fixed
+- **Point A & Point B 3D Billboard Text Sizing:** Dynamically measured text width and scaled the pill textbox background and sprite aspect ratio so that "Point A (Origin)" and "Point B (Destination)" fit with comfortable margins.
+
 ## [0.2.7] - 2026-08-25
 
 ### Changed

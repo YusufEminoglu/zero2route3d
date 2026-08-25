@@ -1163,57 +1163,86 @@ class Studio3DApp {
 
     // Helper: Floating billboard badge sprite with geolocator icon + Letter + Label
     const createFloatingBadgeSprite = (letter, label, colorHex) => {
+      const measureCanvas = document.createElement('canvas');
+      const mCtx = measureCanvas.getContext('2d');
+      const textFont = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      mCtx.font = textFont;
+      const textMetrics = mCtx.measureText(label);
+      const textWidth = Math.ceil(textMetrics.width);
+
+      const circleD = 60;
+      const padLeft = 14;
+      const spacing = 16;
+      const padRight = 26;
+      const pillW = padLeft + circleD + spacing + textWidth + padRight;
+      const pillH = 86;
+      const margin = 14;
+
+      const canvasW = Math.ceil(pillW + margin * 2);
+      const canvasH = Math.ceil(pillH + margin * 2);
+
       const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 192;
+      canvas.width = canvasW;
+      canvas.height = canvasH;
       const ctx = canvas.getContext('2d');
 
-      const w = 480;
-      const h = 140;
-      const x = 16;
-      const y = 26;
-      const r = 36;
+      const x = margin;
+      const y = margin;
+      const r = pillH / 2;
 
       ctx.save();
       // Drop Shadow
       ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-      ctx.shadowBlur = 18;
+      ctx.shadowBlur = 12;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 8;
+      ctx.shadowOffsetY = 6;
 
       // Outer pill background
       ctx.fillStyle = colorHex;
       ctx.beginPath();
-      ctx.roundRect(x, y, w, h, r);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(x, y, pillW, pillH, r);
+      } else {
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + pillW - r, y);
+        ctx.quadraticCurveTo(x + pillW, y, x + pillW, y + r);
+        ctx.lineTo(x + pillW, y + pillH - r);
+        ctx.quadraticCurveTo(x + pillW, y + pillH, x + pillW - r, y + pillH);
+        ctx.lineTo(x + r, y + pillH);
+        ctx.quadraticCurveTo(x, y + pillH, x, y + pillH - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+      }
       ctx.fill();
 
       // Crisp white border
       ctx.shadowColor = 'transparent';
-      ctx.lineWidth = 6;
+      ctx.lineWidth = 4;
       ctx.strokeStyle = '#ffffff';
       ctx.stroke();
 
       // White circle for letter badge on the left
-      const badgeCenterX = x + 72;
-      const badgeCenterY = y + h / 2;
+      const badgeCenterX = x + padLeft + circleD / 2;
+      const badgeCenterY = y + pillH / 2;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(badgeCenterX, badgeCenterY, 48, 0, Math.PI * 2);
+      ctx.arc(badgeCenterX, badgeCenterY, circleD / 2, 0, Math.PI * 2);
       ctx.fill();
 
-      // Letter inside circle
+      // Bold letter inside circle
       ctx.fillStyle = colorHex;
-      ctx.font = 'bold 58px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = 'bold 44px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(letter, badgeCenterX, badgeCenterY + 2);
 
-      // Geolocator text & label
+      // Label text
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 42px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = textFont;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`📍 ${label}`, x + 138, y + h / 2);
+      ctx.fillText(label, x + padLeft + circleD + spacing, y + pillH / 2 + 1);
 
       ctx.restore();
 
@@ -1222,7 +1251,9 @@ class Studio3DApp {
       texture.magFilter = THREE.LinearFilter;
       const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
       const sprite = new THREE.Sprite(mat);
-      sprite.scale.set(24, 9.0, 1);
+      const spriteHeight = 7.5;
+      const spriteWidth = (canvasW / canvasH) * spriteHeight;
+      sprite.scale.set(spriteWidth, spriteHeight, 1);
       return sprite;
     };
 
