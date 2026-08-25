@@ -87,7 +87,6 @@ class Studio3DApp {
     this.roadMesh = null;
     this.centerlineMesh = null;
     this.glowTubeMesh = null;
-    this.pulseBeacon = null;
     this.avatarMesh = null;
     this.needlePin = null;
     this.buildingsGroup = new THREE.Group();
@@ -229,13 +228,16 @@ class Studio3DApp {
       });
     });
 
-    // Camera modes
+    // Camera modes (Orbit, Drone Chase, POV Cockpit, Cinematic Tour)
     document.querySelectorAll('.cam-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         document.querySelectorAll('.cam-btn').forEach((b) => b.classList.remove('active'));
         e.currentTarget.classList.add('active');
         this.cameraMode = e.currentTarget.dataset.cam || 'orbit';
         this.controls.enabled = (this.cameraMode === 'orbit');
+        if (this.cameraMode !== 'orbit') {
+          this.updateCameraMode(this.lastFrameDelta || 0.016, true);
+        }
       });
     });
 
@@ -611,8 +613,6 @@ class Studio3DApp {
     this.centerlineMesh = null;
     removeAndDispose(this.glowTubeMesh);
     this.glowTubeMesh = null;
-    removeAndDispose(this.pulseBeacon);
-    this.pulseBeacon = null;
     removeAndDispose(this.avatarMesh);
     this.avatarMesh = null;
     removeAndDispose(this.needlePin);
@@ -1124,13 +1124,6 @@ class Studio3DApp {
     this.centerlineMesh.position.y += 1.4;
     this.centerlineMesh.renderOrder = 10;
     this.scene.add(this.centerlineMesh);
-
-    // Layer 4: Dynamic Moving Pulse Light Beacon
-    const beaconGeo = new THREE.SphereGeometry(1.6, 16, 16);
-    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9 });
-    this.pulseBeacon = new THREE.Mesh(beaconGeo, beaconMat);
-    this.pulseBeacon.position.y += 1.8;
-    this.scene.add(this.pulseBeacon);
   }
 
   buildPinMarkers() {
@@ -1522,13 +1515,6 @@ class Studio3DApp {
       visual.rig.updateKinematics(animDelta, spd, visualTangent, 0, false);
     });
 
-    if (this.pulseBeacon) {
-      const pulseProg = (safeProgress + (this.clock ? this.clock.getElapsedTime() * 0.1 : 0.0)) % 1.0;
-      const bPt = this.curve.getPointAt(pulseProg);
-      this.pulseBeacon.position.copy(bPt);
-      this.pulseBeacon.position.y += 1.8;
-    }
-
     if (this.voiceSystem) {
       this.voiceSystem.update(safeProgress);
     }
@@ -1545,20 +1531,63 @@ class Studio3DApp {
 
     this.updateMetricLiveReadout();
 
-    // Camera following modes
-    if (this.cameraMode === 'chase') {
-      const offset = tangent.clone().multiplyScalar(-40).add(new THREE.Vector3(0, 20, 0));
-      const targetPos = pt.clone().add(offset);
-      this.camera.position.lerp(targetPos, 0.08);
-      this.controls.target.lerp(pt.clone().add(new THREE.Vector3(0, 3, 0)), 0.1);
-    } else if (this.cameraMode === 'pov') {
-      this.camera.position.copy(pt.clone().add(new THREE.Vector3(0, 5.0, 0)));
-      this.controls.target.copy(pt.clone().add(tangent.clone().multiplyScalar(100)));
-    } else if (this.cameraMode === 'tour') {
-      const tourOffset = new THREE.Vector3(Math.sin(safeProgress * Math.PI * 4) * 65, 45, Math.cos(safeProgress * Math.PI * 4) * 65);
-      this.camera.position.lerp(pt.clone().add(tourOffset), 0.05);
-      this.controls.target.lerp(pt, 0.08);
+    // Update active camera mode
+    if (this.cameraMode !== 'orbit') {
+      this.updateCameraMode(frameDelta, false);
     }
+
+    this.updateRadarMap();
+  }
+
+  updateCameraMode(delta, snapImmediate = false) {
+    if (!this.curve || this.scenePoints.length < 2) return;
+    const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
+    const pt = this.curve.getPointAt(safeProgress);
+    const tangent = this.curve.getTangentAt(safeProgress).normalize();
+
+    if (this.cameraMode === 'chase') {
+      // Behind and above avatar: offset backwards along tangent (-24m) and upwards (+9m)
+      const chaseOffset = tangent.clone().multiplyScalar(-24.0).add(new THREE.Vector3(0, 9.5, 0));
+      const desiredPos = pt.clone().add(chaseOffset);
+      const lookTarget = pt.clone().add(new THREE.Vector3(0, 2.0, 0)).add(tangent.clone().multiplyScalar(15.0));
+
+      if (snapImmediate) {
+        this.camera.position.copy(desiredPos);
+      } else {
+        const lerpFactor = Math.min(1.0, Math.max(0.05, delta * 7.5));
+        this.camera.position.lerp(desiredPos, lerpFactor);
+      }
+      this.camera.lookAt(lookTarget);
+      this.controls.target.copy(lookTarget);
+    } else if (this.cameraMode === 'pov') {
+      // First person view right at eye level looking forward along tangent
+      const activeKey = (this.activeProfileKey || '').toLowerCase();
+      const eyeHeight = activeKey.includes('wheelchair') || activeKey.includes('car') ? 1.3 : 1.75;
+      const eyePos = pt.clone().add(new THREE.Vector3(0, eyeHeight, 0)).add(tangent.clone().multiplyScalar(0.6));
+      const lookAhead = pt.clone().add(new THREE.Vector3(0, eyeHeight * 0.95, 0)).add(tangent.clone().multiplyScalar(60.0));
+
+      this.camera.position.copy(eyePos);
+      this.camera.lookAt(lookAhead);
+      this.controls.target.copy(lookAhead);
+    } else if (this.cameraMode === 'tour') {
+      // Cinematic rotating fly-through tour around the moving avatar
+      const tourAngle = (this.clock ? this.clock.getElapsedTime() * 0.35 : 0.0);
+      const tourDist = 38.0;
+      const tourHeight = 18.0;
+      const tourOffset = new THREE.Vector3(Math.sin(tourAngle) * tourDist, tourHeight, Math.cos(tourAngle) * tourDist);
+      const desiredTourPos = pt.clone().add(tourOffset);
+      const tourTarget = pt.clone().add(new THREE.Vector3(0, 2.5, 0));
+
+      if (snapImmediate) {
+        this.camera.position.copy(desiredTourPos);
+      } else {
+        const lerpFactor = Math.min(1.0, Math.max(0.04, delta * 4.0));
+        this.camera.position.lerp(desiredTourPos, lerpFactor);
+      }
+      this.camera.lookAt(tourTarget);
+      this.controls.target.copy(tourTarget);
+    }
+  }
 
     this.updateRadarMap();
   }
@@ -1908,15 +1937,12 @@ class Studio3DApp {
       this.updateAvatarPosition();
     }
 
-    if (this.pulseBeacon && this.curve && this.scenePoints.length >= 2) {
-      const beaconProg = ((this.clock ? this.clock.getElapsedTime() * 0.15 : 0.0)) % 1.0;
-      const bPt = this.curve.getPointAt(beaconProg);
-      this.pulseBeacon.position.copy(bPt);
-      this.pulseBeacon.position.y += 1.8;
-    }
-
-    if (this.cameraMode === 'orbit' && this.controls.enabled) {
-      this.controls.update();
+    if (this.cameraMode === 'orbit') {
+      if (this.controls && this.controls.enabled) {
+        this.controls.update();
+      }
+    } else {
+      this.updateCameraMode(this.lastFrameDelta || 0.016, false);
     }
 
     if (this.compassRose && this.controls) {

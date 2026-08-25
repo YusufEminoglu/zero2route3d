@@ -5,6 +5,12 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-25
+
+### Fixed
+- **Web 3D Pulse Beacon Removal:** Removed the detached spherical pulse beacon that travelled along the route curve independently of the kinematic avatar.
+- **Web 3D Drone Chase & POV Camera Controls:** Enhanced Chase, POV, and Tour camera following modes with continuous per-frame orientation tracking, profile-aware eye heights, and instant mode-switch snapping.
+
 ## [0.2.2] - 2026-08-25
 
 ### Fixed
