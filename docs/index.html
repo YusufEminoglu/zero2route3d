@@ -1037,7 +1037,7 @@
             <div class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span class="version-badge">v0.1.0</span>
+                <span class="version-badge">v0.2.9</span>
             </div>
             <ul class="nav-links">
                 <li><a href="#about">About</a></li>
@@ -1999,22 +1999,82 @@
             <span class="eyebrow">Changelog</span>
             <h2>Release History</h2>
         </div>
-        <div class="glass-card fade-up">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:1rem; margin-bottom:1.25rem;">
-                <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.1rem; padding:0.25rem 0.65rem">v0.1.0</span> Initial Release</h3>
-                <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-22</span>
+        <div class="glass-card fade-up" style="display: flex; flex-direction: column; gap: 2rem;">
+            <!-- v0.2.9 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.9</span> Full Extent DEM &amp; -5m Diorama Skirt</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-25</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>✨ <strong>Full Map Extent DEM:</strong> Queries Open-Elevation DEM for the complete active QGIS map canvas extent without corridor clipping, loading a continuous GeoTIFF DEM.</li>
+                    <li>✨ <strong>-5m Diorama Skirt Plinth:</strong> Normalized 3D WebGL terrain and diorama skirts to the scene's minimum elevation ($\min(\text{ele}) - 5.0\text{m}$), preventing monolithic blocks in high-altitude settlements.</li>
+                </ul>
             </div>
-            <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
-                <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
-                <li>✨ Integrated 14 headless QGIS Processing algorithms with modeler support</li>
-                <li>✨ Launched embedded Three.js WebGL  studio with chase/POV/orbit cameras</li>
-                <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
-                <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>
-                <li>✨ Implemented NAMOA* 4D Pareto frontier multi-objective optimization</li>
-                <li>✨ Added E2SFCA spatial accessibility justice scorecard with Gini/Theil/Palma indices</li>
-                <li>✨ Added HMM GPS map matching with Viterbi trellis dynamic programming</li>
-                <li>✨ Added AutoCAD DXF 3D Polyline and longitudinal profile drawing exporter</li>
-            </ul>
+
+            <!-- v0.2.8 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.8</span> Auto-Fitting 3D Billboard Text Sizing</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-25</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>✨ <strong>Dynamic Billboard Badges:</strong> Auto-measured text widths and dynamically scaled camera-facing pill background sprites for Point A (Origin) and Point B (Destination).</li>
+                </ul>
+            </div>
+
+            <!-- v0.2.7 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.7</span> Edge-to-Edge Transparent 3D Diorama Brand Icon</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-25</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>🎨 <strong>Brand Identity:</strong> Designed full-bleed, transparent-background 3D topographic diorama plugin icons for QGIS Hub and UI toolbars.</li>
+                </ul>
+            </div>
+
+            <!-- v0.2.1 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.1</span> Dynamic Web Basemap &amp; Geolocator Map Pins</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-25</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>🗺️ <strong>Full Bounding Basemap:</strong> Resolved basemap tile cutoff across large model extents by dynamically calculating Slippy tile grids.</li>
+                    <li>📍 <strong>Dual A/B Geolocator Markers:</strong> Added lettered pin markers in WebGL 3D and composite font marker symbology with halo labeling in QGIS.</li>
+                </ul>
+            </div>
+
+            <!-- v0.2.0 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.0</span> Ground-Truth Copernicus DEM &amp; OpenStreetMap Data</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-24</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>⛰️ <strong>Authentic Topography:</strong> Grounded all elevations in real Copernicus DEM and Open-Elevation data with strict NoData handling.</li>
+                </ul>
+            </div>
+
+            <!-- v0.1.0 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.1.0</span> Initial Release</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-22</span>
+                </div>
+                <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
+                    <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
+                    <li>✨ Integrated 14 headless QGIS Processing algorithms with modeler support</li>
+                    <li>✨ Launched embedded Three.js WebGL studio with chase/POV/orbit cameras</li>
+                    <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
+                    <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>
+                    <li>✨ Implemented NAMOA* 4D Pareto frontier multi-objective optimization</li>
+                    <li>✨ Added E2SFCA spatial accessibility justice scorecard with Gini/Theil/Palma indices</li>
+                    <li>✨ Added HMM GPS map matching with Viterbi trellis dynamic programming</li>
+                    <li>✨ Added AutoCAD DXF 3D Polyline and longitudinal profile drawing exporter</li>
+                </ul>
+            </div>
         </div>
     </section>
 

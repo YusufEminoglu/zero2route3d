@@ -66,7 +66,7 @@ Restart QGIS, enable **02Route 3D** in **Plugins > Installed**, then open the st
 
 ### Use it inside QGIS
 
-1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"Fetch &amp; Clip Corridor Elevation Raster"** to download official GLO-30 COG tiles.
+1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"⛰️ Fetch Full Map Extent Elevation DEM"** to query real 30m topography for the active map extent from the Open-Elevation API.
 2. **Select Origin & Destination:** Use the map canvas picker tools to select Point A (Origin) and Point B (Destination).
 3. **Pick Mobility Profile:** Choose from 15 profiles (e.g. *Wheelchair ADA*, *Senior*, *Commuter Bike*, *Emergency EMS*).
 4. **Tune AHP Weights (Optional):** In Tab 2 (MCDA & AHP), adjust the relative weights for Slope, Heat Island, Greenery, and Road Hierarchy.
