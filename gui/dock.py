@@ -626,17 +626,17 @@ class Route3DStudioDock(QDockWidget):
         self.lst_extra_rasters.setMaximumHeight(92)
         cop_grid.addWidget(self.lst_extra_rasters, 4, 1)
 
-        btn_fetch_dem = QPushButton("⛰️ Fetch && Clip Corridor Elevation Raster")
-        btn_fetch_dem.setToolTip("Query real elevation for the active extent from the Open-Elevation API and clip it to the route corridor buffer.")
+        btn_fetch_dem = QPushButton("⛰️ Fetch Full Map Extent Elevation DEM")
+        btn_fetch_dem.setToolTip("Query real elevation for the active full map canvas extent from the Open-Elevation API and load into QGIS.")
         btn_fetch_dem.clicked.connect(self._on_fetch_global_dem_clicked)
         cop_grid.addWidget(btn_fetch_dem, 5, 0, 1, 2)
 
         lbl_dem_note = QLabel(
-            "ℹ️ <i>Elevation is queried from the Open-Elevation API and clipped "
-            "to the route corridor. Points the service cannot resolve are written as "
-            "NoData, never as zero.<br>For heat (LST) or greenery (NDVI) criteria, load "
-            "your own real rasters in the selectors above — this plugin does not "
-            "synthesise them.</i>"
+            "ℹ️ <i>Elevation is queried for the full active map extent from the "
+            "Open-Elevation API and loaded into QGIS as a continuous GeoTIFF DEM. Points the "
+            "service cannot resolve are written as NoData, never as zero.<br>For heat (LST) or "
+            "greenery (NDVI) criteria, load your own real rasters in the selectors above — this "
+            "plugin does not synthesise them.</i>"
         )
         lbl_dem_note.setStyleSheet("color: #64748b; font-size: 11px;")
         lbl_dem_note.setWordWrap(True)
@@ -1841,26 +1841,8 @@ class Route3DStudioDock(QDockWidget):
             )
 
     def _on_fetch_global_dem_clicked(self) -> None:
-        """Acquire and corridor-clip a real elevation raster for the active extent."""
-        corridor_coords: List[Tuple[float, float, ...]] = []
-        if self.multi_route_results:
-            for r in self.multi_route_results.values():
-                if r.coordinates_3d:
-                    corridor_coords.extend(r.coordinates_3d)
-        elif self.current_route_result and self.current_route_result.coordinates_3d:
-            corridor_coords = self.current_route_result.coordinates_3d
-        elif self.point_a and self.point_b:
-            corridor_coords = [(self.point_a.lon, self.point_a.lat, 0.0), (self.point_b.lon, self.point_b.lat, 0.0)]
-
-        if corridor_coords:
-            lons = [float(c[0]) for c in corridor_coords]
-            lats = [float(c[1]) for c in corridor_coords]
-            lon_pad = min(0.02, max(0.003, (max(lons) - min(lons)) * 0.35 + 0.002))
-            lat_pad = min(0.02, max(0.003, (max(lats) - min(lats)) * 0.35 + 0.002))
-            bbox = (min(lons) - lon_pad, min(lats) - lat_pad, max(lons) + lon_pad, max(lats) + lat_pad)
-        else:
-            bbox = self._get_active_bbox()
-
+        """Acquire a real elevation raster for the full active map extent."""
+        bbox = self._get_active_bbox()
         if bbox is None:
             self._warn_no_extent()
             return
@@ -1868,14 +1850,13 @@ class Route3DStudioDock(QDockWidget):
         if self.iface:
             self.iface.messageBar().pushInfo(
                 "02Route 3D",
-                "Fetching and corridor-clipping the elevation raster...",
+                "Fetching real elevation raster for full map extent from Open-Elevation API...",
             )
 
         try:
             results = CorridorElevationSuite.fetch_and_clip_corridor_elevation(
                 bbox,
-                corridor_coords=corridor_coords,
-                buffer_meters=30.0,
+                corridor_coords=None,  # Full map extent DEM coverage without corridor clipping
             )
         except Exception as exc:
             message = f"Elevation acquisition failed: {exc}"
@@ -1886,7 +1867,7 @@ class Route3DStudioDock(QDockWidget):
             return
 
         if not results:
-            message = "No environmental layers could be generated for the active extent."
+            message = "No elevation layer could be generated for the active extent."
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", message)
             else:
@@ -1896,7 +1877,7 @@ class Route3DStudioDock(QDockWidget):
         # Prepare layer tree group in QGIS
         project = QgsProject.instance()
         root = project.layerTreeRoot()
-        group_name = "Corridor Elevation"
+        group_name = "Elevation DEM"
         group = root.findGroup(group_name) if root is not None else None
         if group is None and root is not None:
             group = root.insertGroup(1, group_name)
@@ -1920,7 +1901,7 @@ class Route3DStudioDock(QDockWidget):
 
         if loaded_count > 0:
             message = (
-                f"Loaded and corridor-clipped {loaded_count} elevation layer(s) into QGIS."
+                f"Successfully loaded full map extent Elevation DEM ({loaded_count} layer(s)) into QGIS."
             )
             if self.iface:
                 self.iface.messageBar().pushSuccess("02Route 3D", message)
@@ -1929,9 +1910,9 @@ class Route3DStudioDock(QDockWidget):
         else:
             message = "The elevation raster was written but could not be loaded into QGIS."
             if self.iface:
-                self.iface.messageBar().pushCritical("02Route 3D", message)
+                self.iface.messageBar().pushWarning("02Route 3D", message)
             else:
-                QMessageBox.critical(self, "02Route 3D", message)
+                QMessageBox.warning(self, "02Route 3D", message)
 
     def _set_compute_busy(self, busy: bool) -> None:
         """Disable the compute buttons while a computation is running.

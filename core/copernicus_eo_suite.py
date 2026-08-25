@@ -95,8 +95,13 @@ class CorridorElevationSuite:
         geotransform = (min_lon, res, 0.0, actual_max_lat, 0.0, -res)
         results: List[EnvironmentalLayerResult] = []
 
+        dem_name = (
+            "Corridor Elevation (Open-Elevation 30m)"
+            if (corridor_coords and len(corridor_coords) >= 2)
+            else "Elevation DEM (Open-Elevation 30m)"
+        )
         specs = [
-            ("dem", "Corridor Elevation (Open-Elevation 30m)", dem_grid, "m", "terrain"),
+            ("dem", dem_name, dem_grid, "m", "terrain"),
         ]
 
         # tempfile has no `time` attribute, so the old expression always took the

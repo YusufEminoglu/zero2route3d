@@ -407,8 +407,24 @@ class Studio3DApp {
     this.routeData = activeFeature;
     this.activeProfileKey = activeFeature.properties?.profile_key || 'adult';
     const coords = activeFeature.geometry.coordinates;
-    const elevations = coords.map((c) => (c[2] !== undefined ? c[2] : 0.0));
-    this.baseElevation = Math.min(...elevations);
+
+    const allElevations = [];
+    this.routeFeatures.forEach((feat) => {
+      const featCoords = feat?.geometry?.coordinates || [];
+      featCoords.forEach((c) => {
+        if (c[2] !== undefined && !isNaN(c[2])) allElevations.push(Number(c[2]));
+      });
+    });
+    const buildings = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings || [];
+    if (Array.isArray(buildings)) {
+      buildings.forEach((bld) => {
+        if (bld.base_elevation_m !== undefined && !isNaN(bld.base_elevation_m)) {
+          allElevations.push(Number(bld.base_elevation_m));
+        }
+      });
+    }
+    this.baseElevation = allElevations.length ? Math.min(...allElevations) : 0.0;
+
     this.originLonLat = { lon: coords[0][0], lat: coords[0][1] };
     this.scenePoints = coords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
     this.curve = new THREE.CatmullRomCurve3(this.scenePoints, false, 'catmullrom', 0.15);

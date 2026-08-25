@@ -5,6 +5,14 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-08-25
+
+### Added
+- **Full Map Extent DEM Fetching:** Updated DEM acquisition from Open-Elevation API to query the full active QGIS map canvas extent without corridor clipping, loading a complete continuous GeoTIFF DEM.
+
+### Changed
+- **Relative Elevation Normalization & -5m Skirt Extrusion:** Ensured 3D WebGL terrain and diorama skirts are strictly normalized to the scene's minimum elevation with -5.0m plinth cap instead of absolute sea level (0m), preventing monolithic extrusions in high-altitude settlements.
+
 ## [0.2.8] - 2026-08-25
 
 ### Fixed
