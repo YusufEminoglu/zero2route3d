@@ -1933,28 +1933,18 @@ class Route3DStudioDock(QDockWidget):
             else:
                 QMessageBox.critical(self, "02Route 3D", message)
 
-    def _set_compute_busy(self, busy: bool) -> None:
-        """Disable the compute buttons while a computation is running.
+    _COMPUTE_BUTTON_ORIGINAL_LABELS = {
+        "btn_compute": "⚡ Compute Multi-Criteria 3D Path(s)",
+        "btn_quick_compute": "🚀 Quick Compute Route & 3D Studio",
+    }
 
-        compute_route blocks the UI thread for seconds at a time (Overpass, DEM),
-        so a second click re-entered it on a frozen UI.
-        """
-        for name in ("btn_compute", "btn_quick_compute"):
+    def _set_compute_busy(self, busy: bool) -> None:
+        """Disable the compute buttons and update label while computation runs, restore reliably on finish."""
+        for name, default_label in self._COMPUTE_BUTTON_ORIGINAL_LABELS.items():
             button = getattr(self, name, None)
             if button is not None:
                 button.setEnabled(not busy)
-                if busy:
-                    button.setText("Computing...")
-                elif getattr(self, "_compute_button_labels", None):
-                    original = self._compute_button_labels.get(name)
-                    if original:
-                        button.setText(original)
-        if busy and not getattr(self, "_compute_button_labels", None):
-            self._compute_button_labels = {
-                name: getattr(self, name).text()
-                for name in ("btn_compute", "btn_quick_compute")
-                if getattr(self, name, None) is not None
-            }
+                button.setText("Computing..." if busy else default_label)
 
     def compute_route(self) -> None:
         """Compute 3D route(s), add the layer to QGIS and start the canvas animation."""

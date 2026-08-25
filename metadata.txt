@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=Interactive 3D route planning studio with real QGIS or OpenStreetMap networks, multi-profile kinematics, raster resistance surfaces, and embedded WebGL animation.
-version=0.2.1
+version=0.2.2
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -24,6 +24,10 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.2.2 - Compute Label Reset & Edge-to-Edge 3D Icon Refresh:
+        - Fixed compute button label getting stuck on "Computing..." after execution.
+        - Refreshed plugin icon with an edge-to-edge transparent 3D diorama design.
+
     0.2.1 - Web Basemap Coverage & Geolocator A/B Pin Enhancements:
         - Resolved Web 3D basemap tile cutoff by dynamically choosing optimal zoom levels and loading all bounding tiles without artificial truncation.
         - Added lettered A/B geolocator pins and billboard badges in WebGL 3D, and composite font marker symbology and halo labeling in QGIS.

@@ -5,6 +5,14 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-25
+
+### Fixed
+- **Compute Button Label Reset:** Fixed button text becoming stuck on "Computing..." after route execution so that both Quick and Advanced compute buttons restore their original labels immediately.
+
+### Changed
+- **Official Plugin Icon Refresh:** Replaced plugin icon with an edge-to-edge transparent 3D diorama design featuring 3D topographic contours, rising neon elevation route ribbon, and dual lettered A/B geolocator pins.
+
 ## [0.2.1] - 2026-08-25
 
 ### Fixed
