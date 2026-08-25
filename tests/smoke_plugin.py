@@ -414,6 +414,32 @@ def test_dock_point_ab_layers(iface):
     return _ok("Route Point A and Point B vector layers with letter markers and labeling", valid)
 
 
+def test_dock_web_route_payload_sync(iface):
+    import json
+    from zero2route3d.core.mobility_profiles import get_profile
+    from zero2route3d.core.profile_stats import compute_route_statistics
+    from zero2route3d.core.routing_engine import RouteResult3D, Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+
+    dock = Route3DStudioDock(iface=iface)
+    coords = [(27.1428, 38.4237, 10.0), (27.1440, 38.4245, 12.0), (27.1450, 38.4250, 15.0)]
+    stats = compute_route_statistics(coords, profile=get_profile("adult"))
+    res = RouteResult3D(coordinates_3d=coords, statistics=stats, profile=get_profile("adult"), status_message="OK")
+    dock.multi_route_results = {"adult": res}
+    dock.current_route_result = res
+
+    payload = dock._build_web_route_payload(res)
+    dock._write_route_payload(payload)
+
+    written = dock.current_route_file.exists() and dock.current_route_file.stat().st_size > 0
+    if written:
+        loaded = json.loads(dock.current_route_file.read_text(encoding="utf-8"))
+        written = loaded.get("type") == "FeatureCollection" and len(loaded.get("features", [])) == 1
+
+    dock.teardown()
+    return _ok("Dock web route payload atomic sync to current_route.json", written)
+
+
 def test_cartographic_themes_in_qgis(iface):
     from zero2route3d.core.osm_styling import apply_osm_theme_style, list_osm_themes
     from qgis.core import QgsVectorLayer
@@ -496,6 +522,7 @@ def run_all(iface):
         test_dock_animation_playback(iface),
         test_dock_quick_mode_and_scenarios(iface),
         test_dock_point_ab_layers(iface),
+        test_dock_web_route_payload_sync(iface),
         test_cartographic_themes_in_qgis(iface),
         test_standalone_html_bundler_qgis(iface),
         test_processing_algorithms_load(),

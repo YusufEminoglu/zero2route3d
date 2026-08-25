@@ -5,6 +5,11 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-08-25
+
+### Fixed
+- **Web Studio Real-Time Data Sync:** Implemented `_write_route_payload` on the dock to atomically export calculated QGIS routes, corridor buildings, and trees to `current_route.json` so the 3D Web Studio loads all routes and urban layers immediately without waiting or reporting empty state.
+
 ## [0.2.4] - 2026-08-25
 
 ### Changed
