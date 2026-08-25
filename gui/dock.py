@@ -6,7 +6,6 @@ import datetime
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import uuid
 
 from qgis.PyQt.QtCore import Qt, QUrl, QVariant
 from qgis.PyQt.QtGui import QColor, QDesktopServices, QFont
@@ -1934,18 +1933,28 @@ class Route3DStudioDock(QDockWidget):
             else:
                 QMessageBox.critical(self, "02Route 3D", message)
 
-    _COMPUTE_BUTTON_ORIGINAL_LABELS = {
-        "btn_compute": "⚡ Compute Multi-Criteria 3D Path(s)",
-        "btn_quick_compute": "🚀 Quick Compute Route & 3D Studio",
-    }
-
     def _set_compute_busy(self, busy: bool) -> None:
-        """Disable the compute buttons and update label while computation runs, restore reliably on finish."""
-        for name, default_label in self._COMPUTE_BUTTON_ORIGINAL_LABELS.items():
+        """Disable the compute buttons while a computation is running.
+
+        compute_route blocks the UI thread for seconds at a time (Overpass, DEM),
+        so a second click re-entered it on a frozen UI.
+        """
+        for name in ("btn_compute", "btn_quick_compute"):
             button = getattr(self, name, None)
             if button is not None:
                 button.setEnabled(not busy)
-                button.setText("Computing..." if busy else default_label)
+                if busy:
+                    button.setText("Computing...")
+                elif getattr(self, "_compute_button_labels", None):
+                    original = self._compute_button_labels.get(name)
+                    if original:
+                        button.setText(original)
+        if busy and not getattr(self, "_compute_button_labels", None):
+            self._compute_button_labels = {
+                name: getattr(self, name).text()
+                for name in ("btn_compute", "btn_quick_compute")
+                if getattr(self, name, None) is not None
+            }
 
     def compute_route(self) -> None:
         """Compute 3D route(s), add the layer to QGIS and start the canvas animation."""
@@ -2395,13 +2404,6 @@ class Route3DStudioDock(QDockWidget):
                 "corridor_trees": corridor_trees,
             },
         }
-
-    def _write_route_payload(self, geojson_data: Dict[str, Any]) -> None:
-        """Atomically write route payload to current_route.json for the web studio."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        tmp_file = self.data_dir / f"current_route_{uuid.uuid4().hex[:8]}.tmp"
-        tmp_file.write_text(json.dumps(geojson_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_file.replace(self.current_route_file)
 
     def add_route_layer_to_qgis(self) -> None:
         if not self.multi_route_results and not self.current_route_result:

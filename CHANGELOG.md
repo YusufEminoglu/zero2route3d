@@ -5,34 +5,10 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.6] - 2026-08-25
-
-### Fixed
-- **Web 3D Canvas Compatibility & Layer Rendering:** Resolved uncaught `ctx.roundRect` exception in WebGL pin billboard generation for cross-browser and QtWebEngine compatibility, ensuring 3D routes, animated layers, and urban environments load instantly and flawlessly.
-
-## [0.2.5] - 2026-08-25
-
-### Fixed
-- **Web Studio Real-Time Data Sync:** Implemented `_write_route_payload` on the dock to atomically export calculated QGIS routes, corridor buildings, and trees to `current_route.json` so the 3D Web Studio loads all routes and urban layers immediately without waiting or reporting empty state.
-
-## [0.2.4] - 2026-08-25
+## [0.2.7] - 2026-08-25
 
 ### Changed
-- **New Plugin Visual Identity & Icon Redesign:** Redesigned plugin brand icon with a 3D isometric diorama featuring layered topographic contours, an elevated glowing neon highway ribbon bridging elevation steps, Point A & Point B geolocator pins, and a full edge-to-edge transparent layout.
-
-## [0.2.3] - 2026-08-25
-
-### Fixed
-- **Web 3D Pulse Beacon Removal:** Removed the detached spherical pulse beacon that travelled along the route curve independently of the kinematic avatar.
-- **Web 3D Drone Chase & POV Camera Controls:** Enhanced Chase, POV, and Tour camera following modes with continuous per-frame orientation tracking, profile-aware eye heights, and instant mode-switch snapping.
-
-## [0.2.2] - 2026-08-25
-
-### Fixed
-- **Compute Button Label Reset:** Fixed button text becoming stuck on "Computing..." after route execution so that both Quick and Advanced compute buttons restore their original labels immediately.
-
-### Changed
-- **Official Plugin Icon Refresh:** Replaced plugin icon with an edge-to-edge transparent 3D diorama design featuring 3D topographic contours, rising neon elevation route ribbon, and dual lettered A/B geolocator pins.
+- **Rollback to Web Basemap Milestone:** Restored Web 3D studio codebase to the verified v0.2.1 basemap milestone while retaining updated transparent 3D diorama brand icons.
 
 ## [0.2.1] - 2026-08-25
 
