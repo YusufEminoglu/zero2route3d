@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=Interactive 3D route planning studio with real QGIS or OpenStreetMap networks, multi-profile kinematics, raster resistance surfaces, and embedded WebGL animation.
-version=0.2.3
+version=0.2.4
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -24,6 +24,9 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.2.4 - New Brand Identity & 3D Contour Icon Redesign:
+        - Redesigned brand icon with 3D isometric diorama, elevation contours, neon route ribbon, and A/B geolocator pins.
+
     0.2.3 - Pulse Beacon Cleanup & Chase/POV Camera Tracking:
         - Removed detached spherical pulse beacon moving along route separately from avatar.
         - Enhanced Drone Chase, POV cockpit, and Tour cameras with continuous per-frame orientation tracking.

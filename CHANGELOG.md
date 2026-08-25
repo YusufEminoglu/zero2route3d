@@ -5,6 +5,11 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-08-25
+
+### Changed
+- **New Plugin Visual Identity & Icon Redesign:** Redesigned plugin brand icon with a 3D isometric diorama featuring layered topographic contours, an elevated glowing neon highway ribbon bridging elevation steps, Point A & Point B geolocator pins, and a full edge-to-edge transparent layout.
+
 ## [0.2.3] - 2026-08-25
 
 ### Fixed
