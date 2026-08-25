@@ -137,18 +137,17 @@ class StandaloneHtmlBundler:
     </div>
   </div>
 
-  <div class="hud-panel bottom-player">
-    <div class="player-controls">
-      <div class="play-btn-group">
-        <button id="btnPlay" class="btn-icon"><span id="playIcon">▶</span></button>
-      </div>
-      <div class="timeline-scrubber">
-        <input type="range" id="scrubber" class="scrubber-slider" min="0" max="1000" value="0">
-      </div>
+  <div class="hud-panel bottom-controls">
+    <div class="multi-metric-panel" id="multiMetricPanel">
+      <div class="multi-metric-rows" id="multiMetricRows"></div>
     </div>
-    <div class="chart-drawer" id="chartDrawer">
-      <svg id="profileSvg" preserveAspectRatio="none"></svg>
-      <div class="profile-needle" id="profileNeedle"></div>
+    <div class="player-scrubber-row">
+      <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
+        <span id="playIcon">▶</span>
+      </button>
+      <div class="scrubber-container">
+        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
+      </div>
     </div>
   </div>
 

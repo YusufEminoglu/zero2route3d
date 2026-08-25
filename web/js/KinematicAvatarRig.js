@@ -26,7 +26,7 @@ export class KinematicAvatarRig {
     this.animNodes = {};
   }
 
-  setProfile(profileKey = 'adult') {
+  setProfile(profileKey = 'adult', customColor = null) {
     while (this.subMeshGroup.children.length) {
       const child = this.subMeshGroup.children[0];
       this.subMeshGroup.remove(child);
@@ -48,25 +48,24 @@ export class KinematicAvatarRig {
     const key = (profileKey || '').toLowerCase();
     if (key.includes('wheelchair')) {
       this.activeType = 'wheelchair';
-      this.buildWheelchairRig();
+      this.buildWheelchairRig(customColor);
     } else if (key.includes('stroller')) {
       this.activeType = 'stroller';
-      this.buildStrollerRig();
+      this.buildStrollerRig(customColor);
     } else if (key.includes('scooter')) {
       this.activeType = 'scooter';
-      this.buildScooterRig();
+      this.buildScooterRig(customColor);
     } else if (key.includes('car') || key.includes('van') || key.includes('truck') || key.includes('paramedic')) {
       this.activeType = 'vehicle';
       const vehicleKind = key.includes('paramedic') ? 'paramedic' : (key.includes('van') ? 'van' : (key.includes('truck') ? 'truck' : 'car'));
-      this.buildVehicleRig(vehicleKind);
+      this.buildVehicleRig(vehicleKind, customColor);
     } else if (key.includes('bike') || key.includes('bicycle') || key.includes('mtb')) {
       this.activeType = 'cyclist';
-      this.buildCyclistRig();
+      this.buildCyclistRig(customColor);
     } else {
       this.activeType = 'walker';
-      this.buildWalkerRig(key === 'senior', key === 'child');
+      this.buildWalkerRig(key === 'senior', key === 'child', customColor);
     }
-
   }
 
   material(color, roughness = 0.5, metalness = 0.05) {
@@ -188,9 +187,10 @@ export class KinematicAvatarRig {
     }
   }
 
-  buildWalkerRig(isSenior = false, isChild = false) {
+  buildWalkerRig(isSenior = false, isChild = false, customColor = null) {
     const rig = new THREE.Group();
-    const shirt = this.material(isSenior ? 0x0284c7 : (isChild ? 0xf59e0b : 0x0ea5e9));
+    const shirtColor = customColor ? new THREE.Color(customColor) : (isSenior ? 0x0284c7 : (isChild ? 0xf59e0b : 0x0ea5e9));
+    const shirt = this.material(shirtColor, 0.45, 0.08);
     const pose = this.addHuman(rig, { shirt, scale: isChild ? 0.74 : 1.0 });
     if (isSenior) {
       const cane = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 5.0, 8), this.material(0x92400e, 0.55));
@@ -202,10 +202,11 @@ export class KinematicAvatarRig {
     this.animNodes = { rig: pose.human, ...pose };
   }
 
-  buildCyclistRig() {
+  buildCyclistRig(customColor = null) {
     const bike = new THREE.Group();
-    const frameMat = this.material(0x06b6d4, 0.28, 0.68);
-    const wheelMat = this.material(0x0f172a, 0.78, 0.12);
+    const bikeColor = customColor ? new THREE.Color(customColor) : new THREE.Color(0x06b6d4);
+    const frameMat = this.material(bikeColor, 0.35, 0.2);
+    const wheelMat = this.material(0x1e293b, 0.75, 0.1);
     const wheelFront = this.addWheel(bike, 2.4, 0.55, new THREE.Vector3(0, 2.4, 4.2), wheelMat);
     const wheelRear = this.addWheel(bike, 2.4, 0.55, new THREE.Vector3(0, 2.4, -4.2), wheelMat);
 
@@ -227,7 +228,7 @@ export class KinematicAvatarRig {
       position: [0, -0.25, 0.55],
       rotation: [-0.28, 0, 0],
       scale: 0.82,
-      shirt: this.material(0x10b981, 0.42, 0.08),
+      shirt: this.material(bikeColor, 0.42, 0.08),
       pants: this.material(0x172033, 0.72),
     });
 
@@ -235,10 +236,11 @@ export class KinematicAvatarRig {
     this.animNodes = { bike, wheelFront, wheelRear, ...rider };
   }
 
-  buildWheelchairRig() {
+  buildWheelchairRig(customColor = null) {
     const rig = new THREE.Group();
-    const frameMat = this.material(0x8b5cf6, 0.32, 0.65);
-    const seatMat = this.material(0x312e81, 0.62);
+    const chairColor = customColor ? new THREE.Color(customColor) : new THREE.Color(0x8b5cf6);
+    const frameMat = this.material(chairColor, 0.35, 0.2);
+    const seatMat = this.material(0x1e293b, 0.65, 0.05);
     const wheelMat = this.material(0x111827, 0.8, 0.1);
 
     const seat = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.65, 3.6), seatMat);
@@ -257,7 +259,7 @@ export class KinematicAvatarRig {
     const rider = this.addHuman(rig, {
       position: [0, -1.1, -0.45],
       scale: 0.82,
-      shirt: this.material(0x7c3aed, 0.44, 0.14),
+      shirt: this.material(chairColor, 0.44, 0.14),
     });
     rider.leftThigh.rotation.x = -0.55;
     rider.rightThigh.rotation.x = -0.55;
@@ -266,10 +268,11 @@ export class KinematicAvatarRig {
     this.animNodes = { rig, wheelLeft, wheelRight, frontLeft, frontRight, ...rider };
   }
 
-  buildStrollerRig() {
+  buildStrollerRig(customColor = null) {
     const stroller = new THREE.Group();
-    const frameMat = this.material(0xd946ef, 0.42, 0.38);
-    const fabricMat = this.material(0xf5d0fe, 0.8);
+    const strollerColor = customColor ? new THREE.Color(customColor) : new THREE.Color(0xd946ef);
+    const frameMat = this.material(strollerColor, 0.35, 0.2);
+    const fabricMat = this.material(0xf5d0fe, 0.75, 0.05);
     const wheelMat = this.material(0x1f2937, 0.8, 0.1);
     const seat = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.4, 3.4), fabricMat);
     seat.position.set(0, 4.2, -0.7);
@@ -287,15 +290,16 @@ export class KinematicAvatarRig {
     const guardian = this.addHuman(stroller, {
       position: [0, -0.85, -4.35],
       scale: 0.72,
-      shirt: this.material(0xf97316, 0.45, 0.08),
+      shirt: this.material(strollerColor, 0.45, 0.08),
     });
     this.subMeshGroup.add(stroller);
     this.animNodes = { stroller, wheelFront, wheelRear, ...guardian };
   }
 
-  buildScooterRig() {
+  buildScooterRig(customColor = null) {
     const scooter = new THREE.Group();
-    const deckMat = this.material(0x3b82f6, 0.28, 0.72);
+    const scooterColor = customColor ? new THREE.Color(customColor) : new THREE.Color(0x3b82f6);
+    const deckMat = this.material(scooterColor, 0.35, 0.2);
     const wheelMat = this.material(0x111827, 0.8, 0.1);
     const deck = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.45, 6.8), deckMat);
     deck.position.y = 1.35;
@@ -313,7 +317,7 @@ export class KinematicAvatarRig {
     const rider = this.addHuman(scooter, {
       position: [0, -0.55, -0.55],
       scale: 0.78,
-      shirt: this.material(0x14b8a6, 0.42, 0.1),
+      shirt: this.material(scooterColor, 0.42, 0.1),
     });
     rider.leftThigh.rotation.x = -0.32;
     rider.rightThigh.rotation.x = -0.32;
@@ -321,18 +325,32 @@ export class KinematicAvatarRig {
     this.animNodes = { scooter, wheelFront, wheelRear, stem, ...rider };
   }
 
-  buildVehicleRig(vehicleKind = 'car') {
+  buildVehicleRig(vehicleKind = 'car', customColor = null) {
     const car = new THREE.Group();
     const isEmergency = vehicleKind === 'paramedic';
     const isVan = vehicleKind === 'van';
     const isTruck = vehicleKind === 'truck';
+
+    const defaultCarColor = isEmergency ? 0xef4444 : (isTruck ? 0xf59e0b : (isVan ? 0x6366f1 : 0x0284c7));
+    const carColor = customColor ? new THREE.Color(customColor) : new THREE.Color(defaultCarColor);
+
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: isEmergency ? 0xef4444 : 0x0284c7,
-      metalness: 0.85,
-      roughness: 0.2,
+      color: carColor,
+      roughness: 0.35,
+      metalness: 0.18,
     });
-    const glassMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.9 });
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x93c5fd,
+      roughness: 0.18,
+      metalness: 0.12,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const wheelMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.7,
+      metalness: 0.08,
+    });
 
     const bodyWidth = isTruck ? 7.6 : (isVan ? 7.0 : 6.4);
     const bodyLength = isTruck ? 16.0 : (isVan ? 15.0 : 13.0);
@@ -340,16 +358,33 @@ export class KinematicAvatarRig {
     const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyLength);
     const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
     bodyMesh.position.y = isTruck ? 2.8 : 2.4;
+    bodyMesh.castShadow = true;
+    bodyMesh.receiveShadow = true;
     car.add(bodyMesh);
 
-    const cabinGeo = new THREE.BoxGeometry(isTruck ? 6.2 : (isVan ? 6.1 : 5.4), isTruck ? 3.0 : (isVan ? 3.0 : 2.2), isTruck ? 5.0 : (isVan ? 8.0 : 6.8));
+    const cabinWidth = isTruck ? 6.2 : (isVan ? 6.1 : 5.4);
+    const cabinHeight = isTruck ? 3.0 : (isVan ? 3.0 : 2.2);
+    const cabinLength = isTruck ? 5.0 : (isVan ? 8.0 : 6.8);
+    const cabinGeo = new THREE.BoxGeometry(cabinWidth, cabinHeight, cabinLength);
     const cabinMesh = new THREE.Mesh(cabinGeo, glassMat);
-    cabinMesh.position.set(0, isTruck ? 5.0 : (isVan ? 4.8 : 4.4), isTruck ? 4.2 : -0.6);
+    const cabinY = isTruck ? 5.0 : (isVan ? 4.8 : 4.4);
+    const cabinZ = isTruck ? 4.2 : -0.6;
+    cabinMesh.position.set(0, cabinY, cabinZ);
+    cabinMesh.castShadow = true;
     car.add(cabinMesh);
+
+    // Architectural vehicle roof cap
+    const roofGeo = new THREE.BoxGeometry(cabinWidth * 0.98, 0.35, cabinLength * 0.98);
+    const roofMesh = new THREE.Mesh(roofGeo, bodyMat);
+    roofMesh.position.set(0, cabinY + cabinHeight / 2 + 0.16, cabinZ);
+    roofMesh.castShadow = true;
+    car.add(roofMesh);
 
     if (isTruck) {
       const cargo = new THREE.Mesh(new THREE.BoxGeometry(7.2, 4.4, 8.0), bodyMat);
       cargo.position.set(0, 5.2, -3.0);
+      cargo.castShadow = true;
+      cargo.receiveShadow = true;
       car.add(cargo);
     }
 
@@ -359,18 +394,34 @@ export class KinematicAvatarRig {
     );
     bumper.position.set(0, 1.5, bodyLength / 2 + 0.15);
     car.add(bumper);
-    const headlampMat = this.material(0xfff7c2, 0.18, 0.35);
+
+    const headlampMat = new THREE.MeshStandardMaterial({
+      color: 0xfff7c2,
+      emissive: 0xfff7c2,
+      emissiveIntensity: 0.65,
+      roughness: 0.2,
+      metalness: 0.1,
+    });
     [-1, 1].forEach((side) => {
       const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.46, 10, 8), headlampMat);
       lamp.scale.z = 0.38;
       lamp.position.set(side * bodyWidth * 0.28, 2.35, bodyLength / 2 + 0.28);
       car.add(lamp);
     });
+
     if (isEmergency) {
       const beaconBase = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.25, 0.8), this.material(0xffffff, 0.28, 0.2));
       beaconBase.position.set(0, isTruck ? 7.55 : 5.9, 0.5);
       car.add(beaconBase);
-      const beacon = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.48, 0.55), this.material(0xef4444, 0.24, 0.3));
+      const beacon = new THREE.Mesh(
+        new THREE.BoxGeometry(1.45, 0.48, 0.55),
+        new THREE.MeshStandardMaterial({
+          color: 0xef4444,
+          emissive: 0xef4444,
+          emissiveIntensity: 0.85,
+          roughness: 0.2,
+        })
+      );
       beacon.position.set(0, beaconBase.position.y + 0.34, 0.5);
       car.add(beacon);
     }
@@ -383,18 +434,22 @@ export class KinematicAvatarRig {
     const frontZ = bodyLength / 2 - 2.0;
     const rearZ = -bodyLength / 2 + 2.0;
     wFL.position.set(halfWidth, 1.6, frontZ);
+    wFL.castShadow = true;
     car.add(wFL);
 
     const wFR = new THREE.Mesh(wGeo, wheelMat);
     wFR.position.set(-halfWidth, 1.6, frontZ);
+    wFR.castShadow = true;
     car.add(wFR);
 
     const wRL = new THREE.Mesh(wGeo, wheelMat);
     wRL.position.set(halfWidth, 1.6, rearZ);
+    wRL.castShadow = true;
     car.add(wRL);
 
     const wRR = new THREE.Mesh(wGeo, wheelMat);
     wRR.position.set(-halfWidth, 1.6, rearZ);
+    wRR.castShadow = true;
     car.add(wRR);
 
     this.headlightLeft.position.set(-halfWidth * 0.7, 2.4, bodyLength / 2 + 0.2);

@@ -126,7 +126,7 @@ class Studio3DApp {
     this.playbackSpeed = 1.0;
     this.cameraMode = 'orbit'; // Default to Orbit camera
     this.basemapProvider = 'osm'; // 'osm', 'satellite', 'voyager', 'dark'
-    this.activeChartMetric = 'elevation'; // 'elevation', 'slope', 'lst', 'greenery'
+    this.activeMetrics = [];
     this.elevationExaggeration = 1.5;
     this.showBuildings = true;
     this.showTrees = true;
@@ -151,6 +151,9 @@ class Studio3DApp {
   setupLighting() {
     this.hemiLight = new THREE.HemisphereLight(0xffffff, 0xe2e8f0, 0.95);
     this.scene.add(this.hemiLight);
+
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+    this.scene.add(this.ambientLight);
 
     this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.35);
     this.sunLight.position.set(400, 800, 300);
@@ -177,15 +180,13 @@ class Studio3DApp {
     this.elKcal = document.getElementById('valCalories');
     this.elPlayIcon = document.getElementById('playIcon');
     this.elScrubber = document.getElementById('scrubber');
-    this.elNeedle = document.getElementById('profileNeedle');
-    this.elSvg = document.getElementById('profileSvg');
+    this.elMultiMetricRows = document.getElementById('multiMetricRows');
     this.elBasemapCredit = document.getElementById('basemapCredit');
     this.elBasemapNote = document.getElementById('basemapNote');
     this.lblExag = document.getElementById('lblExag');
-    this.elMetricLiveVal = document.getElementById('metricLiveVal');
-    this.elMetricReadout = document.getElementById('metricReadout');
     this.elLayerList = document.getElementById('layerList');
     this.elLayerCount = document.getElementById('layerCount');
+    this.activeMetrics = [];
   }
 
   bindEvents() {
@@ -246,17 +247,6 @@ class Studio3DApp {
         this.basemapProvider = e.currentTarget.dataset.provider || 'osm';
         this.updateBasemapAttribution();
         this.updateBasemapTexture();
-      });
-    });
-
-    // Multi-Metric Chart Switcher
-    document.querySelectorAll('.metric-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        document.querySelectorAll('.metric-btn').forEach((b) => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        this.activeChartMetric = e.currentTarget.dataset.metric || 'elevation';
-        this.renderProfileChart();
-        this.updateAvatarPosition();
       });
     });
 
@@ -386,8 +376,8 @@ class Studio3DApp {
       this.selectedProfileKeys.clear();
       if (this.elEmpty) this.elEmpty.style.display = 'block';
       this.scenePoints = [];
-      this.curve = null;
-      if (this.elSvg) this.elSvg.innerHTML = '';
+      if (this.elMultiMetricRows) this.elMultiMetricRows.innerHTML = '';
+      this.activeMetrics = [];
       if (this.radarCtx) this.radarCtx.clearRect(0, 0, 130, 130);
       this.clearSceneObjects();
       this.updateHudMetrics();
@@ -686,7 +676,7 @@ class Studio3DApp {
   buildTerrain() {
     if (!this.scenePoints.length) return;
 
-    // Collect all active route points for unified tight corridor bounds
+    // Collect all active route points, corridor buildings, and trees for unified diorama bounds
     const allRoutePoints = [];
     if (this.routeVisuals && this.routeVisuals.length) {
       this.routeVisuals.forEach((v) => {
@@ -695,16 +685,36 @@ class Studio3DApp {
     }
     if (!allRoutePoints.length) allRoutePoints.push(...this.scenePoints);
 
+    // Also include corridor building vertices and trees if available
+    const buildings = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings || [];
+    if (Array.isArray(buildings)) {
+      buildings.forEach((bld) => {
+        const coords = bld.polygon || bld.coordinates || [];
+        coords.forEach(([lon, lat]) => {
+          allRoutePoints.push(this.lonLatToSceneMeters(lon, lat, this.baseElevation || 0.0));
+        });
+      });
+    }
+    const trees = this.routeData?.properties?.corridor_trees || this.routeCollection?.properties?.corridor_trees || [];
+    if (Array.isArray(trees)) {
+      trees.forEach((tr) => {
+        const coords = tr.coordinates || [];
+        if (coords.length >= 2) {
+          allRoutePoints.push(this.lonLatToSceneMeters(coords[0], coords[1], this.baseElevation || 0.0));
+        }
+      });
+    }
+
     const box = new THREE.Box3().setFromPoints(allRoutePoints);
     const size = new THREE.Vector3();
     box.getSize(size);
     const center = new THREE.Vector3();
     box.getCenter(center);
 
-    // Tight 30m architectural corridor diorama framing
-    const pad = Math.max(35, Math.min(60, Math.max(size.x, size.z) * 0.08));
-    const width = Math.max(size.x + pad * 2, 80);
-    const depth = Math.max(size.z + pad * 2, 80);
+    // Architectural corridor diorama framing with ample padding for complete environment coverage
+    const pad = Math.max(50, Math.min(140, Math.max(size.x, size.z) * 0.12));
+    const width = Math.max(size.x + pad * 2, 100);
+    const depth = Math.max(size.z + pad * 2, 100);
 
     const segments = 96;
     const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
@@ -796,9 +806,9 @@ class Studio3DApp {
     this.scene.add(this.terrainMesh);
 
     // -------------------------------------------------------------
-    // Tight Architectural Diorama Plinth Skirt (with beveled base)
+    // Tight Architectural Diorama Plinth Skirt (5m below min point)
     // -------------------------------------------------------------
-    const baseSkirtY = minTerrainY - Math.max(12.0, (maxTerrainY - minTerrainY) * 0.35 + 8.0);
+    const baseSkirtY = minTerrainY - 5.0;
     const N = segments;
     const stride = N + 1;
     const skirtVerts = [];
@@ -933,16 +943,12 @@ class Studio3DApp {
     const minLat = this.originLonLat.lat - (center.z + depth / 2) / mPerDegLat;
     const maxLat = this.originLonLat.lat - (center.z - depth / 2) / mPerDegLat;
 
-    // Pick zoom from target ground resolution instead of a fixed low-detail zoom.
-    const maxDimensionMeters = Math.max(width, depth, 260);
-    const targetPixels = 4096;
-    const metersPerPixel = maxDimensionMeters / targetPixels;
-    let zoom = Math.floor(Math.log2((156543.03392 * Math.max(0.1, Math.cos(latRad))) / metersPerPixel));
-    zoom = Math.max(13, Math.min(19, Number.isFinite(zoom) ? zoom : 16));
-
-    const numTiles = Math.pow(2, zoom);
-    const lon2tile = (lon) => Math.max(0, Math.min(numTiles - 1, Math.floor(((lon + 180) / 360) * numTiles)));
-    const lat2tile = (lat) => {
+    const lon2tile = (lon, z) => {
+      const numTiles = Math.pow(2, z);
+      return Math.max(0, Math.min(numTiles - 1, Math.floor(((lon + 180) / 360) * numTiles)));
+    };
+    const lat2tile = (lat, z) => {
+      const numTiles = Math.pow(2, z);
       const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
       const rad = (clampedLat * Math.PI) / 180.0;
       const val = (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2;
@@ -954,14 +960,28 @@ class Studio3DApp {
       return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
     };
 
-    const minTileX = lon2tile(minLon);
-    const maxTileX = lon2tile(maxLon);
-    const minTileY = lat2tile(maxLat);
-    const maxTileY = lat2tile(minLat);
+    // Calculate optimal zoom level dynamically:
+    // Highest zoom level where the entire model area is covered by <= 8 tiles along each axis
+    // to guarantee crisp detail and zero gaps across 100% of the terrain surface.
+    const MAX_TILES_AXIS = 8;
+    let zoom = 19;
+    while (zoom > 10) {
+      const minX = lon2tile(minLon, zoom);
+      const maxX = lon2tile(maxLon, zoom);
+      const minY = lat2tile(maxLat, zoom);
+      const maxY = lat2tile(minLat, zoom);
+      const countX = maxX - minX + 1;
+      const countY = maxY - minY + 1;
+      if (countX <= MAX_TILES_AXIS && countY <= MAX_TILES_AXIS) {
+        break;
+      }
+      zoom--;
+    }
 
-    // A maximum 6x6 tile window prevents tile storms while retaining detail.
-    const spanX = Math.min(5, Math.max(0, maxTileX - minTileX));
-    const spanY = Math.min(5, Math.max(0, maxTileY - minTileY));
+    const minTileX = lon2tile(minLon, zoom);
+    const maxTileX = lon2tile(maxLon, zoom);
+    const minTileY = lat2tile(maxLat, zoom);
+    const maxTileY = lat2tile(minLat, zoom);
 
     const getTileUrl = (x, y, z) => {
       if (this.basemapProvider === 'satellite') {
@@ -984,8 +1004,8 @@ class Studio3DApp {
     this.pendingTileBuild = buildToken;
     let failedTiles = 0;
 
-    for (let tx = minTileX; tx <= minTileX + spanX; tx++) {
-      for (let ty = minTileY; ty <= minTileY + spanY; ty++) {
+    for (let tx = minTileX; tx <= maxTileX; tx++) {
+      for (let ty = minTileY; ty <= maxTileY; ty++) {
         const img = new Image();
         buildToken.images.push(img);
         img.crossOrigin = 'anonymous';
@@ -1007,7 +1027,6 @@ class Studio3DApp {
         img.onerror = () => {
           if (buildToken.cancelled) return;
           failedTiles += 1;
-          // Silent tile failures left a blank basemap with no explanation.
           if (this.elBasemapNote) {
             this.elBasemapNote.textContent =
               `${failedTiles} basemap tile(s) failed to load.`;
@@ -1117,49 +1136,181 @@ class Studio3DApp {
   buildPinMarkers() {
     if (!this.scenePoints.length) return;
     const pStart = this.scenePoints[0].clone();
-    pStart.y += 1.5;
     const pEnd = this.scenePoints[this.scenePoints.length - 1].clone();
-    pEnd.y += 1.5;
 
-    const createPin = (colorHex) => {
+    // Helper: Canvas texture for 3D circular letter badge
+    const createLetterTexture = (letter, bgColorHex, textColorHex = '#ffffff') => {
+      const c = document.createElement('canvas');
+      c.width = 256;
+      c.height = 256;
+      const cx = c.getContext('2d');
+      cx.fillStyle = bgColorHex;
+      cx.beginPath();
+      cx.arc(128, 128, 120, 0, Math.PI * 2);
+      cx.fill();
+      cx.lineWidth = 14;
+      cx.strokeStyle = '#ffffff';
+      cx.stroke();
+      cx.fillStyle = textColorHex;
+      cx.font = 'bold 140px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      cx.textAlign = 'center';
+      cx.textBaseline = 'middle';
+      cx.fillText(letter, 128, 134);
+      const t = new THREE.CanvasTexture(c);
+      t.minFilter = THREE.LinearFilter;
+      return t;
+    };
+
+    // Helper: Floating billboard badge sprite with geolocator icon + Letter + Label
+    const createFloatingBadgeSprite = (letter, label, colorHex) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 192;
+      const ctx = canvas.getContext('2d');
+
+      const w = 480;
+      const h = 140;
+      const x = 16;
+      const y = 26;
+      const r = 36;
+
+      ctx.save();
+      // Drop Shadow
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+      ctx.shadowBlur = 18;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 8;
+
+      // Outer pill background
+      ctx.fillStyle = colorHex;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.fill();
+
+      // Crisp white border
+      ctx.shadowColor = 'transparent';
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      // White circle for letter badge on the left
+      const badgeCenterX = x + 72;
+      const badgeCenterY = y + h / 2;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(badgeCenterX, badgeCenterY, 48, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Letter inside circle
+      ctx.fillStyle = colorHex;
+      ctx.font = 'bold 58px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(letter, badgeCenterX, badgeCenterY + 2);
+
+      // Geolocator text & label
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 42px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`📍 ${label}`, x + 138, y + h / 2);
+
+      ctx.restore();
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(24, 9.0, 1);
+      return sprite;
+    };
+
+    const createGeolocatorPin = (letter, label, colorHex, colorCss) => {
       const pinGroup = new THREE.Group();
-      const coneGeo = new THREE.ConeGeometry(3.5, 12, 16);
+
+      // 1. Inverted cone pointer to ground (tip touches ground at y=0)
+      const coneGeo = new THREE.ConeGeometry(3.2, 10, 24);
       coneGeo.rotateX(Math.PI);
-      const coneMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3, emissive: colorHex, emissiveIntensity: 0.2 });
-      const cone = new THREE.Mesh(coneGeo, coneMat);
-      cone.position.y = 12;
+      const pinMat = new THREE.MeshStandardMaterial({
+        color: colorHex,
+        roughness: 0.3,
+        metalness: 0.2,
+        emissive: colorHex,
+        emissiveIntensity: 0.25,
+      });
+      const cone = new THREE.Mesh(coneGeo, pinMat);
+      cone.position.y = 5.0;
       cone.castShadow = true;
       pinGroup.add(cone);
 
-      const sphereGeo = new THREE.SphereGeometry(3.2, 16, 16);
-      const sphere = new THREE.Mesh(sphereGeo, coneMat);
-      sphere.position.y = 18;
+      // 2. Upper bulb / circular head
+      const sphereGeo = new THREE.SphereGeometry(3.6, 24, 24);
+      const sphere = new THREE.Mesh(sphereGeo, pinMat);
+      sphere.position.y = 11.5;
+      sphere.castShadow = true;
       pinGroup.add(sphere);
+
+      // 3. 3D circular letter badges on front and back of the sphere
+      const letterTex = createLetterTexture(letter, colorCss, '#ffffff');
+      const discGeo = new THREE.CircleGeometry(2.6, 24);
+      const discMat = new THREE.MeshBasicMaterial({ map: letterTex, side: THREE.DoubleSide });
+
+      const frontDisc = new THREE.Mesh(discGeo, discMat);
+      frontDisc.position.set(0, 11.5, 3.65);
+      pinGroup.add(frontDisc);
+
+      const backDisc = new THREE.Mesh(discGeo, discMat);
+      backDisc.position.set(0, 11.5, -3.65);
+      backDisc.rotateY(Math.PI);
+      pinGroup.add(backDisc);
+
+      // 4. Ground Target / Radar Ring
+      const ringGeo = new THREE.RingGeometry(2.0, 4.8, 32);
+      ringGeo.rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.y = 0.15;
+      pinGroup.add(ring);
+
+      // 5. Floating Billboard Badge Sprite (always faces camera, clear at any distance)
+      const badgeSprite = createFloatingBadgeSprite(letter, label, colorCss);
+      badgeSprite.position.y = 20.5;
+      pinGroup.add(badgeSprite);
 
       return pinGroup;
     };
 
-    const pinA = createPin(0x059669);
+    // Point A: Emerald Green (#059669)
+    const pinA = createGeolocatorPin('A', 'Point A (Origin)', 0x059669, '#059669');
     pinA.position.copy(pStart);
     this.pinsGroup.add(pinA);
 
-    const pinB = createPin(0xdc2626);
+    // Point B: Ruby Red (#dc2626)
+    const pinB = createGeolocatorPin('B', 'Point B (Destination)', 0xdc2626, '#dc2626');
     pinB.position.copy(pEnd);
     this.pinsGroup.add(pinB);
   }
 
   buildAvatar() {
     const activeKey = this.activeProfileKey || this.routeData?.properties?.profile_key || 'adult';
-    this.avatarRig.setProfile(activeKey);
+    const activeColor = this.profileColor(this.routeData);
+    this.avatarRig.setProfile(activeKey, activeColor);
     this.avatarRigs = [this.avatarRig];
 
     this.routeVisuals.forEach((visual) => {
+      const color = this.profileColor(visual.feature);
       if (visual.key === activeKey) {
         visual.rig = this.avatarRig;
         return;
       }
       const rig = new KinematicAvatarRig(this.scene);
-      rig.setProfile(visual.key);
+      rig.setProfile(visual.key, color);
       visual.rig = rig;
       this.avatarRigs.push(rig);
     });
@@ -1385,8 +1536,11 @@ class Studio3DApp {
     if (this.elScrubber) {
       this.elScrubber.value = (safeProgress * 1000.0).toFixed(0);
     }
-    if (this.elNeedle) {
-      this.elNeedle.style.left = `${safeProgress * 100}%`;
+    if (this.activeMetrics && this.activeMetrics.length) {
+      const leftPct = `${safeProgress * 100}%`;
+      this.activeMetrics.forEach((m) => {
+        if (m.elNeedle) m.elNeedle.style.left = leftPct;
+      });
     }
 
     this.updateMetricLiveReadout();
@@ -1410,48 +1564,20 @@ class Studio3DApp {
   }
 
   updateMetricLiveReadout() {
-    if (!this.elMetricLiveVal) return;
-    if (!this.routeData) {
-      this.elMetricLiveVal.textContent = '—';
-      return;
-    }
-    const coords = this.routeData?.geometry?.coordinates || [];
-    const profList = this.routeData?.properties?.elevation_profile || [];
-    if (coords.length === 0) {
-      this.elMetricLiveVal.textContent = '—';
-      return;
-    }
-    if (coords.length === 1) {
-      const eleVal = coords[0][2] !== undefined ? coords[0][2] : 0.0;
-      this.elMetricLiveVal.textContent = `${eleVal.toFixed(1)} m`;
-      return;
-    }
-
+    if (!this.activeMetrics || !this.activeMetrics.length || !this.routeData) return;
     const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
-    const idx = Math.min(coords.length - 1, Math.max(0, Math.floor(safeProgress * coords.length)));
-    const pData = profList[idx] || {};
 
-    if (this.activeChartMetric === 'slope') {
-      const slopeVal = pData.slope_pct !== undefined ? pData.slope_pct : 0.0;
-      this.elMetricLiveVal.textContent = `${slopeVal >= 0 ? '+' : ''}${slopeVal.toFixed(1)}%`;
-      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Slope: ';
-    } else if (this.activeChartMetric === 'lst') {
-      // Only a real LST raster produces lst_normalized. Showing a constant here
-      // meant every route on Earth displayed exactly 30.0 degrees C.
-      this.elMetricLiveVal.textContent = pData.lst_normalized !== undefined
-        ? `${(pData.lst_normalized * 100.0).toFixed(0)}%`
-        : 'no data';
-      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Heat (LST): ';
-    } else if (this.activeChartMetric === 'greenery') {
-      this.elMetricLiveVal.textContent = pData.ndvi_normalized !== undefined
-        ? `${(pData.ndvi_normalized * 100.0).toFixed(0)}%`
-        : 'no data';
-      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Greenery: ';
-    } else {
-      const eleVal = coords[idx] && coords[idx][2] !== undefined ? coords[idx][2] : 0.0;
-      this.elMetricLiveVal.textContent = `${eleVal.toFixed(1)} m`;
-      if (this.elMetricReadout && this.elMetricReadout.firstChild) this.elMetricReadout.firstChild.textContent = 'Elevation: ';
-    }
+    this.activeMetrics.forEach((m) => {
+      if (!m.elVal) return;
+      const n = m.values.length;
+      if (n === 0) {
+        m.elVal.textContent = '—';
+        return;
+      }
+      const idx = Math.min(n - 1, Math.max(0, Math.floor(safeProgress * (n - 1))));
+      const val = m.values[idx];
+      m.elVal.textContent = (val !== null && val !== undefined && !isNaN(val)) ? m.formatter(val) : 'no data';
+    });
   }
 
   updateRadarMap() {
@@ -1563,106 +1689,209 @@ class Studio3DApp {
     }
   }
 
-  renderProfileChart() {
-    if (!this.elSvg) return;
-    if (!this.routeData) {
-      this.elSvg.innerHTML = '';
-      return;
-    }
-    const coords = this.routeData?.geometry?.coordinates || [];
-    const profList = this.routeData?.properties?.elevation_profile || [];
-    if (coords.length < 2) {
-      this.elSvg.innerHTML = '';
-      return;
-    }
-
-    const width = Math.max(10, this.elSvg.clientWidth || 400);
-    const height = Math.max(10, this.elSvg.clientHeight || 52);
-
-    let values = [];
-    let strokeColor = '#0284c7';
-    let gradColor = '#0284c7';
-
-    if (this.activeChartMetric === 'slope') {
-      values = coords.map((_, i) => (profList[i] && profList[i].slope_pct !== undefined ? profList[i].slope_pct : 0.0));
-      strokeColor = '#f59e0b';
-      gradColor = '#f59e0b';
-    } else if (this.activeChartMetric === 'lst') {
-      values = coords.map((_, i) => (
-        profList[i] && profList[i].lst_normalized !== undefined
-          ? profList[i].lst_normalized * 100.0
-          : null
-      ));
-      strokeColor = '#ef4444';
-      gradColor = '#ef4444';
-    } else if (this.activeChartMetric === 'greenery') {
-      values = coords.map((_, i) => (
-        profList[i] && profList[i].ndvi_normalized !== undefined
-          ? profList[i].ndvi_normalized * 100.0
-          : null
-      ));
-      strokeColor = '#10b981';
-      gradColor = '#10b981';
-    } else {
-      values = coords.map((c) => (c && c[2] !== undefined ? c[2] : 0.0));
-      strokeColor = this.routeData?.properties?.profile_color || '#0284c7';
-      gradColor = strokeColor;
-    }
-
-    if (values.length < 2) {
-      this.elSvg.innerHTML = '';
-      return;
-    }
-
-    // A null entry means "no raster covered this vertex". Draw nothing rather
-    // than a flat line that reads as a measurement.
+  buildWormPath(values, width, height) {
+    const n = values.length;
+    if (n < 2) return '';
     const known = values.filter((v) => v !== null && v !== undefined && !isNaN(v));
-    if (!known.length) {
-      this.elSvg.innerHTML = '';
-      if (this.elMetricLiveVal) this.elMetricLiveVal.textContent = 'no data';
-      return;
-    }
-
+    if (!known.length) return '';
     const minVal = Math.min(...known);
     const maxVal = Math.max(...known);
     const valRange = Math.max(0.001, maxVal - minVal);
-    const count = values.length;
-    const denom = Math.max(1, count - 1);
+    const yMid = height / 2.0;
+    const maxHalfT = Math.max(2.0, Math.min(8.0, (height - 6.0) / 2.0));
+    const minHalfT = 1.4;
 
-    // Break the polyline across gaps instead of interpolating through them.
-    let pathD = '';
-    let penDown = false;
-    values.forEach((v, i) => {
-      if (v === null || v === undefined || isNaN(v)) {
-        penDown = false;
-        return;
-      }
-      const x = ((i / denom) * width).toFixed(1);
-      const y = (height - 8 - ((v - minVal) / valRange) * (height - 16)).toFixed(1);
-      pathD += `${penDown ? 'L' : 'M'} ${x},${y} `;
-      penDown = true;
-    });
-    pathD = pathD.trim();
-    if (!pathD) {
-      this.elSvg.innerHTML = '';
-      return;
+    const topPoints = [];
+    const bottomPoints = [];
+
+    for (let i = 0; i < n; i++) {
+      const v = values[i];
+      const s = i / Math.max(1, n - 1);
+      const x = s * width;
+      const cleanV = (v !== null && v !== undefined && !isNaN(v)) ? v : minVal;
+      const u = Math.max(0.0, Math.min(1.0, (cleanV - minVal) / valRange));
+      const env = Math.pow(Math.sin(Math.PI * s), 0.65);
+      const halfT = (minHalfT + u * (maxHalfT - minHalfT)) * env;
+      topPoints.push(`${x.toFixed(1)},${(yMid - halfT).toFixed(1)}`);
+      bottomPoints.push(`${x.toFixed(1)},${(yMid + halfT).toFixed(1)}`);
     }
-    const fillD = `${pathD} L ${width.toFixed(1)},${height.toFixed(1)} L 0,${height.toFixed(1)} Z`;
 
-    // profile_color arrives from the route payload; only accept a literal colour
-    // so it cannot break out of the attribute and inject markup.
-    const safeStroke = SAFE_COLOR.test(strokeColor) ? strokeColor : '#0284c7';
-    const safeGrad = SAFE_COLOR.test(gradColor) ? gradColor : '#0284c7';
-    this.elSvg.innerHTML = `
-      <defs>
-        <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${safeGrad}" stop-opacity="0.38"/>
-          <stop offset="100%" stop-color="${safeGrad}" stop-opacity="0.0"/>
-        </linearGradient>
-      </defs>
-      <path d="${fillD}" fill="url(#chartGrad)"/>
-      <path d="${pathD}" fill="none" stroke="${safeStroke}" stroke-width="2.5"/>
-    `;
+    let d = `M ${topPoints[0]} `;
+    for (let i = 1; i < topPoints.length; i++) {
+      d += `L ${topPoints[i]} `;
+    }
+    for (let i = bottomPoints.length - 1; i >= 0; i--) {
+      d += `L ${bottomPoints[i]} `;
+    }
+    d += 'Z';
+    return d;
+  }
+
+  renderProfileChart() {
+    if (!this.elMultiMetricRows) return;
+    this.elMultiMetricRows.innerHTML = '';
+    this.activeMetrics = [];
+
+    if (!this.routeData) return;
+    const coords = this.routeData?.geometry?.coordinates || [];
+    const profList = this.routeData?.properties?.elevation_profile || [];
+    if (coords.length < 2) return;
+
+    const trackWidth = Math.max(100, (this.elMultiMetricRows.clientWidth || 600) - 190);
+    const trackHeight = 22;
+
+    const metricsDef = [];
+
+    // 1. Elevation (always available)
+    const rawColor = this.routeData?.properties?.profile_color;
+    const elevColor = (typeof rawColor === 'string' && SAFE_COLOR.test(rawColor)) ? rawColor : '#0284c7';
+    const elevVals = coords.map((c, i) => (
+      profList[i]?.elevation_m !== undefined ? profList[i].elevation_m : (c[2] !== undefined ? c[2] : 0.0)
+    ));
+    metricsDef.push({
+      id: 'elevation',
+      name: 'Elevation',
+      icon: '📈',
+      color: elevColor,
+      values: elevVals,
+      formatter: (v) => `${v.toFixed(1)} m`,
+    });
+
+    // 2. Slope (always available)
+    const slopeVals = coords.map((_, i) => (
+      profList[i]?.slope_pct !== undefined ? profList[i].slope_pct : 0.0
+    ));
+    metricsDef.push({
+      id: 'slope',
+      name: 'Slope',
+      icon: '📐',
+      color: '#f59e0b',
+      values: slopeVals,
+      formatter: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
+    });
+
+    // 3. Speed (always available)
+    const speedVals = coords.map((_, i) => (
+      profList[i]?.speed_kmh !== undefined ? profList[i].speed_kmh : 5.0
+    ));
+    metricsDef.push({
+      id: 'speed',
+      name: 'Speed',
+      icon: '⚡',
+      color: '#6366f1',
+      values: speedVals,
+      formatter: (v) => `${v.toFixed(1)} km/h`,
+    });
+
+    // 4. Heat / LST (optional -- only when real raster was supplied)
+    const hasLst = profList.some((p) => p && p.lst_normalized !== undefined && p.lst_normalized !== null);
+    if (hasLst) {
+      const lstVals = coords.map((_, i) => (
+        profList[i]?.lst_normalized !== undefined ? profList[i].lst_normalized * 100.0 : null
+      ));
+      metricsDef.push({
+        id: 'lst',
+        name: 'Heat (LST)',
+        icon: '🌡️',
+        color: '#ef4444',
+        values: lstVals,
+        formatter: (v) => `${v.toFixed(0)}%`,
+      });
+    }
+
+    // 5. Greenery (optional -- only when real raster was supplied)
+    const hasGreen = profList.some((p) => p && p.ndvi_normalized !== undefined && p.ndvi_normalized !== null);
+    if (hasGreen) {
+      const greenVals = coords.map((_, i) => (
+        profList[i]?.ndvi_normalized !== undefined ? profList[i].ndvi_normalized * 100.0 : null
+      ));
+      metricsDef.push({
+        id: 'greenery',
+        name: 'Greenery',
+        icon: '🌳',
+        color: '#10b981',
+        values: greenVals,
+        formatter: (v) => `${v.toFixed(0)}%`,
+      });
+    }
+
+    metricsDef.forEach((metric) => {
+      const pathD = this.buildWormPath(metric.values, trackWidth, trackHeight);
+      if (!pathD) return;
+
+      const safeColor = (typeof metric.color === 'string' && SAFE_COLOR.test(metric.color)) ? metric.color : '#0284c7';
+
+      const row = document.createElement('div');
+      row.className = 'metric-worm-row';
+      row.dataset.metric = metric.id;
+
+      const info = document.createElement('div');
+      info.className = 'metric-row-info';
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'metric-row-icon';
+      iconSpan.textContent = metric.icon;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'metric-row-name';
+      nameSpan.textContent = metric.name;
+
+      const valSpan = document.createElement('span');
+      valSpan.className = 'metric-row-val';
+      valSpan.id = `readout_${metric.id}`;
+      valSpan.textContent = '—';
+
+      info.appendChild(iconSpan);
+      info.appendChild(nameSpan);
+      info.appendChild(valSpan);
+
+      const track = document.createElement('div');
+      track.className = 'metric-ribbon-track';
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'metric-ribbon-svg');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.setAttribute('viewBox', `0 0 ${trackWidth} ${trackHeight}`);
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', pathD);
+      path.setAttribute('fill', safeColor);
+      path.setAttribute('fill-opacity', '0.82');
+      path.setAttribute('stroke', safeColor);
+      path.setAttribute('stroke-width', '1.0');
+      svg.appendChild(path);
+
+      const dot = document.createElement('div');
+      dot.className = 'metric-end-dot';
+      dot.style.backgroundColor = safeColor;
+
+      const needle = document.createElement('div');
+      needle.className = 'metric-needle';
+      needle.id = `needle_${metric.id}`;
+
+      track.appendChild(svg);
+      track.appendChild(dot);
+      track.appendChild(needle);
+
+      track.addEventListener('click', (e) => {
+        const rect = track.getBoundingClientRect();
+        this.progress = Math.max(0.0, Math.min(1.0, (e.clientX - rect.left) / Math.max(1, rect.width)));
+        this.updateAvatarPosition();
+      });
+
+      row.appendChild(info);
+      row.appendChild(track);
+      this.elMultiMetricRows.appendChild(row);
+
+      this.activeMetrics.push({
+        ...metric,
+        safeColor,
+        elVal: valSpan,
+        elNeedle: needle,
+      });
+    });
+
+    this.updateMetricLiveReadout();
   }
 
   animate() {

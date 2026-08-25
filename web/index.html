@@ -137,16 +137,12 @@
     </button>
   </div>
 
-  <!-- Bottom Player & Scrubber -->
+  <!-- Bottom Player & Multi-Metric Longitudinal Profile Cockpit -->
   <div class="hud-panel bottom-controls">
-    <div class="chart-header-row">
-      <div class="chart-metric-selector">
-        <button class="metric-btn active" data-metric="elevation">📈 Elevation</button>
-        <button class="metric-btn" data-metric="slope">📐 Slope %</button>
-        <button class="metric-btn" data-metric="lst">🌡️ Heat (LST)</button>
-        <button class="metric-btn" data-metric="greenery">🌳 Greenery</button>
+    <div class="multi-metric-panel" id="multiMetricPanel">
+      <div class="multi-metric-rows" id="multiMetricRows">
+        <!-- Rendered dynamically per available metric (Elevation, Slope, Speed, and optional Heat, Greenery) -->
       </div>
-      <div class="metric-readout" id="metricReadout">Elevation: <b id="metricLiveVal">—</b></div>
     </div>
 
     <div class="player-scrubber-row">
@@ -155,10 +151,6 @@
       </button>
 
       <div class="scrubber-container">
-        <div class="elevation-profile-chart" id="chartDrawer">
-          <svg id="profileSvg" width="100%" height="100%"></svg>
-          <div class="profile-needle" id="profileNeedle"></div>
-        </div>
         <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
       </div>
 

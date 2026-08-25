@@ -5,6 +5,12 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-08-25
+
+### Fixed
+- **Web 3D Basemap Coverage:** Resolved basemap tile cutoff issue across extensive model areas by dynamically determining zoom level and fully covering the model bounding box with no tile truncation.
+- **Point A & Point B Dual Visual Markers:** Added distinct letter badge ("A" and "B") geolocator map pin markers and camera-facing billboard sprites in the 3D WebGL viewer, and enhanced QGIS vector point layers with composite font marker symbology and crisp white-buffered labels.
+
 ## [0.2.0] - 2026-08-24
 
 A correctness and honesty release. Every fabricated output and unsupported claim

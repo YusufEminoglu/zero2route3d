@@ -1055,6 +1055,39 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertIn("buildings", pal)
             self.assertGreaterEqual(len(pal["buildings"]), 5)
 
+    def test_multi_metric_profile_data_contract(self) -> None:
+        from ..core.mobility_profiles import get_profile
+        from ..core.profile_stats import compute_route_statistics
+
+        # Case 1: Standard routing without rasters
+        coords = [(27.1, 38.4, 10.0), (27.2, 38.4, 25.0), (27.3, 38.4, 15.0)]
+        stats = compute_route_statistics(coords, profile=get_profile("adult"))
+        self.assertGreater(len(stats.elevation_profile), 2)
+        for pt in stats.elevation_profile:
+            self.assertIn("distance_m", pt)
+            self.assertIn("elevation_m", pt)
+            self.assertIn("slope_pct", pt)
+            self.assertIn("speed_kmh", pt)
+            self.assertNotIn("lst_normalized", pt)
+            self.assertNotIn("ndvi_normalized", pt)
+
+        # Case 2: Routing with real raster environmental samples
+        dense_count = len(stats.elevation_profile)
+        mock_lst = [0.4] * dense_count
+        mock_green = [0.75] * dense_count
+        stats_env = compute_route_statistics(
+            coords,
+            profile=get_profile("adult"),
+            lst_samples=mock_lst,
+            green_samples=mock_green,
+        )
+        self.assertEqual(len(stats_env.elevation_profile), dense_count)
+        for pt in stats_env.elevation_profile:
+            self.assertIn("lst_normalized", pt)
+            self.assertIn("ndvi_normalized", pt)
+            self.assertAlmostEqual(pt["lst_normalized"], 0.4)
+            self.assertAlmostEqual(pt["ndvi_normalized"], 0.75)
+
 
 if __name__ == "__main__":
     unittest.main()

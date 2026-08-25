@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from qgis.PyQt.QtCore import Qt, QUrl, QVariant
-from qgis.PyQt.QtGui import QDesktopServices
+from qgis.PyQt.QtGui import QColor, QDesktopServices, QFont
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -40,15 +40,21 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsFeature,
     QgsField,
+    QgsFontMarkerSymbolLayer,
     QgsGeometry,
     QgsMapLayerProxyModel,
     QgsMarkerSymbol,
+    QgsPalLayerSettings,
     QgsPoint,
     QgsPointXY,
     QgsProject,
     QgsRasterLayer,
+    QgsSimpleMarkerSymbolLayer,
     QgsSingleSymbolRenderer,
+    QgsTextBufferSettings,
+    QgsTextFormat,
     QgsVectorLayer,
+    QgsVectorLayerSimpleLabeling,
 )
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
@@ -61,6 +67,7 @@ from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import (
     PROFILES,
     get_profile,
+    get_profile_color,
     list_profile_keys,
     list_profile_keys_for_group,
 )
@@ -77,6 +84,7 @@ from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from .canvas_animator import Route2DCanvasAnimator
 from .cue_sheet_widget import CueSheetWidget
 from .map_tools import RoutePointMapTool
+from .multi_metric_panel import MultiMetricPanel
 from .profile_editor import ProfileEditorDialog
 from .server import Route3DLocalServer
 from .theme import apply_adaptive_theme
@@ -106,6 +114,63 @@ def _polygon_filters() -> Any:
     if hasattr(Qgis, "LayerFilter") and hasattr(Qgis, "LayerFilters"):
         return Qgis.LayerFilters(Qgis.LayerFilter.PolygonLayer)
     return getattr(QgsMapLayerProxyModel, "PolygonLayer", 8)
+
+
+def _create_route_point_marker_symbol(letter: str, main_color_hex: str, ring_color_hex: str) -> QgsMarkerSymbol:
+    """Create a high-visibility geolocator pin marker with embedded letter A or B."""
+    sym = QgsMarkerSymbol()
+
+    # 1. Outer halo / accent drop ring
+    outer = QgsSimpleMarkerSymbolLayer()
+    outer.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+    outer.setSize(8.8)
+    outer.setColor(QColor(ring_color_hex))
+    outer.setStrokeColor(QColor("#ffffff"))
+    outer.setStrokeWidth(0.6)
+    sym.changeSymbolLayer(0, outer)
+
+    # 2. Main circular pin badge
+    inner = QgsSimpleMarkerSymbolLayer()
+    inner.setShape(QgsSimpleMarkerSymbolLayer.Circle)
+    inner.setSize(7.0)
+    inner.setColor(QColor(main_color_hex))
+    inner.setStrokeColor(QColor("#ffffff"))
+    inner.setStrokeWidth(0.8)
+    sym.appendSymbolLayer(inner)
+
+    # 3. Bold Centered Letter A / B
+    font_layer = QgsFontMarkerSymbolLayer("Arial", letter, 4.0)
+    font_layer.setColor(QColor("#ffffff"))
+    sym.appendSymbolLayer(font_layer)
+
+    return sym
+
+
+def _apply_route_point_labeling(layer: QgsVectorLayer, label_text: str, text_color_hex: str) -> None:
+    """Apply crisp high-contrast text labeling with white halo buffer."""
+    settings = QgsPalLayerSettings()
+    settings.fieldName = f"'{label_text}'"
+    settings.isExpression = True
+
+    tf = QgsTextFormat()
+    tf.setSize(9.5)
+    tf.setColor(QColor(text_color_hex))
+    font = QFont("Segoe UI", 9)
+    font.setBold(True)
+    tf.setFont(font)
+
+    buf = QgsTextBufferSettings()
+    buf.setEnabled(True)
+    buf.setSize(1.2)
+    buf.setColor(QColor("#ffffff"))
+    tf.setBuffer(buf)
+    settings.setFormat(tf)
+
+    settings.placement = getattr(QgsPalLayerSettings, "AroundPoint", 0)
+    settings.dist = 4.0
+
+    layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+    layer.setLabelsEnabled(True)
 
 
 class Route3DStudioDock(QDockWidget):
@@ -352,6 +417,10 @@ class Route3DStudioDock(QDockWidget):
         card_play.setProperty("class", "route3dCard")
         play_layout = QVBoxLayout(card_play)
         play_layout.addWidget(QLabel("<b>3. Canvas Animation & 3D WebGL Studio</b>"))
+
+        self.quick_multi_metric_panel = MultiMetricPanel(card_play)
+        self.quick_multi_metric_panel.seek_requested.connect(self.canvas_animator.seek_progress)
+        play_layout.addWidget(self.quick_multi_metric_panel)
 
         ctrl_row = QHBoxLayout()
         self.btn_quick_play = QPushButton("▶️ Play")
@@ -827,6 +896,10 @@ class Route3DStudioDock(QDockWidget):
         anim_layout = QVBoxLayout(card_anim)
         anim_layout.addWidget(QLabel("<b>7. Real-Time 2D Canvas Animation (QGIS Canvas)</b>"))
 
+        self.advanced_multi_metric_panel = MultiMetricPanel(card_anim)
+        self.advanced_multi_metric_panel.seek_requested.connect(self.canvas_animator.seek_progress)
+        anim_layout.addWidget(self.advanced_multi_metric_panel)
+
         anim_ctrl_row = QHBoxLayout()
         self.btn_anim_play = QPushButton("▶️ Play")
         self.btn_anim_play.setEnabled(False)
@@ -1093,6 +1166,10 @@ class Route3DStudioDock(QDockWidget):
             self.current_route_file.unlink()
         if hasattr(self, "table_comparison"):
             self.table_comparison.setRowCount(0)
+        if hasattr(self, "quick_multi_metric_panel"):
+            self.quick_multi_metric_panel.clear()
+        if hasattr(self, "advanced_multi_metric_panel"):
+            self.advanced_multi_metric_panel.clear()
         # Both widget sets must be reset. Only the Advanced labels were cleared,
         # so after "New Route" the Quick tab still showed the previous run's
         # distance, time and calories.
@@ -1337,31 +1414,29 @@ class Route3DStudioDock(QDockWidget):
                     layer_a.deleteFeatures(layer_a.allFeatureIds())
                     f_a = QgsFeature(layer_a.fields())
                     f_a.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_a.lon, self.point_a.lat)))
-                    f_a.setAttributes(["Point A (Origin)", float(self.point_a.lon), float(self.point_a.lat)])
+                    if layer_a.fields().count() >= 4:
+                        f_a.setAttributes(["A", "Point A (Origin)", float(self.point_a.lon), float(self.point_a.lat)])
+                    else:
+                        f_a.setAttributes(["Point A (Origin)", float(self.point_a.lon), float(self.point_a.lat)])
                     layer_a.addFeatures([f_a])
                     layer_a.commitChanges()
                     layer_a.updateExtents()
                     layer_a.triggerRepaint()
             else:
                 layer_a = QgsVectorLayer(
-                    "Point?crs=EPSG:4326&field=name:string&field=lon:double&field=lat:double",
+                    "Point?crs=EPSG:4326&field=label:string&field=name:string&field=lon:double&field=lat:double",
                     layer_a_name,
                     "memory",
                 )
                 layer_a.setCustomProperty("zero2route3d/route_point", "A")
                 f_a = QgsFeature(layer_a.fields())
                 f_a.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_a.lon, self.point_a.lat)))
-                f_a.setAttributes(["Point A (Origin)", float(self.point_a.lon), float(self.point_a.lat)])
+                f_a.setAttributes(["A", "Point A (Origin)", float(self.point_a.lon), float(self.point_a.lat)])
                 layer_a.dataProvider().addFeatures([f_a])
                 layer_a.updateExtents()
-                sym_a = QgsMarkerSymbol.createSimple({
-                    "name": "circle",
-                    "color": "#059669",
-                    "outline_color": "#ffffff",
-                    "outline_width": "0.8",
-                    "size": "5.0",
-                })
+                sym_a = _create_route_point_marker_symbol("A", "#059669", "#047857")
                 layer_a.setRenderer(QgsSingleSymbolRenderer(sym_a))
+                _apply_route_point_labeling(layer_a, "📍 Point A (Origin)", "#064e3b")
                 proj.addMapLayer(layer_a)
 
         # 2. Point B Layer
@@ -1375,31 +1450,29 @@ class Route3DStudioDock(QDockWidget):
                     layer_b.deleteFeatures(layer_b.allFeatureIds())
                     f_b = QgsFeature(layer_b.fields())
                     f_b.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_b.lon, self.point_b.lat)))
-                    f_b.setAttributes(["Point B (Destination)", float(self.point_b.lon), float(self.point_b.lat)])
+                    if layer_b.fields().count() >= 4:
+                        f_b.setAttributes(["B", "Point B (Destination)", float(self.point_b.lon), float(self.point_b.lat)])
+                    else:
+                        f_b.setAttributes(["Point B (Destination)", float(self.point_b.lon), float(self.point_b.lat)])
                     layer_b.addFeatures([f_b])
                     layer_b.commitChanges()
                     layer_b.updateExtents()
                     layer_b.triggerRepaint()
             else:
                 layer_b = QgsVectorLayer(
-                    "Point?crs=EPSG:4326&field=name:string&field=lon:double&field=lat:double",
+                    "Point?crs=EPSG:4326&field=label:string&field=name:string&field=lon:double&field=lat:double",
                     layer_b_name,
                     "memory",
                 )
                 layer_b.setCustomProperty("zero2route3d/route_point", "B")
                 f_b = QgsFeature(layer_b.fields())
                 f_b.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(self.point_b.lon, self.point_b.lat)))
-                f_b.setAttributes(["Point B (Destination)", float(self.point_b.lon), float(self.point_b.lat)])
+                f_b.setAttributes(["B", "Point B (Destination)", float(self.point_b.lon), float(self.point_b.lat)])
                 layer_b.dataProvider().addFeatures([f_b])
                 layer_b.updateExtents()
-                sym_b = QgsMarkerSymbol.createSimple({
-                    "name": "circle",
-                    "color": "#dc2626",
-                    "outline_color": "#ffffff",
-                    "outline_width": "0.8",
-                    "size": "5.0",
-                })
+                sym_b = _create_route_point_marker_symbol("B", "#dc2626", "#991b1b")
                 layer_b.setRenderer(QgsSingleSymbolRenderer(sym_b))
+                _apply_route_point_labeling(layer_b, "🎯 Point B (Destination)", "#7f1d1d")
                 proj.addMapLayer(layer_b)
 
         if self.canvas:
@@ -2021,6 +2094,14 @@ class Route3DStudioDock(QDockWidget):
         # Update KPIs
         self._update_kpi_display(result)
 
+        # Update Multi-Metric Ribbon Panels
+        prof_list = result.statistics.elevation_profile
+        prof_col = get_profile_color(result.profile.key)
+        if hasattr(self, "quick_multi_metric_panel"):
+            self.quick_multi_metric_panel.set_route_profile(prof_list, prof_col)
+        if hasattr(self, "advanced_multi_metric_panel"):
+            self.advanced_multi_metric_panel.set_route_profile(prof_list, prof_col)
+
         # Cue Sheet
         self.cue_widget.load_cues(result.statistics.cue_sheet)
 
@@ -2153,6 +2234,12 @@ class Route3DStudioDock(QDockWidget):
             self.current_route_result = res
             self._update_kpi_display(res)
             self.cue_widget.load_cues(res.statistics.cue_sheet)
+            prof_list = res.statistics.elevation_profile
+            prof_col = get_profile_color(res.profile.key)
+            if hasattr(self, "quick_multi_metric_panel"):
+                self.quick_multi_metric_panel.set_route_profile(prof_list, prof_col)
+            if hasattr(self, "advanced_multi_metric_panel"):
+                self.advanced_multi_metric_panel.set_route_profile(prof_list, prof_col)
 
     def _on_anim_frame_updated(self, current_time_s: float, max_time_s: float, progress: float) -> None:
         self.sld_anim_progress.blockSignals(True)
@@ -2163,6 +2250,11 @@ class Route3DStudioDock(QDockWidget):
             self.sld_quick_progress.blockSignals(True)
             self.sld_quick_progress.setValue(int(progress * 1000))
             self.sld_quick_progress.blockSignals(False)
+
+        if hasattr(self, "quick_multi_metric_panel"):
+            self.quick_multi_metric_panel.set_progress(progress)
+        if hasattr(self, "advanced_multi_metric_panel"):
+            self.advanced_multi_metric_panel.set_progress(progress)
 
         cur_min, cur_sec = divmod(int(current_time_s), 60)
         tot_min, tot_sec = divmod(int(max_time_s), 60)
@@ -2188,6 +2280,10 @@ class Route3DStudioDock(QDockWidget):
 
     def _on_anim_slider_moved(self, val: int) -> None:
         fraction = val / 1000.0
+        if hasattr(self, "quick_multi_metric_panel"):
+            self.quick_multi_metric_panel.set_progress(fraction)
+        if hasattr(self, "advanced_multi_metric_panel"):
+            self.advanced_multi_metric_panel.set_progress(fraction)
         self.canvas_animator.seek_progress(fraction)
 
     def _on_anim_speed_changed(self, _index: int) -> None:

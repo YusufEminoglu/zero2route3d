@@ -233,6 +233,63 @@ def test_gui_map_tools(iface):
     return _ok("RoutePointMapTool creation and safe deactivation", True)
 
 
+def test_gui_multi_metric_panel(iface):
+    from zero2route3d.core.mobility_profiles import get_profile
+    from zero2route3d.core.profile_stats import compute_route_statistics
+    from zero2route3d.gui.multi_metric_panel import MultiMetricPanel
+
+    panel = MultiMetricPanel()
+    if panel.metrics:
+        return _ok("MultiMetricPanel initial empty state", False)
+
+    # 1. Test 3-metric profile (Elevation, Slope, Speed)
+    coords = [(27.14, 38.42, 10.0), (27.145, 38.425, 18.0), (27.15, 38.43, 12.0)]
+    stats = compute_route_statistics(coords, profile=get_profile("adult"))
+    panel.set_route_profile(stats.elevation_profile, profile_color="#0284c7")
+
+    if len(panel.metrics) != 3:
+        return _ok("MultiMetricPanel 3 standard metrics (elevation, slope, speed)", False)
+
+    metric_keys = [m.key for m in panel.metrics]
+    if metric_keys != ["elevation", "slope", "speed"]:
+        return _ok("MultiMetricPanel correct metric keys", False)
+
+    # 2. Test 5-metric profile (with real LST and NDVI)
+    stats_env = compute_route_statistics(
+        coords,
+        profile=get_profile("adult"),
+        lst_samples=[0.4, 0.6, 0.5],
+        green_samples=[0.7, 0.8, 0.75],
+    )
+    panel.set_route_profile(stats_env.elevation_profile, profile_color="#0284c7")
+
+    if len(panel.metrics) != 5:
+        return _ok("MultiMetricPanel 5 metrics with environmental data", False)
+
+    keys_5 = [m.key for m in panel.metrics]
+    if "lst" not in keys_5 or "greenery" not in keys_5:
+        return _ok("MultiMetricPanel lst and greenery keys included", False)
+
+    # 3. Test seeking and progress
+    panel.set_progress(0.75)
+    if abs(panel.progress - 0.75) > 1e-4:
+        return _ok("MultiMetricPanel progress setting", False)
+
+    # 4. Test seeking signal
+    received_seeks = []
+    panel.seek_requested.connect(received_seeks.append)
+    panel.seek_requested.emit(0.35)
+    if not received_seeks or abs(received_seeks[0] - 0.35) > 1e-4:
+        return _ok("MultiMetricPanel seek_requested signal", False)
+
+    # 5. Test clear
+    panel.clear()
+    if panel.metrics or panel.progress != 0.0:
+        return _ok("MultiMetricPanel clear", False)
+
+    return _ok("MultiMetricPanel multi-metric ribbon rendering and interaction", True)
+
+
 def test_gui_canvas_animator(iface):
     from zero2route3d.core.mobility_profiles import get_profile
     from zero2route3d.core.profile_stats import compute_route_statistics
@@ -333,6 +390,30 @@ def test_dock_quick_mode_and_scenarios(iface):
     return _ok("Route3DStudioDock Quick Mode & Persistent Scenario Group creation", has_group)
 
 
+def test_dock_point_ab_layers(iface):
+    from zero2route3d.core.routing_engine import Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+    from qgis.core import QgsProject
+
+    dock = Route3DStudioDock(iface=iface)
+    dock.point_a = Waypoint(lon=27.1428, lat=38.4237, name="Point A (Origin)")
+    dock.point_b = Waypoint(lon=27.1450, lat=38.4250, name="Point B (Destination)")
+    dock._update_point_vector_layers()
+
+    proj = QgsProject.instance()
+    layers_a = proj.mapLayersByName("📍 Route Point A (Origin)")
+    layers_b = proj.mapLayersByName("🎯 Route Point B (Destination)")
+
+    valid = bool(layers_a and layers_b)
+    if valid:
+        la = layers_a[0]
+        lb = layers_b[0]
+        valid = la.labelsEnabled() and lb.labelsEnabled() and la.featureCount() == 1 and lb.featureCount() == 1
+
+    dock.teardown()
+    return _ok("Route Point A and Point B vector layers with letter markers and labeling", valid)
+
+
 def test_cartographic_themes_in_qgis(iface):
     from zero2route3d.core.osm_styling import apply_osm_theme_style, list_osm_themes
     from qgis.core import QgsVectorLayer
@@ -409,10 +490,12 @@ def run_all(iface):
         test_processing_provider(),
         test_gui_profile_editor(),
         test_gui_cue_sheet_widget(),
+        test_gui_multi_metric_panel(iface),
         test_gui_map_tools(iface),
         test_gui_canvas_animator(iface),
         test_dock_animation_playback(iface),
         test_dock_quick_mode_and_scenarios(iface),
+        test_dock_point_ab_layers(iface),
         test_cartographic_themes_in_qgis(iface),
         test_standalone_html_bundler_qgis(iface),
         test_processing_algorithms_load(),

@@ -461,82 +461,116 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: min(45vh, 320px);
 }
 
-.chart-header-row {
+.multi-metric-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.metric-worm-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
 }
 
-.chart-metric-selector {
+.metric-worm-row:last-child {
+  border-bottom: none;
+}
+
+.metric-row-info {
   display: flex;
   align-items: center;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  padding: 2px;
-  border-radius: 6px;
-  gap: 2px;
+  gap: 6px;
+  width: 175px;
+  min-width: 155px;
+  flex-shrink: 0;
 }
 
-.metric-btn {
-  background: transparent;
-  border: none;
-  color: #64748b;
+.metric-row-icon {
+  font-size: 13px;
+  width: 18px;
+  text-align: center;
+}
+
+.metric-row-name {
   font-size: 11px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 4px;
+  font-weight: 700;
+  color: var(--text-main);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-row-val {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-feature-settings: "tnum";
+  min-width: 48px;
+  text-align: right;
+}
+
+.metric-ribbon-track {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  background: rgba(241, 245, 249, 0.75);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 5px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  padding: 0 1px;
 }
 
-.metric-btn:hover {
-  color: #0f172a;
+.metric-ribbon-track:hover {
+  border-color: #cbd5e1;
+  background: rgba(241, 245, 249, 0.95);
 }
 
-.metric-btn.active {
-  background: #ffffff;
-  color: #0284c7;
-  font-weight: 700;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+.metric-ribbon-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
 }
 
-.metric-readout {
-  font-size: 12px;
-  color: #475569;
+.metric-end-dot {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px #ffffff, 0 1px 3px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
 }
 
-.metric-readout b {
-  color: #0284c7;
-  font-weight: 700;
+.metric-needle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: #ef4444;
+  left: 0%;
+  pointer-events: none;
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+  z-index: 2;
 }
 
 .player-scrubber-row {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.elevation-profile-chart {
-  width: 100%;
-  height: 52px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  position: relative;
-  overflow: hidden;
-}
-
-.profile-needle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #ef4444;
-  left: 0%;
-  pointer-events: none;
 }
 
 .speed-selector {
