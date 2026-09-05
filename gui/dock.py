@@ -2172,12 +2172,39 @@ class Route3DStudioDock(QDockWidget):
         self.kpi_slope.setText(slope_str)
         self.kpi_kcal.setText(kcal_str)
 
+        segment_diagnostics = result.routing_diagnostics.get("segments") or []
+        if segment_diagnostics:
+            diag = segment_diagnostics[0]
+            diagnostic_text = (
+                f"Network snap: A {diag.get('start_snap_m', 0.0):.1f} m, "
+                f"B {diag.get('end_snap_m', 0.0):.1f} m\n"
+                f"Expanded nodes: {diag.get('expanded_nodes', 0)}\n"
+                f"Access-blocked edges: {diag.get('blocked_by_access', 0)}"
+            )
+            for label in (
+                self.kpi_dist,
+                self.kpi_time,
+                self.kpi_climb,
+                self.kpi_slope,
+                self.kpi_kcal,
+            ):
+                label.setToolTip(diagnostic_text)
+
         if hasattr(self, "quick_kpi_dist"):
             self.quick_kpi_dist.setText(dist_str)
             self.quick_kpi_time.setText(time_str)
             self.quick_kpi_climb.setText(climb_str)
             self.quick_kpi_slope.setText(slope_str)
             self.quick_kpi_kcal.setText(kcal_str)
+            if segment_diagnostics:
+                for label in (
+                    self.quick_kpi_dist,
+                    self.quick_kpi_time,
+                    self.quick_kpi_climb,
+                    self.quick_kpi_slope,
+                    self.quick_kpi_kcal,
+                ):
+                    label.setToolTip(diagnostic_text)
 
     def _update_comparison_table(self) -> None:
         if not self.multi_route_results:

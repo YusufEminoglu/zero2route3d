@@ -5,6 +5,31 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-05
+
+### Added
+- Profile-aware modal access filtering for `access`, `foot`, `bicycle`,
+  `motor_vehicle`, highway class, lighting and surface attributes.
+- `zero2route3d:audit_routing_network`, a fifteenth Processing algorithm that
+  annotates network segments with accessibility and topology findings.
+- Route diagnostics for origin/destination snap distance, expanded nodes,
+  profile-blocked edges and graph health.
+
+### Fixed
+- QGIS network-layer extraction now preserves LineStringZ vertices and reads
+  one-way, road name, surface, lane, access and speed fields case-insensitively.
+- One-way network components are computed as weak components, eliminating
+  feature-order-dependent snapping failures.
+- Routes no longer create silent connectors up to 2.5 km; snapping is bounded
+  to 1 km by default and configurable in the main Processing algorithm.
+- Isochrones and Pareto routes now enforce the same profile constraints as the
+  primary A* router.
+- Isochrone area is measured from the real ordered convex hull instead of a
+  fixed circular fill factor, and projected Processing origins are reprojected.
+
+### Removed
+- One unused GUI font import and stale documentation claims/counts.
+
 ## [0.3.0] - 2026-08-25
 
 ### Added

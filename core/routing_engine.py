@@ -11,6 +11,7 @@ from .input_validation import deduplicate_adjacent_coordinates, validate_waypoin
 from .kinematics import haversine_distance_2d
 from .mobility_profiles import MobilityProfile, get_profile
 from .network_source import RoadSegment
+from .network_policy import evaluate_edge_access, surface_quality
 from .profile_stats import (
     RouteStatistics,
     compute_route_statistics,
@@ -56,6 +57,7 @@ class RouteResult3D:
     is_network_matched: bool = True
     status_message: str = "Route computed successfully."
     alternative_routes: List[Dict[str, Any]] = field(default_factory=list)
+    routing_diagnostics: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def profile_key(self) -> str:
@@ -102,6 +104,7 @@ class RouteResult3D:
                 "cue_sheet": [c.to_dict() for c in self.statistics.cue_sheet],
                 "elevation_profile": self.statistics.elevation_profile,
                 "alternative_count": len(self.alternative_routes),
+                "routing_diagnostics": self.routing_diagnostics,
             },
         }
 
@@ -134,6 +137,7 @@ class RoutingEngine3D:
         self,
         sampler: Optional[EnvironmentalSurfaceSampler] = None,
         weights: Optional[MCDAWeights] = None,
+        max_snap_distance_m: float = 1000.0,
     ) -> None:
         self.sampler = sampler or EnvironmentalSurfaceSampler()
         self.weights = weights or MCDAWeights()
@@ -143,6 +147,9 @@ class RoutingEngine3D:
         self.grid_buckets: Dict[Tuple[int, int], List[int]] = {}
         self.component_by_node: Dict[int, int] = {}
         self.component_sizes: Dict[int, int] = {}
+        self.max_snap_distance_m = max(10.0, float(max_snap_distance_m))
+        self.graph_diagnostics: Dict[str, Any] = {}
+        self.last_segment_diagnostics: Dict[str, Any] = {}
         self._built = False
 
     def build_graph(self, segments: Sequence[RoadSegment]) -> None:
@@ -155,6 +162,11 @@ class RoutingEngine3D:
         self.component_sizes.clear()
 
         node_counter = 0
+        skipped_invalid = 0
+        skipped_duplicate = 0
+        one_way_count = 0
+        access_tagged_count = 0
+        weak_adj: Dict[int, set] = {}
 
         def get_or_create_node(pt: Tuple[float, float, float]) -> int:
             nonlocal node_counter
@@ -177,6 +189,7 @@ class RoutingEngine3D:
                 self.coord_to_node[key] = node_counter
                 self.nodes[node_counter] = (lon, lat, z)
                 self.adj[node_counter] = []
+                weak_adj[node_counter] = set()
 
                 bx = int(lon * 300)
                 by = int(lat * 300)
@@ -191,19 +204,40 @@ class RoutingEngine3D:
         edge_keys = set()
         for seg in segments:
             if not seg or len(seg.p1) < 2 or len(seg.p2) < 2:
+                skipped_invalid += 1
                 continue
             try:
                 if not all(math.isfinite(float(v)) for v in (*seg.p1[:2], *seg.p2[:2])):
+                    skipped_invalid += 1
                     continue
             except (TypeError, ValueError):
+                skipped_invalid += 1
                 continue
             u = get_or_create_node(seg.p1)
             v = get_or_create_node(seg.p2)
             if u == v:
+                skipped_invalid += 1
                 continue
 
-            edge_key = (u, v)
+            # Parallel roads between the same rounded nodes can carry different
+            # direction, access, surface or hierarchy attributes. Collapsing on
+            # (u, v) alone silently discarded valid alternatives and could even
+            # remove the reverse direction supplied by a later two-way feature.
+            edge_key = (
+                u,
+                v,
+                str(seg.highway_type),
+                int(seg.hierarchy_rank),
+                bool(seg.is_oneway),
+                str(seg.surface),
+                str(getattr(seg, "name", "")),
+                str(getattr(seg, "access", "")),
+                str(getattr(seg, "foot", "")),
+                str(getattr(seg, "bicycle", "")),
+                str(getattr(seg, "motor_vehicle", "")),
+            )
             if edge_key in edge_keys:
+                skipped_duplicate += 1
                 continue
             edge_keys.add(edge_key)
 
@@ -226,15 +260,34 @@ class RoutingEngine3D:
                 "name": getattr(seg, "name", "") or "",
                 "is_steps": seg.is_steps,
                 "surface": seg.surface,
+                "access": getattr(seg, "access", ""),
+                "foot": getattr(seg, "foot", ""),
+                "bicycle": getattr(seg, "bicycle", ""),
+                "motor_vehicle": getattr(seg, "motor_vehicle", ""),
+                "lit": getattr(seg, "lit", ""),
+                "sidewalk": getattr(seg, "sidewalk", ""),
+                "maxspeed_kmh": getattr(seg, "maxspeed_kmh", None),
             }
             self.adj[u].append((v, seg_len, slope_pct, meta_forward))
+            weak_adj[u].add(v)
+            weak_adj[v].add(u)
+
+            if seg.is_oneway:
+                one_way_count += 1
+            if any(
+                getattr(seg, tag, "")
+                for tag in ("access", "foot", "bicycle", "motor_vehicle")
+            ):
+                access_tagged_count += 1
 
             if not seg.is_oneway:
                 meta_reverse = dict(meta_forward)
                 meta_reverse["slope_pct"] = -slope_pct
                 self.adj[v].append((u, seg_len, -slope_pct, meta_reverse))
 
-        # BFS Connected Components
+        # Weakly connected components are used only for snapping. Traversability
+        # remains directed in A*. The previous outgoing-only BFS made component
+        # membership depend on feature order for converging one-way streets.
         comp_id = 0
         for seed in self.nodes:
             if seed in self.component_by_node:
@@ -245,13 +298,25 @@ class RoutingEngine3D:
             while stack:
                 curr = stack.pop()
                 size += 1
-                for neighbour, *_rest in self.adj.get(curr, []):
+                for neighbour in weak_adj.get(curr, set()):
                     if neighbour not in self.component_by_node:
                         self.component_by_node[neighbour] = comp_id
                         stack.append(neighbour)
             self.component_sizes[comp_id] = size
             comp_id += 1
 
+        directed_edges = sum(len(edges) for edges in self.adj.values())
+        self.graph_diagnostics = {
+            "input_segments": len(segments),
+            "node_count": len(self.nodes),
+            "directed_edge_count": directed_edges,
+            "component_count": len(self.component_sizes),
+            "largest_component_nodes": max(self.component_sizes.values(), default=0),
+            "one_way_segments": one_way_count,
+            "access_tagged_segments": access_tagged_count,
+            "skipped_invalid_segments": skipped_invalid,
+            "skipped_duplicate_segments": skipped_duplicate,
+        }
         self._built = True
 
     def find_nearest_node(
@@ -307,11 +372,19 @@ class RoutingEngine3D:
             return None, None
 
         origin_by_component = {
-            component: self.find_nearest_node(origin, target_component=component)
+            component: self.find_nearest_node(
+                origin,
+                target_component=component,
+                max_search_radius_m=self.max_snap_distance_m,
+            )
             for component in self.component_sizes
         }
         destination_by_component = {
-            component: self.find_nearest_node(destination, target_component=component)
+            component: self.find_nearest_node(
+                destination,
+                target_component=component,
+                max_search_radius_m=self.max_snap_distance_m,
+            )
             for component in self.component_sizes
         }
         shared = []
@@ -327,7 +400,10 @@ class RoutingEngine3D:
             _score, _size, start_node, end_node = min(shared)
             return start_node, end_node
 
-        return self.find_nearest_node(origin), self.find_nearest_node(destination)
+        return (
+            self.find_nearest_node(origin, max_search_radius_m=self.max_snap_distance_m),
+            self.find_nearest_node(destination, max_search_radius_m=self.max_snap_distance_m),
+        )
 
     def compute_segment_route(
         self,
@@ -338,18 +414,36 @@ class RoutingEngine3D:
     ) -> Tuple[List[Tuple[float, float, float]], bool]:
         """Compute A* least-cost path between single origin and destination pair."""
         if not self.nodes:
+            self.last_segment_diagnostics = {"status": "empty_graph"}
             return [], False
 
         start_node, end_node = self.find_compatible_nodes(start_pt, end_pt)
 
         if start_node is None or end_node is None:
+            self.last_segment_diagnostics = {
+                "status": "snap_failed",
+                "max_snap_distance_m": self.max_snap_distance_m,
+            }
             return [], False
+
+        start_snap_m = haversine_distance_2d(start_pt, self.nodes[start_node])
+        end_snap_m = haversine_distance_2d(end_pt, self.nodes[end_node])
 
         if start_node == end_node:
             z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
             dist_d = haversine_distance_2d(start_pt, end_pt)
             if dist_d < 0.1:
+                self.last_segment_diagnostics = {
+                    "status": "coincident",
+                    "start_snap_m": start_snap_m,
+                    "end_snap_m": end_snap_m,
+                }
                 return [(start_pt[0], start_pt[1], z1)], True
+            self.last_segment_diagnostics = {
+                "status": "same_network_node",
+                "start_snap_m": start_snap_m,
+                "end_snap_m": end_snap_m,
+            }
             return [], False
 
         dest_coord = self.nodes[end_node]
@@ -375,6 +469,9 @@ class RoutingEngine3D:
 
         max_iters = min(150_000, len(self.nodes) * 3)
         iters = 0
+        blocked_by_access = 0
+        blocked_by_profile = 0
+        access_reasons: Dict[str, int] = {}
 
         while pq and iters < max_iters:
             iters += 1
@@ -393,6 +490,12 @@ class RoutingEngine3D:
                 if (u, v) in avoid_set:
                     continue
 
+                access_decision = evaluate_edge_access(profile, meta)
+                if not access_decision.allowed:
+                    blocked_by_access += 1
+                    access_reasons[access_decision.reason] = access_reasons.get(access_decision.reason, 0) + 1
+                    continue
+
                 v_coord = self.nodes[v]
                 lst_val = self.sampler.sample_lst(v_coord[0], v_coord[1])
                 green_val = self.sampler.sample_greenery(v_coord[0], v_coord[1])
@@ -402,7 +505,7 @@ class RoutingEngine3D:
                     length_m=seg_len,
                     slope_pct=slope_pct,
                     is_steps=meta.get("is_steps", False),
-                    surface_quality=0.9 if meta.get("surface") == "asphalt" else 0.4,
+                    surface_quality=surface_quality(meta.get("surface")),
                     hierarchy_rank=meta.get("hierarchy", 4),
                     lst_normalized=lst_val,
                     green_normalized=green_val,
@@ -410,7 +513,9 @@ class RoutingEngine3D:
                 )
 
                 if not math.isfinite(edge_cost) or math.isinf(edge_cost) or edge_cost < 0:
+                    blocked_by_profile += 1
                     continue
+                edge_cost *= access_decision.penalty
 
                 # Every additional raster contributes its real normalized value.
                 # The mean keeps the factor stable when the user adds many layers;
@@ -428,6 +533,15 @@ class RoutingEngine3D:
                     heapq.heappush(pq, (tentative_g + h_v, tentative_g, v))
 
         if end_node not in prev_map and start_node != end_node:
+            self.last_segment_diagnostics = {
+                "status": "no_directed_path",
+                "start_snap_m": start_snap_m,
+                "end_snap_m": end_snap_m,
+                "expanded_nodes": len(visited),
+                "blocked_by_access": blocked_by_access,
+                "blocked_by_profile": blocked_by_profile,
+                "access_reasons": access_reasons,
+            }
             return [], False
 
         # Reconstruct path
@@ -452,6 +566,15 @@ class RoutingEngine3D:
         if not final_path or haversine_distance_2d(final_path[-1], end_pt) >= 0.1:
             final_path.append(p_end_3d)
 
+        self.last_segment_diagnostics = {
+            "status": "matched",
+            "start_snap_m": start_snap_m,
+            "end_snap_m": end_snap_m,
+            "expanded_nodes": len(visited),
+            "blocked_by_access": blocked_by_access,
+            "blocked_by_profile": blocked_by_profile,
+            "access_reasons": access_reasons,
+        }
         return final_path, True
 
     def _sample_series(
@@ -563,6 +686,7 @@ class RoutingEngine3D:
 
         all_coords: List[Tuple[float, float, float]] = []
         matched_all = True
+        segment_diagnostics: List[Dict[str, Any]] = []
 
         for i in range(len(wp_list) - 1):
             w1 = wp_list[i]
@@ -572,18 +696,39 @@ class RoutingEngine3D:
                 (w2.lon, w2.lat),
                 profile,
             )
+            segment_diagnostics.append(dict(self.last_segment_diagnostics))
             if not matched:
                 matched_all = False
+                diagnostic_status = self.last_segment_diagnostics.get("status")
+                if diagnostic_status == "snap_failed":
+                    failure_message = (
+                        "No network node lies within "
+                        f"{self.max_snap_distance_m:.0f} m of both route points. "
+                        "Move the points closer to the network or increase the snap limit."
+                    )
+                elif self.last_segment_diagnostics.get("blocked_by_access", 0) > 0:
+                    failure_message = (
+                        f"No legal {profile.name} route was found; "
+                        f"{self.last_segment_diagnostics['blocked_by_access']} explored "
+                        "edges were excluded by modal access rules."
+                    )
+                else:
+                    failure_message = (
+                        f"No connected network route was found between "
+                        f"'{w1.name or 'the origin'}' and "
+                        f"'{w2.name or 'the destination'}'."
+                    )
                 return RouteResult3D(
                     coordinates_3d=[],
                     statistics=_empty_statistics(),
                     profile=profile,
                     waypoints=wp_list,
                     is_network_matched=False,
-                    status_message=(
-                        f"No connected network route was found between "
-                        f"'{w1.name or 'the origin'}' and '{w2.name or 'the destination'}'."
-                    ),
+                    status_message=failure_message,
+                    routing_diagnostics={
+                        "graph": dict(self.graph_diagnostics),
+                        "segments": segment_diagnostics,
+                    },
                 )
 
             if all_coords:
@@ -646,6 +791,10 @@ class RoutingEngine3D:
             is_network_matched=matched_all,
             status_message=msg,
             alternative_routes=alternatives,
+            routing_diagnostics={
+                "graph": dict(self.graph_diagnostics),
+                "segments": segment_diagnostics,
+            },
         )
 
     def calculate_od_matrix(

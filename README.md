@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
- A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 14 headless Processing algorithms, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces (DEM slope, LST heat, canopy shade, road hierarchy), and an embedded Three.js WebGL 3D cockpit.
+ A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 15 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and an embedded Three.js WebGL 3D cockpit.
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
  <a href="#why-it-matters">Why It Matters</a> |
  <a href="#signature-features">Signature Features</a> |
  <a href="#mobility-profiles-catalog">15 Profiles</a> |
- <a href="#processing-algorithms-catalog">14 Algorithms</a> |
+ <a href="#processing-algorithms-catalog">15 Algorithms</a> |
  <a href="#scientific--mathematical-foundations">Science &amp; Math</a> |
  <a href="#viewer-experience">WebGL Studio</a> |
  <a href="#showcase-playbook">Showcase Playbook</a> |
@@ -35,7 +35,7 @@
 ## 📖 Live Documentation & Interactive Labs
 
 - 🌐 **[Interactive GitHub Pages & Web Labs](https://yusufeminoglu.github.io/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
-- 📚 **[Comprehensive Technical Reference Manual](https://yusufeminoglu.github.io/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 14 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
+- 📚 **[Comprehensive Technical Reference Manual](https://yusufeminoglu.github.io/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
 
 ---
 
@@ -50,7 +50,8 @@ Traditional GIS shortest-path engines treat cities as flat Euclidean planes, com
 3. **Biomechanical Human Kinematics:** Dynamically computes travel velocity using Tobler's hiking function and metabolic energy cost using Minetti's 5th-order polynomial equations.
 4. **Multi-Objective Pareto Optimization:** Solves NAMOA* 4D non-dominated trade-offs across travel time, cumulative climb, thermal heat dose, and calories.
 5. **Universal Accessibility Auditing:** Enforces strict ADA barrier-free thresholds (5% maximum grade, stair blocking, surface smoothness).
-6. **Embedded WebGL 3D Studio:** Inspect routes in real-time with chase/orbit/driver cameras, glowing GLSL heat stress ribbons, 24-hour solar simulations, and longitudinal profile HUDs.
+6. **Embedded WebGL 3D Studio:** Inspect routes with chase/orbit/driver cameras, environmental metric ribbons, terrain slicing, and longitudinal profile HUDs.
+7. **Profile-Aware Network Safety:** Honors OSM and QGIS-layer access, foot, bicycle, motor-vehicle, one-way, surface, lighting, and road-class attributes before an edge enters a route.
 
 ---
 
@@ -114,7 +115,7 @@ The engine features 15 distinct mobility models across Pedestrian, Micromobility
 
 ---
 
-### ⚙️ 14 Headless Processing Algorithms
+### ⚙️ 15 Headless Processing Algorithms
 
 Every analytical module is fully scriptable in QGIS Graphical Modeler, PyQGIS, and standalone Python:
 
@@ -134,6 +135,7 @@ Every analytical module is fully scriptable in QGIS Graphical Modeler, PyQGIS, a
 | **Analytical Report Generator** | `zero2route3d:generate_route_report_html` | HTML Scorecard Document | Report, HTML, SVG |
 | **Export Route to AutoCAD DXF** | `zero2route3d:export_3d_route_dxf` | AutoCAD DXF (AC1009) | CAD, DXF, Polyline |
 | **Export Standalone 3D HTML** | `zero2route3d:export_3d_html_report` | Self-Contained HTML | Export, WebGL, 3D |
+| **Routing Network Readiness Audit** | `zero2route3d:audit_routing_network` | Annotated LineStringZ network | Topology, Access, QA |
 
 ---
 
@@ -173,7 +175,7 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 | **4 Camera Modes** | Seamlessly switch between **Orbit** (free inspect), **Chase / Drone** (follows avatar with damping), **POV / Driver** (first-person perspective), and **Tour** (cinematic flight). |
 | **GLSL Heat Stress Ribbon** | Route path is rendered as a volumetric 3D ribbon whose vertex colors dynamically reflect slope gradient or thermal comfort index. |
 | **Kinematic Avatar Rigs** | Procedural 3D avatar meshes for walkers, wheelchairs, strollers, cyclists, scooters, cars, delivery vans, and ambulances. |
-| **24-Hour Solar Trajectory** | Real-time astronomical sun position and shadow casting based on latitude, date, and hour of day. |
+| **Routing Diagnostics** | Route exports and KPI tooltips expose snap distances, expanded graph nodes, and access-blocked edges. |
 | **Subsurface Geological Slicer** | Clip plane tool to slice through 3D terrain and inspect subterranean elevation profiles. |
 | **Audio Voice Navigation** | Web Speech API integration delivering turn-by-turn spoken audio cues with gradient warnings. |
 | **Media Capture** | Export 4K PNG screenshots or record live WebM/MP4 video clips directly from the canvas. |
@@ -201,10 +203,11 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 | `core/kinematics.py` | Tobler, Minetti, Keys bicubic spline, and aerodynamic drag kinematics. |
 | `core/mobility_profiles.py` | Definitions and constraints for all 15 mobility profiles. |
 | `core/environmental_raster.py` | Multi-criteria raster impedance sampler and AHP consistency engine. |
-| `core/copernicus_dem.py` | Removed in 0.2.0: this module only ever built URL strings and was never called. |
+| `core/network_policy.py` | Profile-aware modal access rules and surface-quality interpretation. |
+| `core/network_audit.py` | Connectivity and access readiness diagnostics for routing networks. |
 | `core/pareto_router.py` | NAMOA* 4D multi-objective Pareto frontier solver. |
 | `core/isochrone_engine.py` | Anisotropic Dijkstra wavefront isochrone propagation. |
-| `core/map_match_3d_track.py` | Hidden Markov Model 3D GPS map matching with Viterbi decoding. |
+| `core/map_matching_3d.py` | Hidden Markov Model 3D GPS map matching with Viterbi decoding. |
 | `core/profile_dxf.py` | AutoCAD DXF AC1009 3D Polyline and longitudinal profile exporter. |
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
 | `web/` | Embedded Three.js WebGL studio (HTML, CSS, JS, GLSL shaders). |
@@ -240,6 +243,6 @@ We gratefully acknowledge their innovative work on inclusive pedestrian accessib
 
 - **Author:** **Yusuf Eminoğlu** (<yusuf.eminoglu@deu.edu.tr>)
 - **Affiliation:** Dokuz Eylül University, Department of City and Regional Planning
-- **Elevation Data:** Real Open-Elevation / Copernicus DEM 30m API topography.
+- **Elevation Data:** User-supplied DEM rasters or elevations returned by the Open-Elevation service; missing samples remain NoData.
 - **License:** GNU General Public License v2.0 or later ([GPL-2.0-or-later](LICENSE)).
 - **Attribution:** Shipped under Yusuf Eminoğlu's name alone in accordance with monorepo standards.

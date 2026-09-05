@@ -17,13 +17,12 @@ from typing import Any, Dict, List, Tuple
 
 from .environmental_raster import EnvironmentalSurfaceSampler
 from .kinematics import (
-    cyclist_speed,
     haversine_distance_2d,
     cycling_energy_cost,
     minetti_energy_cost,
-    tobler_walking_speed,
 )
 from .mobility_profiles import MobilityProfile, get_profile
+from .network_policy import evaluate_edge_access, surface_quality
 from .profile_stats import RouteStatistics, compute_route_statistics
 
 
@@ -141,18 +140,19 @@ class ParetoMultiObjectiveRouter:
 
         # 1. Travel Time & Energy
         if profile.category == "pedestrian":
-            spd_kmh = tobler_walking_speed(slope_frac, base_speed_kmh=profile.base_speed_kmh)
             _j, kcal = minetti_energy_cost(slope_frac, mass_kg=70.0, distance_m=length_m)
         elif profile.key in {"bicycle", "mtb"}:
-            spd_kmh = cyclist_speed(slope_frac, base_speed_kmh=profile.base_speed_kmh)
             kcal = cycling_energy_cost(slope_frac, mass_kg=70.0, distance_m=length_m)[1]
         else:
-            spd_kmh = max(5.0, profile.base_speed_kmh * (1.0 - abs(slope_pct) * 0.02))
             # Motorised travel has no rider metabolic cost; reporting one would be
             # an invented figure in a column of measured ones.
             kcal = 0.0
 
-        time_s = length_m / max(0.2, (spd_kmh * 1000.0 / 3600.0))
+        time_s = profile.travel_time_seconds(
+            length_m,
+            slope_pct=slope_pct,
+            hierarchy_rank=meta.get("hierarchy", 4),
+        )
         ascent_m = dz
 
         # 3. Heat Exposure Dose.
@@ -227,7 +227,27 @@ class ParetoMultiObjectiveRouter:
                 if v in path:
                     continue
 
+                access_decision = evaluate_edge_access(profile, meta)
+                if not access_decision.allowed:
+                    continue
+                resistance = profile.calculate_edge_resistance(
+                    length_m=seg_len,
+                    slope_pct=slope_pct,
+                    is_steps=meta.get("is_steps", False),
+                    surface_quality=surface_quality(meta.get("surface")),
+                    hierarchy_rank=meta.get("hierarchy", 4),
+                )
+                if not math.isfinite(resistance):
+                    continue
+
                 edge_vec = self._calculate_edge_vector(u, v, seg_len, slope_pct, meta, profile)
+                if access_decision.penalty != 1.0:
+                    edge_vec = ParetoCostVector(
+                        time_s=edge_vec.time_s * access_decision.penalty,
+                        ascent_m=edge_vec.ascent_m,
+                        heat_dose=edge_vec.heat_dose,
+                        energy_kcal=edge_vec.energy_kcal,
+                    )
                 new_g = g_vec.add(edge_vec)
 
                 existing = labels_g.setdefault(v, [])

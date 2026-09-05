@@ -2,19 +2,19 @@
 name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
-description=UX urban mobility and shortest path studio with 15 user-centric avatar profiles (Adult, Elderly, Child, Stroller, Wheelchair ADA, Commuter Bike, MTB, E-Scooter, Night Walk, Sightseer, Jogger, Car, Delivery Van, Truck, Paramedic EMS), 3D kinematics, AHP cost surfaces, OD matrix, and WebGL animation.
-version=0.3.0
+description=Profile-aware urban mobility and 3D shortest-path studio with 15 user profiles, modal access controls, network readiness audit, AHP cost surfaces, OD matrices, and WebGL route inspection.
+version=0.4.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
-about=02Route 3D is a unified multi-criteria UX urban mobility, shortest path, and 3D pathfinding studio for QGIS. Inspired by human-centric inclusive mobility research, it computes realistic 3D shortest path routes across real QGIS network layers or OpenStreetMap networks with slope, aspect, surface temperature (LST), tree shade, and road hierarchy resistances.\n\nKey Capabilities:\n- 15 Distinct Avatar User Profiles: Pedestrians (Standard Adult, Senior Elderly, Safe Child, Stroller Pram, Wheelchair ADA with strict 5 pct slope limit, Jogger Runner, Sightseer Scenic, Illuminated Night Walk), Micromobility (Commuter Bicycle, Mountain Bike MTB, E-Scooter), and Motorized (Passenger Car, Delivery Van, Heavy Logistics Truck, Emergency Paramedic EMS).\n- Shortest Path & Multi-Objective Routing: Classical Dijkstra shortest path, A* topological routing, and NAMOA* 4D Pareto trade-offs across travel time, cumulative climb, heat exposure, and metabolic energy expenditure.\n- Biomechanical Kinematics: Real-time velocity from Tobler hiking formula and metabolic energy from Minetti 5th-order equations.\n- Multi-Tier Catchment & OD Matrices: 3D wavefront isochrones, N x M origin-destination cost matrices, and E2SFCA spatial accessibility equity scorecards (Gini, Theil, Palma indices).\n- Interactive 3D WebGL Studio: Real-time Three.js cockpit embedded in QGIS with chase, orbit, POV, and tour camera modes, 24-hour solar simulations, and longitudinal profile HUD.\n- Interoperability & Export: LineStringZ GeoPackage, GPX 1.1 with elevation, GeoJSON 3D, AutoCAD DXF (AC1009) 3D Polylines with elevation profiles, and self-contained offline 3D HTML reports.\n\nInspiration & Acknowledgment:\nThe multi-user UX walkability and inclusive mobility persona framework in 02Route 3D is inspired by the research and methodology of Transform Transport / Systematica (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
+about=02Route 3D is a profile-aware urban mobility, shortest-path, and 3D route inspection studio for QGIS. It routes across real QGIS line networks or bounded OpenStreetMap downloads using terrain, optional environmental rasters, road hierarchy, surface quality, direction, and modal access attributes.\n\nKey Capabilities:\n- 15 Mobility Profiles: pedestrian, inclusive mobility, micromobility, vehicle, freight, and emergency profiles with distinct speed, slope, stair, surface, and hierarchy constraints.\n- Consistent Routing Policy: primary A*, Pareto, isochrone, batch, OD, and evacuation workflows respect the same access and physical constraints.\n- Network Readiness Audit: annotated red/green LineStringZ output identifies blocked segments, one-way links, weak components, surface quality, and connectivity.\n- Route Diagnostics: bounded network snapping plus snap-distance, expanded-node, and blocked-edge reporting.\n- Biomechanical Kinematics: Tobler walking speed and Minetti metabolic energy, with mode-specific travel-time models.\n- 15 Processing Algorithms: routes, isochrones, Pareto alternatives, OD matrices, accessibility equity, network QA, exports, and analytical reports.\n- Interoperability: LineStringZ, GPX 1.1, GeoJSON 3D, AutoCAD DXF, and self-contained offline 3D HTML.\n\nInspiration & Acknowledgment:\nThe inclusive mobility persona framework is inspired by Transform Transport / Systematica research (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
 
 tracker=https://github.com/YusufEminoglu/zero2route3d/issues
 repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://yusufeminoglu.github.io/zero2route3d/
 
 category=Analysis
-tags=network, shortest path, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, ux mobility, pedestrian, wheelchair, ada compliance, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, catchment, e2sfca, spatial equity, evacuation, hazard routing, solar shadow, microclimate, map matching, gps, gpx, dxf, cad, copernicus dem, urban analytics, zero2
+tags=network, shortest path, network audit, topology, modal access, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, pedestrian, wheelchair, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, e2sfca, spatial equity, evacuation, solar exposure, map matching, gps, gpx, dxf, cad, urban analytics, zero2
 
 icon=icons/icon.png
 
@@ -24,6 +24,11 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.4.0 - Profile-Aware Routing & Network QA:
+        - Added modal access filtering for pedestrians, bicycles and motor vehicles using OSM-style tags and road-class defaults.
+        - Added Routing Network Readiness Audit as the fifteenth Processing algorithm.
+        - Added bounded network snapping, route diagnostics, weak-component topology fixes, real convex-hull isochrone area, and projected-center CRS correction.
+
     0.3.0 - Official QGIS Hub Release & UX Urban Mobility Evolution:
         - Transitioned out of experimental status for official QGIS Plugin Hub publication.
         - Enhanced metadata, shortest path descriptions, and added formal research acknowledgment for Transform Transport inclusive mobility inspiration.

@@ -13,7 +13,6 @@ from qgis.PyQt.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QPainter,
     QPainterPath,
     QPalette,

@@ -37,6 +37,13 @@ class RoadSegment:
     # Real OSM "name" tag. Left empty when the way is unnamed -- an unnamed street
     # must stay unnamed rather than be given a placeholder like "Urban Path".
     name: str = ""
+    access: str = ""
+    foot: str = ""
+    bicycle: str = ""
+    motor_vehicle: str = ""
+    lit: str = ""
+    sidewalk: str = ""
+    maxspeed_kmh: Optional[float] = None
 
 
 class NetworkSourceError(RuntimeError):
@@ -157,7 +164,7 @@ class NetworkSourceManager:
         body = urllib.parse.urlencode({"data": query}).encode("utf-8")
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "02Route3D-QGIS-Plugin/0.1.0",
+            "User-Agent": "02Route3D-QGIS-Plugin",
         }
 
         for host, path in endpoints:
@@ -211,6 +218,15 @@ class NetworkSourceManager:
                     or str(tags.get("junction", "")).strip().lower() == "roundabout"
                 )
                 street_name = str(tags.get("name", "") or "").strip()
+                access = str(tags.get("access", "") or "").strip()
+                foot = str(tags.get("foot", "") or "").strip()
+                bicycle = str(tags.get("bicycle", "") or "").strip()
+                motor_vehicle = str(
+                    tags.get("motor_vehicle", tags.get("vehicle", "")) or ""
+                ).strip()
+                lit = str(tags.get("lit", "") or "").strip()
+                sidewalk = str(tags.get("sidewalk", "") or "").strip()
+                maxspeed_kmh = self._parse_speed_kmh(tags.get("maxspeed"))
 
                 way_nodes = el.get("nodes") or []
                 for i in range(len(way_nodes) - 1):
@@ -232,12 +248,35 @@ class NetworkSourceManager:
                                 surface=surface,
                                 is_oneway=oneway,
                                 name=street_name,
+                                access=access,
+                                foot=foot,
+                                bicycle=bicycle,
+                                motor_vehicle=motor_vehicle,
+                                lit=lit,
+                                sidewalk=sidewalk,
+                                maxspeed_kmh=maxspeed_kmh,
                             )
                             if reversed_oneway:
                                 # Store it in its true travel direction.
                                 seg.p1, seg.p2 = seg.p2, seg.p1
                             segments.append(seg)
         return segments
+
+    @staticmethod
+    def _parse_speed_kmh(value: Any) -> Optional[float]:
+        """Parse common OSM maxspeed forms without inventing a default."""
+        if value is None:
+            return None
+        text = str(value).strip().lower()
+        if not text or text in {"none", "signals", "variable", "walk"}:
+            return None
+        try:
+            number = float(text.split()[0])
+        except (ValueError, TypeError, IndexError):
+            return None
+        if "mph" in text:
+            number *= 1.609344
+        return number if math.isfinite(number) and number > 0 else None
 
     def extract_from_qgis_layer(self, vector_layer: Any) -> List[RoadSegment]:
         """Extract road network edges from an active QGIS line vector layer."""
@@ -255,7 +294,7 @@ class NetworkSourceManager:
             except (TypeError, ValueError):
                 return default
 
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ImportError):
             from qgis.core import (
                 QgsCoordinateReferenceSystem,
                 QgsCoordinateTransform,
@@ -279,23 +318,48 @@ class NetworkSourceManager:
                 if needs_transform and transform is not None:
                     geom.transform(transform)
 
-                lines = []
-                if geom.isMultipart():
-                    lines = geom.asMultiPolyline()
+                abstract = geom.constGet()
+                if abstract is None:
+                    continue
+                if geom.isMultipart() and hasattr(abstract, "numGeometries"):
+                    parts = [abstract.geometryN(i) for i in range(abstract.numGeometries())]
                 else:
-                    lines = [geom.asPolyline()]
+                    parts = [abstract]
 
-                fields = feat.fields().names()
-                highway = "residential"
-                for h_field in ["highway", "type", "road_type", "class", "KIND"]:
-                    if h_field in fields and feat[h_field] is not None:
-                        highway = str(feat[h_field])
-                        break
+                field_lookup = {str(name).lower(): name for name in feat.fields().names()}
+
+                def attribute(names: Tuple[str, ...], default: Any = "") -> Any:
+                    for candidate in names:
+                        real_name = field_lookup.get(candidate.lower())
+                        if real_name is not None:
+                            value = feat[real_name]
+                            if value is not None and str(value).strip() != "":
+                                return value
+                    return default
+
+                highway = str(attribute(("highway", "type", "road_type", "class", "kind"), "residential"))
 
                 hierarchy = self._highway_to_hierarchy(highway)
                 is_steps = "step" in highway.lower() or "merdiven" in highway.lower()
+                surface = str(attribute(("surface", "pavement", "surf_type"), ""))
+                name = str(attribute(("name", "street", "road_name", "ref"), ""))
+                access = str(attribute(("access",), ""))
+                foot = str(attribute(("foot", "pedestrian"), ""))
+                bicycle = str(attribute(("bicycle", "bike"), ""))
+                motor_vehicle = str(attribute(("motor_vehicle", "motorcar", "vehicle"), ""))
+                lit = str(attribute(("lit", "lighting"), ""))
+                sidewalk = str(attribute(("sidewalk",), ""))
+                oneway_text = str(attribute(("oneway", "one_way"), "")).strip().lower()
+                is_oneway = oneway_text in {"yes", "1", "true", "-1", "reverse"}
+                reverse_oneway = oneway_text in {"-1", "reverse"}
+                maxspeed_kmh = self._parse_speed_kmh(attribute(("maxspeed", "speed_limit"), None))
+                try:
+                    lanes = max(1, int(float(attribute(("lanes", "lane_count"), 1))))
+                except (ValueError, TypeError, OverflowError):
+                    lanes = 1
 
-                for line in lines:
+                for part in parts:
+                    line = list(part.vertices())
                     for i in range(len(line) - 1):
                         p1 = line[i]
                         p2 = line[i + 1]
@@ -313,6 +377,8 @@ class NetworkSourceManager:
                             continue
                         dist = haversine_distance_2d(c1, c2)
                         if dist >= 0.1 and math.isfinite(dist):
+                            if reverse_oneway:
+                                c1, c2 = c2, c1
                             segments.append(
                                 RoadSegment(
                                     p1=c1,
@@ -320,7 +386,18 @@ class NetworkSourceManager:
                                     length_m=dist,
                                     highway_type=highway,
                                     hierarchy_rank=hierarchy,
+                                    lanes=lanes,
                                     is_steps=is_steps,
+                                    surface=surface,
+                                    is_oneway=is_oneway,
+                                    name=name,
+                                    access=access,
+                                    foot=foot,
+                                    bicycle=bicycle,
+                                    motor_vehicle=motor_vehicle,
+                                    lit=lit,
+                                    sidewalk=sidewalk,
+                                    maxspeed_kmh=maxspeed_kmh,
                                 )
                             )
         return segments

@@ -17,13 +17,14 @@ from qgis.core import (
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterPoint,
+    QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
     QgsProcessingParameterVectorLayer,
     QgsWkbTypes,
 )
 
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
-from .field_utils import DOUBLE, STRING, make_field
+from .field_utils import DOUBLE, INT, STRING, make_field
 from .post_process import finalize_output
 from .crs_utils import point_to_wgs84, wgs84
 from ..core.mobility_profiles import list_profile_keys, get_profile
@@ -39,6 +40,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
     PROFILE = "PROFILE"
     DEM_LAYER = "DEM_LAYER"
     NETWORK_LAYER = "NETWORK_LAYER"
+    MAX_SNAP_DISTANCE = "MAX_SNAP_DISTANCE"
     OUTPUT = "OUTPUT"
 
     def shortHelpString(self) -> str:
@@ -54,7 +56,10 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             "balance for cycling, and road-hierarchy free-flow speeds for vehicles. "
             "Energy uses the Minetti (2002) metabolic cost of transport.\n\n"
             "Output is a LineStringZ layer in EPSG:4326 carrying distance, travel "
-            "time, cumulative climb, maximum gradient and energy expenditure."
+            "time, cumulative climb, maximum gradient, energy expenditure, network "
+            "snap distances, search size and access-blocked edge counts. The maximum "
+            "snap distance prevents long straight connectors from being presented as "
+            "network travel."
         )
 
     def initAlgorithm(self, config: Dict[str, Any] = None) -> None:
@@ -97,6 +102,16 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
+            QgsProcessingParameterNumber(
+                self.MAX_SNAP_DISTANCE,
+                "Maximum Network Snap Distance (m)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=1000.0,
+                minValue=10.0,
+                maxValue=10000.0,
+            )
+        )
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "3D Route Layer",
@@ -123,6 +138,9 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         prof_idx = self.parameterAsEnum(parameters, self.PROFILE, context)
         dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
         net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
+        max_snap_distance = self.parameterAsDouble(
+            parameters, self.MAX_SNAP_DISTANCE, context
+        )
 
         profile_keys = list_profile_keys()
         profile_key = profile_keys[max(0, min(prof_idx, len(profile_keys) - 1))]
@@ -138,7 +156,11 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
 
-        engine = RoutingEngine3D(sampler=sampler, weights=MCDAWeights())
+        engine = RoutingEngine3D(
+            sampler=sampler,
+            weights=MCDAWeights(),
+            max_snap_distance_m=max_snap_distance,
+        )
         engine.build_graph(segments)
 
         feedback.setProgressText(f"Computing 3D path for {profile.name}...")
@@ -156,6 +178,10 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         fields.append(make_field("climb_m", DOUBLE))
         fields.append(make_field("max_slope", DOUBLE))
         fields.append(make_field("calories", DOUBLE))
+        fields.append(make_field("snap_a_m", DOUBLE))
+        fields.append(make_field("snap_b_m", DOUBLE))
+        fields.append(make_field("expanded", INT))
+        fields.append(make_field("blocked", INT))
 
         # The engine emits WGS84 coordinates, so the sink must declare WGS84.
         crs_wgs84 = wgs84()
@@ -173,6 +199,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
 
         feat = QgsFeature(fields)
         feat.setGeometry(geom)
+        diagnostics = (res.routing_diagnostics.get("segments") or [{}])[0]
         feat.setAttributes([
             profile.name,
             res.statistics.total_distance_km,
@@ -180,6 +207,10 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             res.statistics.elevation_gain_m,
             res.statistics.max_slope_pct,
             res.statistics.total_calories_kcal,
+            diagnostics.get("start_snap_m", 0.0),
+            diagnostics.get("end_snap_m", 0.0),
+            diagnostics.get("expanded_nodes", 0),
+            diagnostics.get("blocked_by_access", 0),
         ])
         sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
@@ -218,7 +249,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             getattr(self, "_dest_id", ""),
             title='3D Least-Cost Route',
             abstract='Least-cost 3D route computed by 02Route 3D from a real network and DEM. Attributes carry distance, travel time, cumulative climb, maximum slope and metabolic energy for the selected mobility profile.',
-            aliases={'profile': 'Mobility profile', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)', 'max_slope': 'Maximum slope (%)', 'calories': 'Energy (kcal)'},
+            aliases={'profile': 'Mobility profile', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)', 'max_slope': 'Maximum slope (%)', 'calories': 'Energy (kcal)', 'snap_a_m': 'Origin snap distance (m)', 'snap_b_m': 'Destination snap distance (m)', 'expanded': 'Expanded graph nodes', 'blocked': 'Edges blocked by access policy'},
             line_color='#0ea5e9',
             feedback=feedback,
         )

@@ -15,6 +15,7 @@ from .alg_pareto_routes import Pareto3DRoutesAlgorithm
 from .alg_report_generator import GenerateAnalyticalReportAlgorithm
 from .alg_solar_exposure import SolarExposureAlgorithm
 from .alg_walkability import WalkabilityAuditAlgorithm
+from .alg_network_audit import RoutingNetworkAuditAlgorithm
 from .provider import Route3DProcessingProvider
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "ServiceArea3DAlgorithm",
     "SolarExposureAlgorithm",
     "WalkabilityAuditAlgorithm",
+    "RoutingNetworkAuditAlgorithm",
 ]

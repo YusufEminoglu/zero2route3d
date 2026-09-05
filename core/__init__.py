@@ -53,6 +53,8 @@ from .mobility_profiles import (
     save_custom_profile_json,
 )
 from .network_source import NetworkSourceError, NetworkSourceManager, RoadSegment
+from .network_audit import NetworkAuditReport, audit_network
+from .network_policy import EdgeAccessDecision, evaluate_edge_access, surface_quality
 from .osm_downloader import OsmBuilding, OsmDataFetcher
 from .pareto_router import (
     ParetoCostVector,
@@ -139,6 +141,11 @@ __all__ = [
     "NetworkSourceManager",
     "NetworkSourceError",
     "RoadSegment",
+    "NetworkAuditReport",
+    "audit_network",
+    "EdgeAccessDecision",
+    "evaluate_edge_access",
+    "surface_quality",
     "OsmBuilding",
     "OsmDataFetcher",
     "filter_buildings_in_corridor",

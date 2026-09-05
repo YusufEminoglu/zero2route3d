@@ -6,7 +6,7 @@
     <title>02Route 3D — Multi-Criteria 3D Mobility Studio for QGIS</title>
     <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded  Three.js WebGL animation." />
     <meta property="og:title" content="02Route 3D QGIS Plugin" />
-    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 14 Processing algorithms, Tobler/Minetti kinematics, and WebGL 3D cockpit." />
+    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 15 Processing algorithms, profile-aware access, Tobler/Minetti kinematics, and WebGL route inspection." />
     <meta property="og:type" content="website" />
 
     <!-- Google Fonts -->
@@ -1708,7 +1708,7 @@
     <section id="algorithms" class="container">
         <div class="section-header fade-up">
             <span class="eyebrow">Processing Algorithms</span>
-            <h2>14 headless algorithms, fully scriptable</h2>
+            <h2>15 headless algorithms, fully scriptable</h2>
             <p>Integrate 02Route 3D deeply into your QGIS Graphical Modeler workflows, Python scripts, and automated batch processing pipelines.</p>
         </div>
 
@@ -1768,13 +1768,13 @@
                     <tr>
                         <td>Hazard Evacuation Routing</td>
                         <td class="td-code">zero2route3d:emergency_evacuation_3d</td>
-                        <td>Dynamic egress pathfinding avoiding expanding fire, flood, or toxic hazard polygons.</td>
+                        <td>Routes from an origin to the fastest reachable supplied muster point across the real network.</td>
                         <td><span class="tag">Hazard</span> <span class="tag amber">Emergency</span></td>
                     </tr>
                     <tr>
                         <td>Sun / Shade Solar Exposure</td>
                         <td class="td-code">zero2route3d:solar_shade_exposure</td>
-                        <td>Calculates shadowed paths based on solar azimuth/altitude, buildings, and DEM aspect.</td>
+                        <td>Calculates solar position and route exposure from latitude, time, and the algorithm's explicit density factor.</td>
                         <td><span class="tag">Climate</span> <span class="tag purple">Solar</span></td>
                     </tr>
                     <tr>
@@ -1807,6 +1807,12 @@
                         <td>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D viewer.</td>
                         <td><span class="tag">Export</span> <span class="tag emerald">WebGL</span></td>
                     </tr>
+                    <tr>
+                        <td>Routing Network Readiness Audit</td>
+                        <td class="td-code">zero2route3d:audit_routing_network</td>
+                        <td>Annotates modal access, surface quality, one-way status, and topology components before routing.</td>
+                        <td><span class="tag">Network QA</span> <span class="tag amber">Access</span></td>
+                    </tr>
                 </tbody>
             </table>
         </div>
@@ -1835,7 +1841,7 @@
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">☀️</span>
-                <h4>24-Hour Solar Simulation</h4>
+                <h4>Route Snap &amp; Search Diagnostics</h4>
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">🗻</span>
@@ -1866,7 +1872,7 @@
             <div class="arch-row">
                 <div class="arch-node core">
                     <h4>02Route 3D Core Engine</h4>
-                    <p>Topological Graph + NumPy + SciPy</p>
+                    <p>Pure-Python Topological Graph &amp; Kinematics</p>
                 </div>
             </div>
             <div class="arch-connector-v"></div>
@@ -1874,7 +1880,7 @@
                 <div class="arch-node" style="display:flex; justify-content:space-between; width:100%; max-width:840px; background:transparent; border:none; box-shadow:none;">
                     <div class="arch-node">
                         <h4>Processing Provider</h4>
-                        <p>14 Headless Algorithms</p>
+                        <p>15 Headless Algorithms</p>
                     </div>
                     <div class="arch-connector-h"></div>
                     <div class="arch-node">
@@ -2001,6 +2007,19 @@
             <h2>Release History</h2>
         </div>
         <div class="glass-card fade-up" style="display: flex; flex-direction: column; gap: 2rem;">
+            <!-- v0.4.0 -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.4.0</span> Profile-Aware Routing &amp; Network QA</h3>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-09-05</span>
+                </div>
+                <ul style="display:grid; gap:0.5rem; color:var(--text-secondary);">
+                    <li>Added modal access enforcement shared by A*, Pareto, isochrone, batch, OD, and evacuation workflows.</li>
+                    <li>Added a profile-aware Routing Network Readiness Audit with categorized map output.</li>
+                    <li>Added bounded snapping and route diagnostics; fixed one-way components, parallel edges, projected isochrone origins, and measured hull areas.</li>
+                </ul>
+            </div>
+
             <!-- v0.2.9 -->
             <div>
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
@@ -2066,7 +2085,7 @@
                 </div>
                 <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
                     <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
-                    <li>✨ Integrated 14 headless QGIS Processing algorithms with modeler support</li>
+                    <li>✨ Integrated 15 headless QGIS Processing algorithms with modeler support</li>
                     <li>✨ Launched embedded Three.js WebGL studio with chase/POV/orbit cameras</li>
                     <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
                     <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>

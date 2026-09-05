@@ -1088,6 +1088,192 @@ class TestRoute3DPureLogic(unittest.TestCase):
             self.assertAlmostEqual(pt["lst_normalized"], 0.4)
             self.assertAlmostEqual(pt["ndvi_normalized"], 0.75)
 
+    def test_modal_access_policy_blocks_incompatible_roads(self) -> None:
+        """Hard modal rules prevent physically invalid route choices."""
+        from ..core.network_policy import evaluate_edge_access, surface_quality
+
+        adult = get_profile("adult")
+        bicycle = get_profile("bicycle")
+        car = get_profile("car")
+
+        self.assertFalse(evaluate_edge_access(car, {"highway": "footway"}).allowed)
+        self.assertFalse(evaluate_edge_access(adult, {"highway": "motorway"}).allowed)
+        self.assertFalse(evaluate_edge_access(bicycle, {"highway": "motorway"}).allowed)
+        self.assertFalse(
+            evaluate_edge_access(adult, {"highway": "residential", "foot": "no"}).allowed
+        )
+        self.assertTrue(
+            evaluate_edge_access(
+                car, {"highway": "footway", "motor_vehicle": "designated"}
+            ).allowed
+        )
+        self.assertGreater(surface_quality("asphalt"), surface_quality("gravel"))
+        self.assertGreater(surface_quality("gravel"), surface_quality("mud"))
+
+        night = evaluate_edge_access(
+            get_profile("night_walk"), {"highway": "residential", "lit": "no"}
+        )
+        self.assertTrue(night.allowed)
+        self.assertGreater(night.penalty, 1.0)
+
+    def test_router_respects_modal_access_and_reports_diagnostics(self) -> None:
+        p1 = (27.1400, 38.4200, 5.0)
+        p2 = (27.1410, 38.4200, 5.0)
+        footway = RoadSegment(
+            p1=p1,
+            p2=p2,
+            length_m=haversine_distance_2d(p1, p2),
+            highway_type="footway",
+        )
+        engine = RoutingEngine3D(max_snap_distance_m=100.0)
+        engine.build_graph([footway])
+
+        walking = engine.calculate_route([Waypoint(*p1[:2]), Waypoint(*p2[:2])], "adult")
+        self.assertTrue(walking.is_network_matched)
+        self.assertEqual(walking.routing_diagnostics["segments"][0]["status"], "matched")
+
+        driving = engine.calculate_route([Waypoint(*p1[:2]), Waypoint(*p2[:2])], "car")
+        self.assertFalse(driving.is_network_matched)
+        self.assertIn("modal access", driving.status_message)
+        self.assertGreater(
+            driving.routing_diagnostics["segments"][0]["blocked_by_access"], 0
+        )
+
+    def test_one_way_components_are_weak_and_order_independent(self) -> None:
+        """Converging one-way edges belong to one snap component."""
+        a = (27.1400, 38.4200, 0.0)
+        b = (27.1420, 38.4200, 0.0)
+        c = (27.1410, 38.4210, 0.0)
+        segments = [
+            RoadSegment(a, c, haversine_distance_2d(a, c), is_oneway=True),
+            RoadSegment(b, c, haversine_distance_2d(b, c), is_oneway=True),
+        ]
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+        self.assertEqual(len(engine.component_sizes), 1)
+        self.assertEqual(engine.graph_diagnostics["one_way_segments"], 2)
+
+    def test_snap_limit_rejects_misleading_connector(self) -> None:
+        engine = RoutingEngine3D(max_snap_distance_m=50.0)
+        engine.build_graph(fixture_network_segments())
+        result = engine.calculate_route(
+            [Waypoint(27.50, 38.80), Waypoint(27.51, 38.81)], "adult"
+        )
+        self.assertFalse(result.is_network_matched)
+        self.assertIn("within 50 m", result.status_message)
+        self.assertEqual(
+            result.routing_diagnostics["segments"][0]["status"], "snap_failed"
+        )
+
+    def test_network_readiness_audit(self) -> None:
+        from ..core.network_audit import audit_network
+
+        a = (27.1400, 38.4200, 0.0)
+        b = (27.1410, 38.4200, 0.0)
+        c = (27.1420, 38.4200, 0.0)
+        segments = [
+            RoadSegment(a, b, haversine_distance_2d(a, b), highway_type="residential"),
+            RoadSegment(b, c, haversine_distance_2d(b, c), highway_type="footway"),
+        ]
+        report = audit_network(segments, "car")
+        self.assertEqual(report.segment_count, 2)
+        self.assertEqual(report.allowed_segments, 1)
+        self.assertEqual(report.blocked_segments, 1)
+        self.assertEqual(report.component_count, 1)
+        self.assertFalse(report.ready)
+        self.assertTrue(60.0 < report.largest_component_pct < 70.0)
+        self.assertFalse(report.findings[1]["allowed"])
+
+    def test_osm_access_and_speed_tags_survive_parsing(self) -> None:
+        payload = {
+            "elements": [
+                {"type": "node", "id": 1, "lat": 38.42, "lon": 27.14},
+                {"type": "node", "id": 2, "lat": 38.42, "lon": 27.15},
+                {
+                    "type": "way",
+                    "id": 10,
+                    "nodes": [1, 2],
+                    "tags": {
+                        "highway": "cycleway",
+                        "foot": "no",
+                        "bicycle": "designated",
+                        "motor_vehicle": "no",
+                        "surface": "fine_gravel",
+                        "lit": "yes",
+                        "maxspeed": "20 mph",
+                    },
+                },
+            ]
+        }
+        segment = NetworkSourceManager()._parse_osm_json(payload)[0]
+        self.assertEqual(segment.foot, "no")
+        self.assertEqual(segment.bicycle, "designated")
+        self.assertEqual(segment.motor_vehicle, "no")
+        self.assertEqual(segment.surface, "fine_gravel")
+        self.assertEqual(segment.lit, "yes")
+        self.assertAlmostEqual(segment.maxspeed_kmh, 32.18688, places=4)
+
+    def test_isochrone_uses_real_hull_area_and_modal_access(self) -> None:
+        from ..core.isochrone_engine import _convex_hull, _polygon_area_ha
+
+        square = [
+            (27.0000, 38.0000),
+            (27.0010, 38.0000),
+            (27.0010, 38.0010),
+            (27.0000, 38.0010),
+            (27.0005, 38.0005),
+        ]
+        hull = _convex_hull(square)
+        self.assertEqual(len(hull), 4)
+        # At 38 degrees this 0.001-degree square is roughly 0.97 hectares.
+        self.assertTrue(0.8 < _polygon_area_ha(hull) < 1.2)
+
+        p1 = (27.1400, 38.4200, 0.0)
+        p2 = (27.1410, 38.4200, 0.0)
+        engine = RoutingEngine3D()
+        engine.build_graph([
+            RoadSegment(p1, p2, haversine_distance_2d(p1, p2), highway_type="footway")
+        ])
+        result = IsochroneEngine3D(engine).compute_isochrones(
+            Waypoint(*p1[:2]), profile_key="car", time_intervals_min=(5.0,)
+        )
+        self.assertEqual(result.total_reachable_nodes, 1)
+
+    def test_pareto_router_respects_profile_constraints(self) -> None:
+        p1 = (27.1400, 38.4200, 0.0)
+        p2 = (27.1410, 38.4200, 0.0)
+        engine = RoutingEngine3D()
+        engine.build_graph([
+            RoadSegment(p1, p2, haversine_distance_2d(p1, p2), highway_type="footway")
+        ])
+        nodes = list(engine.nodes)
+        result = ParetoMultiObjectiveRouter(
+            engine.nodes, engine.adj, engine.sampler
+        ).solve_pareto_frontier(nodes[0], nodes[1], profile_key="car")
+        self.assertEqual(result.solutions, [])
+
+    def test_parallel_edges_keep_distinct_access_and_reverse_direction(self) -> None:
+        a = (27.1400, 38.4200, 0.0)
+        b = (27.1410, 38.4200, 0.0)
+        distance = haversine_distance_2d(a, b)
+        engine = RoutingEngine3D()
+        engine.build_graph([
+            RoadSegment(
+                a, b, distance, highway_type="service", is_oneway=True,
+                motor_vehicle="private",
+            ),
+            RoadSegment(a, b, distance, highway_type="residential", is_oneway=False),
+        ])
+        node_a = engine.coord_to_node[(round(a[0], 5), round(a[1], 5))]
+        node_b = engine.coord_to_node[(round(b[0], 5), round(b[1], 5))]
+        self.assertGreaterEqual(len(engine.adj[node_a]), 2)
+        self.assertTrue(any(edge[0] == node_a for edge in engine.adj[node_b]))
+
+        reverse = engine.calculate_route(
+            [Waypoint(*b[:2]), Waypoint(*a[:2])], profile_key="car"
+        )
+        self.assertTrue(reverse.is_network_matched)
+
 
 if __name__ == "__main__":
     unittest.main()

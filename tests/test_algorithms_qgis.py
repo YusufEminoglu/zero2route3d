@@ -9,26 +9,19 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import traceback
 
 from qgis.core import (
     QgsApplication,
-    QgsCoordinateReferenceSystem,
     QgsFeature,
-    QgsField,
-    QgsFields,
     QgsGeometry,
-    QgsPoint,
     QgsPointXY,
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
     QgsProject,
-    QgsRasterLayer,
     QgsVectorLayer,
 )
-from qgis.PyQt.QtCore import QVariant
 
 RESULTS = []
 
@@ -106,8 +99,6 @@ def run():
 
     ctx = QgsProcessingContext()
     ctx.setProject(QgsProject.instance())
-    fb = QgsProcessingFeedback()
-
     # ---- 1. Group ids must not split the toolbox into two identical folders.
     group_ids = {a.groupId() for a in algs.values()}
     check("all algorithms share one groupId", len(group_ids) == 1, str(group_ids))
@@ -199,6 +190,61 @@ def run():
                 check("3D route output carries field aliases",
                       layer.attributeAlias(idx) == "Distance (km)",
                       repr(layer.attributeAlias(idx)))
+                check("3D route exposes snap diagnostics",
+                      all(layer.fields().indexOf(name) >= 0 for name in
+                          ("snap_a_m", "snap_b_m", "expanded", "blocked")))
+
+    # ---- 9. Network audit must execute and annotate every extracted segment.
+    audit_alg = algs.get("audit_routing_network")
+    if audit_alg is not None:
+        net = make_network()
+        audit_alg.initAlgorithm({})
+        errs = ErrorFeedback()
+        res, ok = audit_alg.run({
+            "NETWORK": net,
+            "PROFILE": 0,
+            "OUTPUT": "memory:",
+        }, ctx, errs)
+        if check("routing network audit succeeded", ok, str(errs.errors[:2])):
+            out = res.get("OUTPUT")
+            audited = ctx.getMapLayer(out) if isinstance(out, str) else out
+            check("routing network audit annotates segments",
+                  audited is not None and audited.featureCount() == 5,
+                  f"{audited.featureCount() if audited else 'no layer'} feature(s)")
+            if audited is not None:
+                first = next(audited.getFeatures())
+                check("routing network audit reports topology",
+                      first["component"] >= 0 and first["largest_pct"] > 0)
+                audit_alg.postProcessAlgorithm(ctx, errs)
+                check("routing network audit styles allowed and blocked links",
+                      audited.renderer().__class__.__name__ == "QgsCategorizedSymbolRenderer")
+
+    check("provider exposes network audit algorithm",
+          "audit_routing_network" in algs, str(sorted(algs)))
+
+    # ---- 10. Custom QGIS networks must preserve Z and common fields.
+    tagged = QgsVectorLayer(
+        "LineStringZ?crs=EPSG:4326&field=HIGHWAY:string&field=ONEWAY:string"
+        "&field=SURFACE:string&field=FOOT:string&field=MAXSPEED:string",
+        "tagged_network",
+        "memory",
+    )
+    tagged_feature = QgsFeature(tagged.fields())
+    tagged_feature.setGeometry(
+        QgsGeometry.fromWkt("LineStringZ(27.140 38.420 12, 27.141 38.420 18)")
+    )
+    tagged_feature.setAttributes(["footway", "yes", "paving_stones", "designated", "20 mph"])
+    tagged.dataProvider().addFeatures([tagged_feature])
+    from zero2route3d.core.network_source import NetworkSourceManager
+    extracted = NetworkSourceManager().extract_from_qgis_layer(tagged)
+    check("QGIS network extraction preserves Z and routing fields",
+          len(extracted) == 1
+          and extracted[0].p1[2] == 12.0
+          and extracted[0].p2[2] == 18.0
+          and extracted[0].is_oneway
+          and extracted[0].foot == "designated"
+          and 32.0 < extracted[0].maxspeed_kmh < 32.3,
+          repr(extracted[0] if extracted else None))
 
     print()
     failed = [r for r in RESULTS if not r[1]]

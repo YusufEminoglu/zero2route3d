@@ -27,6 +27,7 @@ from qgis.core import (
 
 from .field_utils import DOUBLE, STRING, make_field
 from .post_process import finalize_output
+from .crs_utils import point_to_wgs84
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
 from ..core.isochrone_engine import IsochroneEngine3D
 from ..core.mobility_profiles import list_profile_keys, get_profile
@@ -118,7 +119,12 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback,
     ) -> Dict[str, Any]:
-        center = self.parameterAsPoint(parameters, self.CENTER_POINT, context)
+        center_crs = self.parameterAsPointCrs(parameters, self.CENTER_POINT, context)
+        center = point_to_wgs84(
+            self.parameterAsPoint(parameters, self.CENTER_POINT, context),
+            center_crs,
+            context,
+        )
         time_min = self.parameterAsDouble(parameters, self.TIME_MINUTES, context)
         prof_idx = self.parameterAsEnum(parameters, self.PROFILE, context)
         dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
