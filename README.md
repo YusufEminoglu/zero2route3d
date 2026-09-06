@@ -11,8 +11,8 @@
 <p align="center">
  <a href="metadata.txt"><img alt="QGIS" src="https://img.shields.io/badge/QGIS-3.28%2B%20LTR%20%7C%204.x%20Ready-5da85d?style=for-the-badge"></a>
  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-111827?style=for-the-badge"></a>
- <a href="https://yusufeminoglu.github.io/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
- <a href="https://yusufeminoglu.github.io/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
+ <a href="https://geophilo.pages.dev/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
+ <a href="https://geophilo.pages.dev/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
  <img alt="Three.js WebGL" src="https://img.shields.io/badge/viewer-WebGL-2f4858?style=for-the-badge">
 </p>
 
@@ -34,8 +34,8 @@
 
 ## 📖 Live Documentation & Interactive Labs
 
-- 🌐 **[Interactive GitHub Pages & Web Labs](https://yusufeminoglu.github.io/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
-- 📚 **[Comprehensive Technical Reference Manual](https://yusufeminoglu.github.io/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
+- 🌐 **[Interactive Web Labs & Web Labs](https://geophilo.pages.dev/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
+- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.pages.dev/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
 
 ---
 
@@ -211,7 +211,7 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 | `core/profile_dxf.py` | AutoCAD DXF AC1009 3D Polyline and longitudinal profile exporter. |
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
 | `web/` | Embedded Three.js WebGL studio (HTML, CSS, JS, GLSL shaders). |
-| `docs/` | GitHub Pages landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
+| `docs/` | Web Documentation landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
 | `tests/` | Pure logic unit tests and QGIS headless smoke tests. |
 
 ---
@@ -222,11 +222,11 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 
 | Planning & Analysis | CAD & Production | 3D & Cartography |
 | :--- | :--- | :--- |
-| [PlanX](https://github.com/YusufEminoglu/PlanX) — Spatial Planning Studio | [PlanX CAD Toolset](https://github.com/YusufEminoglu/PlanX-CAD) — CAD in QGIS | [02Route 3D](https://github.com/YusufEminoglu/zero2route3d) — 3D Mobility Studio |
-| [GeoStats Lab](https://github.com/YusufEminoglu/planx_geostats) — Spatial Statistics | [EasyFillet](https://github.com/YusufEminoglu/EasyFillet) — Tangent Arc Fillet | [02CartoLab](https://github.com/YusufEminoglu/zero2cartolab) — Cartographic Studio |
-| [Suitability Lab](https://github.com/YusufEminoglu/planx_suitability_lab) — Raster MCDA | [Settlement Toolset](https://github.com/YusufEminoglu/PlanX-Settlement) — Master Plans | [02Multimap](https://github.com/YusufEminoglu/zero2multimap) — Synchronized Multi-Canvas |
-| [Urban Resilience](https://github.com/YusufEminoglu/planx_urban_resilience) — Seismic/Flood/Heat | [ParcelFlux](https://github.com/YusufEminoglu/parcelflux) — Parcel Subdivision | [02TrueSize](https://github.com/YusufEminoglu/zero2truesize) — Map Truth Lab |
-| [DataCube Lab](https://github.com/YusufEminoglu/planx_datacube) — Space-Time Cubes | [02CadGis](https://github.com/YusufEminoglu/zero2cadgis) — Universal CAD Importer | [3D OSM Model](https://github.com/YusufEminoglu/osm_3d_model) — OSM → 3D City |
+| [PlanX](https://gitlab.com/geospacephilo/EasyFillet) — Spatial Planning Studio | [PlanX CAD Toolset](https://gitlab.com/geospacephilo/EasyFillet) — CAD in QGIS | [02Route 3D](https://gitlab.com/geospacephilo/EasyFillet) — 3D Mobility Studio |
+| [GeoStats Lab](https://gitlab.com/geospacephilo/EasyFillet) — Spatial Statistics | [EasyFillet](https://gitlab.com/geospacephilo/EasyFillet) — Tangent Arc Fillet | [02CartoLab](https://gitlab.com/geospacephilo/EasyFillet) — Cartographic Studio |
+| [Suitability Lab](https://gitlab.com/geospacephilo/EasyFillet) — Raster MCDA | [Settlement Toolset](https://gitlab.com/geospacephilo/EasyFillet) — Master Plans | [02Multimap](https://gitlab.com/geospacephilo/EasyFillet) — Synchronized Multi-Canvas |
+| [Urban Resilience](https://gitlab.com/geospacephilo/EasyFillet) — Seismic/Flood/Heat | [ParcelFlux](https://gitlab.com/geospacephilo/EasyFillet) — Parcel Subdivision | [02TrueSize](https://gitlab.com/geospacephilo/EasyFillet) — Map Truth Lab |
+| [DataCube Lab](https://gitlab.com/geospacephilo/EasyFillet) — Space-Time Cubes | [02CadGis](https://gitlab.com/geospacephilo/EasyFillet) — Universal CAD Importer | [3D OSM Model](https://gitlab.com/geospacephilo/EasyFillet) — OSM → 3D City |
 
 ---
 
