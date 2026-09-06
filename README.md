@@ -222,11 +222,11 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 
 | Planning & Analysis | CAD & Production | 3D & Cartography |
 | :--- | :--- | :--- |
-| [PlanX](https://github.com/YusufEminoglu/zero2route3d) — Spatial Planning Studio | [PlanX CAD Toolset](https://github.com/YusufEminoglu/zero2route3d) — CAD in QGIS | [02Route 3D](https://github.com/YusufEminoglu/zero2route3d) — 3D Mobility Studio |
-| [GeoStats Lab](https://github.com/YusufEminoglu/zero2route3d) — Spatial Statistics | [EasyFillet](https://github.com/YusufEminoglu/zero2route3d) — Tangent Arc Fillet | [02CartoLab](https://github.com/YusufEminoglu/zero2route3d) — Cartographic Studio |
-| [Suitability Lab](https://github.com/YusufEminoglu/zero2route3d) — Raster MCDA | [Settlement Toolset](https://github.com/YusufEminoglu/zero2route3d) — Master Plans | [02Multimap](https://github.com/YusufEminoglu/zero2route3d) — Synchronized Multi-Canvas |
-| [Urban Resilience](https://github.com/YusufEminoglu/zero2route3d) — Seismic/Flood/Heat | [ParcelFlux](https://github.com/YusufEminoglu/zero2route3d) — Parcel Subdivision | [02TrueSize](https://github.com/YusufEminoglu/zero2route3d) — Map Truth Lab |
-| [DataCube Lab](https://github.com/YusufEminoglu/zero2route3d) — Space-Time Cubes | [02CadGis](https://github.com/YusufEminoglu/zero2route3d) — Universal CAD Importer | [3D OSM Model](https://github.com/YusufEminoglu/zero2route3d) — OSM → 3D City |
+| [PlanX](https://gitlab.com/geospacephilo/zero2route3d) — Spatial Planning Studio | [PlanX CAD Toolset](https://gitlab.com/geospacephilo/zero2route3d) — CAD in QGIS | [02Route 3D](https://gitlab.com/geospacephilo/zero2route3d) — 3D Mobility Studio |
+| [GeoStats Lab](https://gitlab.com/geospacephilo/zero2route3d) — Spatial Statistics | [EasyFillet](https://gitlab.com/geospacephilo/zero2route3d) — Tangent Arc Fillet | [02CartoLab](https://gitlab.com/geospacephilo/zero2route3d) — Cartographic Studio |
+| [Suitability Lab](https://gitlab.com/geospacephilo/zero2route3d) — Raster MCDA | [Settlement Toolset](https://gitlab.com/geospacephilo/zero2route3d) — Master Plans | [02Multimap](https://gitlab.com/geospacephilo/zero2route3d) — Synchronized Multi-Canvas |
+| [Urban Resilience](https://gitlab.com/geospacephilo/zero2route3d) — Seismic/Flood/Heat | [ParcelFlux](https://gitlab.com/geospacephilo/zero2route3d) — Parcel Subdivision | [02TrueSize](https://gitlab.com/geospacephilo/zero2route3d) — Map Truth Lab |
+| [DataCube Lab](https://gitlab.com/geospacephilo/zero2route3d) — Space-Time Cubes | [02CadGis](https://gitlab.com/geospacephilo/zero2route3d) — Universal CAD Importer | [3D OSM Model](https://gitlab.com/geospacephilo/zero2route3d) — OSM → 3D City |
 
 ---
 

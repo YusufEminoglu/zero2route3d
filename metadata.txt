@@ -9,8 +9,8 @@ email=yusuf.eminoglu@deu.edu.tr
 
 about=02Route 3D is a profile-aware urban mobility, shortest-path, and 3D route inspection studio for QGIS. It routes across real QGIS line networks or bounded OpenStreetMap downloads using terrain, optional environmental rasters, road hierarchy, surface quality, direction, and modal access attributes.\n\nKey Capabilities:\n- 15 Mobility Profiles: pedestrian, inclusive mobility, micromobility, vehicle, freight, and emergency profiles with distinct speed, slope, stair, surface, and hierarchy constraints.\n- Consistent Routing Policy: primary A*, Pareto, isochrone, batch, OD, and evacuation workflows respect the same access and physical constraints.\n- Network Readiness Audit: annotated red/green LineStringZ output identifies blocked segments, one-way links, weak components, surface quality, and connectivity.\n- Route Diagnostics: bounded network snapping plus snap-distance, expanded-node, and blocked-edge reporting.\n- Biomechanical Kinematics: Tobler walking speed and Minetti metabolic energy, with mode-specific travel-time models.\n- 15 Processing Algorithms: routes, isochrones, Pareto alternatives, OD matrices, accessibility equity, network QA, exports, and analytical reports.\n- Interoperability: LineStringZ, GPX 1.1, GeoJSON 3D, AutoCAD DXF, and self-contained offline 3D HTML.\n\nInspiration & Acknowledgment:\nThe inclusive mobility persona framework is inspired by Transform Transport / Systematica research (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
 
-tracker=https://github.com/YusufEminoglu/zero2route3d/issues
-repository=https://github.com/YusufEminoglu/zero2route3d
+tracker=https://gitlab.com/geospacephilo/zero2route3d/-/issues
+repository=https://gitlab.com/geospacephilo/zero2route3d
 homepage=https://geophilo.com/zero2route3d/
 
 category=Analysis
