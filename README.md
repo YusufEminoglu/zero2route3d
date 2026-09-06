@@ -11,8 +11,8 @@
 <p align="center">
  <a href="metadata.txt"><img alt="QGIS" src="https://img.shields.io/badge/QGIS-3.28%2B%20LTR%20%7C%204.x%20Ready-5da85d?style=for-the-badge"></a>
  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-111827?style=for-the-badge"></a>
- <a href="https://geophilo.pages.dev/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
- <a href="https://geophilo.pages.dev/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
+ <a href="https://geophilo.com/zero2route3d/"><img alt="Interactive Landing Page" src="https://img.shields.io/badge/demo-Interactive_Labs-06b6d4?style=for-the-badge"></a>
+ <a href="https://geophilo.com/zero2route3d/MANUAL.html"><img alt="Reference Manual" src="https://img.shields.io/badge/docs-Reference_Manual-10b981?style=for-the-badge"></a>
  <img alt="Three.js WebGL" src="https://img.shields.io/badge/viewer-WebGL-2f4858?style=for-the-badge">
 </p>
 
@@ -34,8 +34,8 @@
 
 ## 📖 Live Documentation & Interactive Labs
 
-- 🌐 **[Interactive Web Labs & Web Labs](https://geophilo.pages.dev/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
-- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.pages.dev/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
+- 🌐 **[Interactive Web Labs & Web Labs](https://geophilo.com/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
+- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.com/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
 
 ---
 

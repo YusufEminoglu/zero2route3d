@@ -11,7 +11,7 @@ about=02Route 3D is a profile-aware urban mobility, shortest-path, and 3D route 
 
 tracker=https://gitlab.com/geospacephilo/zero2route3d/-/issues
 repository=https://gitlab.com/geospacephilo/zero2route3d
-homepage=https://geophilo.pages.dev/zero2route3d/
+homepage=https://geophilo.com/zero2route3d/
 
 category=Analysis
 tags=network, shortest path, network audit, topology, modal access, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, pedestrian, wheelchair, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, e2sfca, spatial equity, evacuation, solar exposure, map matching, gps, gpx, dxf, cad, urban analytics, zero2
