@@ -166,12 +166,28 @@
             font-family: var(--font-mono);
         }
 
+        #toc-search {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 1rem;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            font-family: var(--font-main);
+        }
+        #toc-search::placeholder { color: var(--text-muted); }
+        #toc-search:focus { outline: none; border-color: var(--kinetic-cyan); }
+
         .toc-list {
             list-style: none;
             display: flex;
             flex-direction: column;
             gap: 0.6rem;
         }
+
+        .toc-list li.toc-hidden { display: none; }
 
         .toc-list a {
             color: var(--text-secondary);
@@ -180,6 +196,11 @@
             transition: color 0.2s, transform 0.2s;
             display: block;
             line-height: 1.4;
+        }
+
+        .toc-list a.toc-active {
+            color: var(--kinetic-cyan-light);
+            font-weight: 600;
         }
 
         .toc-list a:hover {
@@ -351,7 +372,7 @@
             <a href="index.html" class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.2.9</span>
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.4.0</span>
             </a>
             <ul class="nav-links">
                 <li><a href="index.html">← Landing &amp; Interactive Labs</a></li>
@@ -366,10 +387,11 @@
         <!-- Sidebar Table of Contents -->
         <aside class="sidebar">
             <h4>Table of Contents</h4>
-            <ul class="toc-list">
+            <input type="text" id="toc-search" placeholder="Search manual&hellip;" autocomplete="off">
+            <ul class="toc-list" id="toc-list">
                 <li><a href="#overview">1. System Overview</a></li>
                 <li><a href="#profiles">2. Mobility Profiles (15)</a></li>
-                <li><a href="#algorithms">3. Processing Algorithms (14)</a></li>
+                <li><a href="#algorithms">3. Processing Algorithms (15)</a></li>
                 <li><a href="#kinematics">4. Kinematics &amp; Math</a></li>
                 <li><a href="#mcda">5. MCDA &amp; AHP Surface</a></li>
                 <li><a href="#pareto">6. NAMOA* Pareto Routing</a></li>
@@ -522,6 +544,98 @@
                 </div>
             </section>
 
+            <!-- Section 5: MCDA & AHP Surface -->
+            <section id="mcda" class="doc-section">
+                <h2>5. MCDA &amp; AHP Friction Surface</h2>
+                <p><code>zero2route3d:mcda_cost_surface</code> combines up to three real input rasters &mdash; elevation (DEM), land surface temperature (LST), and a vegetation index (NDVI) &mdash; into a single normalized friction surface, from <span class="badge badge-cyan">0.0</span> (easiest to traverse) to <span class="badge badge-amber">1.0</span> (hardest).</p>
+                <div class="glass-panel">
+                    <h3>Inputs &amp; weights</h3>
+                    <p>All three raster inputs are optional, but at least one is required. A missing layer is <strong>dropped from the weighting</strong> rather than replaced by an assumed value, and every supplied raster must share the same CRS, extent and pixel grid. Each criterion carries a weight on the Saaty 1&ndash;9 scale, resolved through an AHP pairwise comparison matrix:</p>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Criterion</th><th>Parameter</th><th>Default weight</th></tr></thead>
+                            <tbody>
+                                <tr><td>Slope (from DEM)</td><td><code>WEIGHT_SLOPE</code></td><td>5.0</td></tr>
+                                <tr><td>Heat avoidance (from LST)</td><td><code>WEIGHT_HEAT</code></td><td>3.0</td></tr>
+                                <tr><td>Green preference (from NDVI)</td><td><code>WEIGHT_GREEN</code></td><td>2.0</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h3>Consistency ratio</h3>
+                    <p>The pairwise matrix's consistency ratio is computed and reported in the processing log:</p>
+                    <div style="text-align:center; margin:1rem 0;">
+                        $$CR = \frac{CI}{RI} = \frac{(\lambda_{\max} - n) / (n-1)}{RI(n)}$$
+                    </div>
+                    <div class="callout amber">A run is <strong>rejected outright</strong> when <code>CR &gt; 0.10</code> &mdash; the judgment matrix is too inconsistent to trust, and the algorithm will not silently produce a surface from contradictory weights.</div>
+                </div>
+            </section>
+
+            <!-- Section 6: NAMOA* Pareto Routing -->
+            <section id="pareto" class="doc-section">
+                <h2>6. NAMOA* Pareto Frontier Routing</h2>
+                <p><code>zero2route3d:pareto_3d_routes</code> generates <strong>non-dominated</strong> alternative routes between one origin and one destination, trading off four objectives at once: travel time, cumulative climb (slope), thermal heat exposure, and metabolic energy (calories).</p>
+                <div class="glass-panel">
+                    <h3>What "non-dominated" means</h3>
+                    <p>A route belongs to the Pareto frontier only if no other candidate route beats it on <em>every</em> objective simultaneously. The result is a small set of genuinely different trade-offs &mdash; for example a fastest-but-steepest route alongside a longer-but-flatter one &mdash; rather than one single "best" answer that hides the trade-off from the user.</p>
+                    <h3>Inputs</h3>
+                    <ul style="list-style:none; display:flex; flex-direction:column; gap:0.5rem; color:var(--text-secondary);">
+                        <li><strong>Origin &amp; Destination Points Layer:</strong> a 2-point vector layer.</li>
+                        <li><strong>Road Network</strong> (optional): an existing line layer; falls back to a bounded OpenStreetMap download when omitted.</li>
+                        <li><strong>Elevation (DEM)</strong> and <strong>Thermal Heat (LST)</strong> layers (both optional): missing rasters simply drop that objective's contribution rather than being estimated.</li>
+                        <li><strong>Mobility Profile:</strong> any of the 15 profiles from §2, applied identically to every alternative on the frontier.</li>
+                    </ul>
+                    <p>Output is a single <code>LineStringZ</code> layer holding every non-dominated alternative, computed by the NAMOA* multi-objective search in <code>core/pareto_router.py</code>.</p>
+                </div>
+            </section>
+
+            <!-- Section 7: WebGL Studio -->
+            <section id="webgl-studio" class="doc-section">
+                <h2>7. WebGL Studio</h2>
+                <p>Every computed route can be opened in an embedded, hardware-accelerated Three.js 3D viewer &mdash; the "WebGL Studio" &mdash; for visual inspection beyond what the QGIS 2D canvas shows.</p>
+                <div class="glass-panel">
+                    <h3>Camera modes</h3>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+                            <tbody>
+                                <tr><td><span class="badge badge-cyan">Orbit</span></td><td>Free 360° inspection camera (Three.js <code>OrbitControls</code>), the default mode.</td></tr>
+                                <tr><td><span class="badge badge-emerald">Chase</span></td><td>Follows the mobility-profile avatar along the route with damped trailing motion.</td></tr>
+                                <tr><td><span class="badge badge-amber">POV / Driver</span></td><td>First-person viewpoint riding the route itself.</td></tr>
+                                <tr><td><span class="badge badge-cyan">Tour</span></td><td>Cinematic flight path that orbits the route as it progresses, for walkthrough recordings.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h3>Studio features</h3>
+                    <ul style="list-style:none; display:flex; flex-direction:column; gap:0.6rem; color:var(--text-secondary);">
+                        <li><strong>Kinematic avatar rig</strong> (<code>KinematicAvatarRig.js</code>): a procedural 3D figure that matches the active mobility profile &mdash; walker, wheelchair, stroller, cyclist, scooter, car, van or ambulance.</li>
+                        <li><strong>Subsurface terrain slicer</strong> (<code>TerrainSlicerSystem.js</code>): a clip-plane tool to slice through the 3D terrain mesh and inspect the elevation profile beneath the route.</li>
+                        <li><strong>Voice cue system</strong> (<code>VoiceCueSystem.js</code>): Web Speech API turn-by-turn spoken navigation with gradient warnings, entirely offline/on-device.</li>
+                        <li><strong>Media capture:</strong> PNG screenshot export and WebM video recording directly from the 3D canvas.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- Section 8: Data Formats & Exports -->
+            <section id="exports" class="doc-section">
+                <h2>8. Data Formats &amp; Interoperability</h2>
+                <p>Route results leave 02Route 3D through a mix of Studio dock quick-export buttons and dedicated Processing algorithms:</p>
+                <div class="glass-panel">
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Format</th><th>How</th><th>Notes</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>LineStringZ</code></td><td>Native QGIS vector layer</td><td>The result of every routing algorithm; usable directly in QGIS or exported via QGIS's own "Save As".</td></tr>
+                                <tr><td>GPX 1.1</td><td>Dock <strong>💾 GPX</strong> button</td><td>GPS Exchange Format with elevation, for handheld GPS units and GPX-aware apps.</td></tr>
+                                <tr><td>GeoJSON 3D</td><td>Dock <strong>💾 GeoJSON</strong> button</td><td>3D-coordinate GeoJSON for web maps and lightweight GIS tools.</td></tr>
+                                <tr><td>AutoCAD DXF</td><td><code>zero2route3d:export_3d_route_dxf</code></td><td>AC1009-standard 3D Polyline plus a longitudinal elevation profile drawing; opens in AutoCAD, Civil 3D, Rhino and SketchUp.</td></tr>
+                                <tr><td>Standalone 3D HTML</td><td><code>zero2route3d:export_3d_html_report</code></td><td>Self-contained, offline-capable HTML file with an embedded Three.js viewer &mdash; no server or QGIS needed to view it.</td></tr>
+                                <tr><td>HTML scorecard</td><td><code>zero2route3d:generate_route_report_html</code></td><td>Publication-grade analytical report with embedded SVG elevation profiles.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <!-- Section 9: PyQGIS Automation -->
             <section id="pyqgis" class="doc-section">
                 <h2>9. PyQGIS Automation &amp; Batch Scripting</h2>
@@ -580,5 +694,49 @@ print("Route generated with length:", route_layer.featureCount())
             </section>
         </main>
     </div>
+
+<script>
+(function () {
+  var input = document.getElementById('toc-search');
+  var items = document.querySelectorAll('#toc-list li');
+  if (!input || !items.length) return;
+
+  var sectionTextCache = {};
+  function sectionText(href) {
+    if (href in sectionTextCache) return sectionTextCache[href];
+    var el = href ? document.querySelector(href) : null;
+    sectionTextCache[href] = el ? el.textContent.toLowerCase() : '';
+    return sectionTextCache[href];
+  }
+
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    items.forEach(function (li) {
+      var a = li.querySelector('a');
+      if (!a) return;
+      var match = !q || a.textContent.toLowerCase().indexOf(q) !== -1 ||
+        sectionText(a.getAttribute('href')).indexOf(q) !== -1;
+      li.classList.toggle('toc-hidden', !match);
+    });
+  });
+
+  var links = document.querySelectorAll('#toc-list a[href^="#"]');
+  var sections = Array.prototype.slice.call(links).map(function (a) {
+    return { link: a, el: document.querySelector(a.getAttribute('href')) };
+  }).filter(function (s) { return s.el; });
+
+  if ('IntersectionObserver' in window && sections.length) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        links.forEach(function (a) { a.classList.remove('toc-active'); });
+        var match = sections.find(function (s) { return s.el === entry.target; });
+        if (match) match.link.classList.add('toc-active');
+      });
+    }, { rootMargin: '-10% 0px -70% 0px' });
+    sections.forEach(function (s) { observer.observe(s.el); });
+  }
+})();
+</script>
 </body>
 </html>
