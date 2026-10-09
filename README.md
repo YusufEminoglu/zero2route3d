@@ -222,11 +222,11 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 
 | Planning & Analysis | CAD & Production | 3D & Cartography |
 | :--- | :--- | :--- |
-| [PlanX](https://gitlab.com/geospacephilo/planx) — Spatial Planning Studio | [PlanX CAD Toolset](https://gitlab.com/geospacephilo/planX_CAD_arac_Seti) — CAD in QGIS | [02Route 3D](https://gitlab.com/geospacephilo/zero2route3d) — 3D Mobility Studio |
-| [GeoStats Lab](https://gitlab.com/geospacephilo/planx_geostats) — Spatial Statistics | [EasyFillet](https://gitlab.com/geospacephilo/EasyFillet) — Tangent Arc Fillet | [02CartoLab](https://gitlab.com/geospacephilo/zero2cartolab) — Cartographic Studio |
-| [Suitability Lab](https://gitlab.com/geospacephilo/planx_suitability_lab) — Raster MCDA | [Settlement Toolset](https://gitlab.com/geospacephilo/planx_yerlesim_plani_arac_seti) — Master Plans | [02Multimap](https://gitlab.com/geospacephilo/zero2multimap) — Synchronized Multi-Canvas |
-| [Urban Resilience](https://gitlab.com/geospacephilo/planx_urban_resilience) — Seismic/Flood/Heat | [ParcelFlux](https://gitlab.com/geospacephilo/parcelflux) — Parcel Subdivision | [02TrueSize](https://gitlab.com/geospacephilo/zero2truesize) — Map Truth Lab |
-| [DataCube Lab](https://gitlab.com/geospacephilo/planx_datacube) — Space-Time Cubes | [02CadGis](https://gitlab.com/geospacephilo/zero2cadgis) — Universal CAD Importer | [3D OSM Model](https://gitlab.com/geospacephilo/osm_3d_model) — OSM → 3D City |
+| [PlanX](https://github.com/YusufEminoglu/PlanX) — Spatial Planning Studio | [PlanX CAD Toolset](https://github.com/YusufEminoglu/PlanX-CAD) — CAD in QGIS | [02Route 3D](https://github.com/YusufEminoglu/zero2route3d) — 3D Mobility Studio |
+| [GeoStats Lab](https://github.com/YusufEminoglu/planx_geostats) — Spatial Statistics | [EasyFillet](https://github.com/YusufEminoglu/EasyFillet) — Tangent Arc Fillet | [02CartoLab](https://github.com/YusufEminoglu/zero2cartolab) — Cartographic Studio |
+| [Suitability Lab](https://github.com/YusufEminoglu/planx_suitability_lab) — Raster MCDA | [Settlement Toolset](https://github.com/YusufEminoglu/PlanX-Settlement) — Master Plans | [02Multimap](https://github.com/YusufEminoglu/zero2multimap) — Synchronized Multi-Canvas |
+| [Urban Resilience](https://github.com/YusufEminoglu/planx_urban_resilience) — Seismic/Flood/Heat | [ParcelFlux](https://github.com/YusufEminoglu/parcelflux) — Parcel Subdivision | [02TrueSize](https://github.com/YusufEminoglu/zero2truesize) — Map Truth Lab |
+| [DataCube Lab](https://github.com/YusufEminoglu/planx_datacube) — Space-Time Cubes | [02CadGis](https://github.com/YusufEminoglu/zero2cadgis) — Universal CAD Importer | [3D OSM Model](https://github.com/YusufEminoglu/osm_3d_model) — OSM → 3D City |
 
 ---
 

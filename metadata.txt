@@ -2,24 +2,36 @@
 name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
-description=Profile-aware urban mobility and 3D shortest-path studio with 15 user profiles, modal access controls, network readiness audit, AHP cost surfaces, OD matrices, and WebGL route inspection.
-version=0.4.0
+description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
+version=0.4.1
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
 about=
-    02Route 3D is a profile-aware urban mobility, shortest-path, and 3D route inspection studio for QGIS. It routes across real QGIS line networks or bounded OpenStreetMap downloads, scoring every edge with an MCDA/AHP friction surface built from terrain, optional environmental rasters, road hierarchy, surface quality, one-way direction, and modal access tags, then lets you inspect the result on a hardware-accelerated Three.js/WebGL 3D route viewer or export it. Online User Manual & Documentation: https://geophilo.com/zero2route3d/ | If you find this plugin helpful, please consider starring the repository on GitLab (https://gitlab.com/geospacephilo/zero2route3d)!
+    02Route 3D finds and inspects routes the way different people actually move through a city. It routes over your own QGIS line network or a bounded OpenStreetMap download, scores every edge with a multi-criteria (AHP) cost built from terrain, optional environmental rasters, road hierarchy, surface, one-way rules and access tags, and shows the result in an interactive 3D (WebGL) route viewer.
     
-    15 Mobility Profiles, one consistent routing policy: Standard Adult, Senior / Elderly, Child / Safe Walk, Stroller / Pram, Wheelchair / Barrier-Free, Runner / Fitness Jogger, City & Commuter Bicycle, Mountain / Gravel Bike, E-Scooter / Micromobility, Passenger Car, Delivery Courier Van, Heavy Goods / Logistics Truck, Emergency / First Responder, Scenic & Panoramic Walk, and Safe & Illuminated Night Walk. Each profile carries its own speed, slope, stair, surface and hierarchy constraints, and every workflow - single route, Pareto, isochrone, batch, OD matrix and evacuation - enforces the same constraints, so a Wheelchair profile can never be routed across stairs in one tool while that limit is honoured in another.
+    MOBILITY PROFILES (15)
+    Standard Adult, Senior, Child / Safe Walk, Stroller, Wheelchair / Barrier-Free, Runner, City Bicycle, Mountain / Gravel Bike, E-Scooter, Passenger Car, Delivery Van, Heavy Goods Truck, Emergency Responder, Scenic Walk and Safe Night Walk. Each profile has its own speed, slope, stair, surface and road-class limits, and every tool applies the same limits: a wheelchair route never crosses stairs, whichever tool computed it.
     
-    15 Processing Algorithms: Compute 3D Route (Multi-Profile Kinematics); Multi-Objective Pareto 3D Routes (NAMOA* Frontier); Generate 3D Isochrone (Travel-Time Service Area); Batch 3D Route Planner (Layer to Layer); Origin-Destination (OD) 3D Cost Matrix; Audit Routing Network Readiness; MCDA Multi-Criteria Friction Surface; Spatial Accessibility & Equity Scorecard (E2SFCA & Gini); 3D Walkability & Barrier-Free Accessibility Audit; Emergency Evacuation & Hazard Avoidance (3D Route); Solar & Shade Exposure Analysis (3D Route); 3D GPS Track Map Matching (HMM / Viterbi Snapping); Generate Analytical 3D Route Scorecard (HTML Report); Export 3D Route to AutoCAD DXF (3D Polyline + Profile); and Export Standalone 3D WebGL HTML Report.
+    PROCESSING ALGORITHMS (15)
+    - Routing: Compute 3D Route; Multi-Objective Pareto Routes (NAMOA*); Batch Route Planner; Origin-Destination Cost Matrix; Emergency Evacuation & Hazard Avoidance.
+    - Accessibility: 3D Isochrone (travel-time service area); Accessibility & Equity Scorecard (E2SFCA, Gini); Walkability & Barrier-Free Audit; Solar & Shade Exposure.
+    - Network and data: Routing Network Readiness Audit; MCDA Friction Surface; GPS Track Map Matching (HMM / Viterbi).
+    - Reports and export: Route Scorecard (HTML); Standalone 3D WebGL Report; AutoCAD DXF (3D polyline + profile).
     
-    The Routing Network Readiness Audit annotates a red/green LineStringZ layer that flags blocked segments, one-way links, weak topological components, surface quality and connectivity before you route, and every route request separately reports its bounded snapping distance, expanded-node count and any blocked edges it had to route around. Biomechanical kinematics use Tobler's walking-speed function and a corrected Minetti metabolic-cost model for mode-specific travel-time estimates. Results interoperate as LineStringZ vector layers, GPX 1.1, GeoJSON 3D, AutoCAD DXF, and self-contained offline 3D HTML.
+    CHECKED BEFORE AND AFTER ROUTING
+    The readiness audit marks blocked segments, one-way links, disconnected parts and surface problems before you route. Every route reports how far its ends were snapped to the network, how many nodes were explored and which edges it had to avoid. Walking times follow Tobler's hiking function; energy use follows Minetti's metabolic cost model.
     
-    Inspiration & Acknowledgment: the inclusive mobility persona framework is inspired by Transform Transport / Systematica research (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
+    OUTPUTS
+    LineStringZ layers, GPX 1.1, 3D GeoJSON, AutoCAD DXF and self-contained offline 3D HTML.
+    
+    User manual: https://geophilo.com/zero2route3d/
+    Source code and issues: https://github.com/YusufEminoglu/zero2route3d (a star on GitHub helps the project).
+    
+    Acknowledgment: the inclusive mobility profiles are inspired by Transform Transport / Systematica research (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
 
-tracker=https://gitlab.com/geospacephilo/zero2route3d/-/issues
-repository=https://gitlab.com/geospacephilo/zero2route3d
+tracker=https://github.com/YusufEminoglu/zero2route3d/issues
+repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://geophilo.com/zero2route3d/
 
 category=Analysis
@@ -33,6 +45,10 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.4.1 - Repository moved to GitHub:
+        - The repository and issue tracker are now on GitHub (github.com/YusufEminoglu/zero2route3d); the user manual stays at geophilo.com/zero2route3d.
+        - Clearer plugin description.
+
     0.4.0 - Profile-Aware Routing & Network QA:
         - Added modal access filtering for pedestrians, bicycles and motor vehicles using OSM-style tags and road-class defaults.
         - Added Routing Network Readiness Audit as the fifteenth Processing algorithm.

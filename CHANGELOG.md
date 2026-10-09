@@ -5,6 +5,15 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-09
+
+### Changed
+- The repository and issue tracker moved to GitHub:
+  https://github.com/YusufEminoglu/zero2route3d. Plugin metadata, the README
+  (including the plugin ecosystem table) and the documentation site link there;
+  the user manual stays at https://geophilo.com/zero2route3d/.
+- Clearer plugin description and "about" text on the QGIS Plugin Hub.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added
