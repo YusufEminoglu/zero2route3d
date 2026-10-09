@@ -135,7 +135,7 @@ class SolarExposureAlgorithm(QgsProcessingAlgorithm):
             getattr(self, "_dest_id", ""),
             title='Solar Exposure Along Route',
             abstract='Modelled solar geometry along the route for the given hour. Values derive from solar position and route orientation; no building massing is used.',
-            aliases={'hour': 'Solar hour', 'sun_alt': 'Sun altitude (deg)', 'sun_az': 'Sun azimuth (deg)'},
+            aliases={'solar_hour': 'Solar hour', 'elevation_deg': 'Sun altitude (deg)', 'azimuth_deg': 'Sun azimuth (deg)'},
             feedback=feedback,
         )
         return {}

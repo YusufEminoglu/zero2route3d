@@ -44,9 +44,11 @@ from zero2route3d.core.micro_elevation import (
 from zero2route3d.core.mobility_profiles import (
     get_profile,
     list_profile_keys,
+    load_custom_profile_json,
+    save_custom_profile_json,
 )
 from zero2route3d.core.network_source import NetworkSourceError, NetworkSourceManager, RoadSegment
-from zero2route3d.core.pareto_router import ParetoMultiObjectiveRouter
+from zero2route3d.core.pareto_router import _min_seconds_per_metre, ParetoCostVector, ParetoMultiObjectiveRouter
 from zero2route3d.core.profile_dxf import export_route_to_dxf_3d
 from zero2route3d.core.profile_stats import (
     compute_route_statistics,
@@ -1273,6 +1275,205 @@ class TestRoute3DPureLogic(unittest.TestCase):
             [Waypoint(*b[:2]), Waypoint(*a[:2])], profile_key="car"
         )
         self.assertTrue(reverse.is_network_matched)
+
+
+class RoutingRulesTests(unittest.TestCase):
+    """One-way rules per mode and hard accessibility slope limits."""
+
+    @staticmethod
+    def _one_way_street(**tags):
+        a = (27.1500, 38.4300, 0.0)
+        b = (27.1510, 38.4300, 0.0)
+        engine = RoutingEngine3D()
+        engine.build_graph([
+            RoadSegment(a, b, haversine_distance_2d(a, b), highway_type="residential",
+                        is_oneway=True, **tags),
+        ])
+        return engine, a, b
+
+    def test_pedestrian_walks_against_one_way(self) -> None:
+        engine, a, b = self._one_way_street()
+        walk = engine.calculate_route([Waypoint(*b[:2]), Waypoint(*a[:2])], "adult",
+                                      compute_alternatives=False)
+        self.assertTrue(walk.is_network_matched)
+        self.assertGreater(walk.statistics.total_distance_m, 50.0)
+
+    def test_car_and_bicycle_respect_one_way(self) -> None:
+        engine, a, b = self._one_way_street()
+        for profile in ("car", "bicycle"):
+            back = engine.calculate_route([Waypoint(*b[:2]), Waypoint(*a[:2])], profile,
+                                          compute_alternatives=False)
+            self.assertFalse(back.is_network_matched, profile)
+            forward = engine.calculate_route([Waypoint(*a[:2]), Waypoint(*b[:2])], profile,
+                                             compute_alternatives=False)
+            self.assertTrue(forward.is_network_matched, profile)
+
+    def test_contra_flow_bicycle_lane(self) -> None:
+        engine, a, b = self._one_way_street(oneway_bicycle="no")
+        back = engine.calculate_route([Waypoint(*b[:2]), Waypoint(*a[:2])], "bicycle",
+                                      compute_alternatives=False)
+        self.assertTrue(back.is_network_matched)
+        car = engine.calculate_route([Waypoint(*b[:2]), Waypoint(*a[:2])], "car",
+                                     compute_alternatives=False)
+        self.assertFalse(car.is_network_matched)
+
+    def test_wheelchair_never_exceeds_ramp_maximum(self) -> None:
+        wheelchair = get_profile("wheelchair")
+        self.assertTrue(math.isinf(wheelchair.calculate_edge_resistance(100.0, 12.0)))
+        self.assertTrue(math.isfinite(wheelchair.calculate_edge_resistance(100.0, 7.0)))
+        # A gentler slope is still cheaper than one above the comfort limit.
+        self.assertLess(
+            wheelchair.calculate_edge_resistance(100.0, 3.0),
+            wheelchair.calculate_edge_resistance(100.0, 7.0),
+        )
+        stroller = get_profile("stroller")
+        self.assertTrue(math.isinf(stroller.calculate_edge_resistance(100.0, 11.0)))
+        # Other pedestrians are only slowed down by steep slopes.
+        self.assertTrue(math.isfinite(get_profile("senior").calculate_edge_resistance(100.0, 30.0)))
+
+    def test_custom_profile_json_round_trip_keeps_weights(self) -> None:
+        profile = get_profile("wheelchair")
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "custom.json"
+            save_custom_profile_json(profile, path)
+            loaded = load_custom_profile_json(path)
+        self.assertEqual(loaded.hierarchy_weights, profile.hierarchy_weights)
+        self.assertEqual(loaded.hard_slope_limit_pct, profile.hard_slope_limit_pct)
+
+
+class RoutingMathTests(unittest.TestCase):
+    """Pareto dominance and heuristic, elevation gaps, slopes, speed limits."""
+
+    def test_epsilon_dominance_loosens_pruning(self) -> None:
+        a = ParetoCostVector(100.0, 10.0, 0.0, 50.0)
+        b = ParetoCostVector(102.0, 10.0, 0.0, 50.0)
+        self.assertTrue(a.dominates(b))
+        # Within 3 %, b counts as dominating a too: epsilon loosens pruning.
+        self.assertTrue(b.dominates(a, epsilon=0.03))
+        self.assertFalse(b.dominates(a))
+
+    def test_pareto_time_heuristic_is_admissible(self) -> None:
+        for key in ("bicycle", "car", "paramedic", "truck", "adult", "scooter"):
+            profile = get_profile(key)
+            bound = _min_seconds_per_metre(profile)
+            for rank in range(1, 6):
+                for slope in (-30.0, -12.0, -5.0, 0.0, 5.0):
+                    actual = profile.travel_time_seconds(
+                        100.0, slope_pct=slope, hierarchy_rank=rank, lanes=4
+                    ) / 100.0
+                    self.assertLessEqual(bound, actual + 1e-9, (key, rank, slope))
+
+    def test_missing_elevation_is_filled_from_neighbours(self) -> None:
+        class PartialDem(EnvironmentalSurfaceSampler):
+            def sample_elevation(self, lon, lat):
+                return 100.0 if lon < 27.1525 else None
+
+        pts = [(27.1500 + i * 0.001, 38.43, 0.0) for i in range(5)]
+        segments = [
+            RoadSegment(pts[i], pts[i + 1], haversine_distance_2d(pts[i], pts[i + 1]))
+            for i in range(4)
+        ]
+        engine = RoutingEngine3D(sampler=PartialDem())
+        engine.build_graph(segments)
+        heights = [node[2] for node in engine.nodes.values()]
+        self.assertTrue(all(abs(h - 100.0) < 1e-9 for h in heights), heights)
+        self.assertGreater(engine.graph_diagnostics["elevation_filled_nodes"], 0)
+        slopes = [edge[2] for edges in engine.adj.values() for edge in edges]
+        self.assertTrue(all(abs(s) < 1e-9 for s in slopes))
+
+    def test_short_dem_segment_slope_is_damped(self) -> None:
+        class NoisyDem(EnvironmentalSurfaceSampler):
+            def sample_elevation(self, lon, lat):
+                return 10.5 if lon > 27.15 else 10.0
+
+        a = (27.15000, 38.43, 0.0)
+        b = (27.15002, 38.43, 0.0)  # about 1.7 m
+        engine = RoutingEngine3D(sampler=NoisyDem())
+        engine.build_graph([RoadSegment(a, b, haversine_distance_2d(a, b))])
+        slope = max(abs(edge[2]) for edges in engine.adj.values() for edge in edges)
+        # 0.5 m of DEM noise over 1.7 m would read as ~29 %; over the 10 m
+        # minimum run it is 5 %.
+        self.assertLessEqual(slope, 5.0 + 1e-6)
+
+    def test_speed_limit_slows_vehicles_only(self) -> None:
+        car = get_profile("car")
+        free = car.calculate_edge_resistance(100.0, 0.0, hierarchy_rank=3)
+        limited = car.calculate_edge_resistance(100.0, 0.0, hierarchy_rank=3, maxspeed_kmh=20.0)
+        self.assertGreater(limited, free)
+        fast_limit = car.calculate_edge_resistance(100.0, 0.0, hierarchy_rank=3, maxspeed_kmh=130.0)
+        self.assertAlmostEqual(fast_limit, free)
+        self.assertGreater(
+            car.travel_time_seconds(100.0, hierarchy_rank=3, maxspeed_kmh=20.0),
+            car.travel_time_seconds(100.0, hierarchy_rank=3),
+        )
+        walker = get_profile("adult")
+        self.assertAlmostEqual(
+            walker.calculate_edge_resistance(100.0, 0.0, maxspeed_kmh=20.0),
+            walker.calculate_edge_resistance(100.0, 0.0),
+        )
+
+
+class MapMatchingTests(unittest.TestCase):
+    def test_projection_uses_metric_frame(self) -> None:
+        # An east-west street at 60 degrees north: a point due north of its
+        # middle must snap to the middle, not be pulled sideways.
+        nodes = {0: (10.000, 60.0, 0.0), 1: (10.002, 60.0, 0.0)}
+        matcher = HMMMapMatcher3D(nodes, {0: [(1, 111.0, 0.0, {})], 1: []})
+        snap, dist, frac = matcher._project_point_to_edge((10.001, 60.0002), 0, 1)
+        self.assertAlmostEqual(frac, 0.5, places=3)
+        self.assertAlmostEqual(dist, 22.2, delta=1.0)
+
+    def test_track_stays_on_connected_street(self) -> None:
+        segments = fixture_network_segments()
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+        start = engine.nodes[next(iter(engine.nodes))]
+        track = [GPXPoint(lon=start[0] + 0.00001 * i, lat=start[1] + 0.00001) for i in range(5)]
+        result = HMMMapMatcher3D(engine.nodes, engine.adj).match_gps_track(track, search_radius_m=50.0)
+        self.assertEqual(len(result.matched_points), len(track))
+
+
+class AlternativeRouteTests(unittest.TestCase):
+    def test_alternative_found_across_single_bridge(self) -> None:
+        # Two loops joined by one bridge: forbidding the bridge (the old
+        # method) made any alternative impossible; penalising it does not.
+        def seg(a, b):
+            return RoadSegment(a, b, haversine_distance_2d(a, b))
+
+        w = [(27.100, 38.400, 0.0), (27.101, 38.401, 0.0), (27.101, 38.399, 0.0), (27.102, 38.400, 0.0)]
+        e = [(27.103, 38.400, 0.0), (27.104, 38.401, 0.0), (27.104, 38.399, 0.0), (27.105, 38.400, 0.0)]
+        segments = [
+            seg(w[0], w[1]), seg(w[1], w[3]), seg(w[0], w[2]), seg(w[2], w[3]),
+            seg(w[3], e[0]),  # the bridge
+            seg(e[0], e[1]), seg(e[1], e[3]), seg(e[0], e[2]), seg(e[2], e[3]),
+        ]
+        engine = RoutingEngine3D()
+        engine.build_graph(segments)
+        result = engine.calculate_route([Waypoint(*w[0][:2]), Waypoint(*e[3][:2])], "adult")
+        self.assertTrue(result.is_network_matched)
+        self.assertEqual(len(result.alternative_routes), 1)
+
+
+class NetworkErrorReportingTests(unittest.TestCase):
+    def test_overpass_failure_reason_reaches_the_user(self) -> None:
+        from unittest import mock
+
+        manager = NetworkSourceManager()
+        with mock.patch("http.client.HTTPSConnection", side_effect=OSError("network unreachable")):
+            with self.assertRaises(NetworkSourceError) as ctx:
+                manager.fetch_osm_network_bbox((12.3456, 45.6789, 12.3466, 45.6799))
+        self.assertIn("network unreachable", str(ctx.exception))
+
+    def test_osm_fetcher_records_error(self) -> None:
+        from unittest import mock
+        from zero2route3d.core.osm_downloader import OsmDataFetcher
+
+        with mock.patch("http.client.HTTPSConnection", side_effect=OSError("timed out")):
+            roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(
+                (12.3456, 45.6789, 12.3466, 45.6799)
+            )
+        self.assertEqual((roads, buildings, trees, parks), ([], [], [], []))
+        self.assertIn("timed out", OsmDataFetcher.last_error)
 
 
 if __name__ == "__main__":

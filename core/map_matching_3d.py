@@ -11,6 +11,7 @@ Author: Yusuf Eminoglu
 from __future__ import annotations
 
 import contextlib
+import heapq
 import math
 import re
 from dataclasses import dataclass
@@ -124,7 +125,11 @@ class HMMMapMatcher3D:
         p1 = self.nodes[u]
         p2 = self.nodes[v]
 
-        dx = p2[0] - p1[0]
+        # Project in a local equirectangular frame: a degree of longitude is
+        # cos(latitude) times shorter than a degree of latitude, so projecting
+        # on raw degrees picks the wrong foot point on east-west streets.
+        k = math.cos(math.radians((p1[1] + p2[1]) * 0.5))
+        dx = (p2[0] - p1[0]) * k
         dy = p2[1] - p1[1]
         seg_len_sq = dx * dx + dy * dy
 
@@ -132,16 +137,84 @@ class HMMMapMatcher3D:
             d = haversine_distance_2d(pt, p1)
             return (p1[0], p1[1]), d, 0.0
 
-        num = (pt[0] - p1[0]) * dx + (pt[1] - p1[1]) * dy
+        num = (pt[0] - p1[0]) * k * dx + (pt[1] - p1[1]) * dy
         if not math.isfinite(num):
             d = haversine_distance_2d(pt, p1)
             return (p1[0], p1[1]), d, 0.0
 
         t = max(0.0, min(1.0, num / seg_len_sq))
-        snap_lon = p1[0] + t * dx
+        snap_lon = p1[0] + t * (p2[0] - p1[0])
         snap_lat = p1[1] + t * dy
         d_m = haversine_distance_2d(pt, (snap_lon, snap_lat))
         return (snap_lon, snap_lat), d_m, t
+
+    def _edge_grid(self, radius_m: float) -> Dict[str, Any]:
+        """Bucket undirected edges by grid cells about two search radii wide.
+
+        Each edge is stored once per cell its bounding box touches; the reverse
+        copy of a two-way street is skipped, so it does not take candidate
+        slots twice.
+        """
+        cell = max(1e-5, 2.0 * radius_m / 111_320.0)
+        grid: Dict[Tuple[int, int], List[Tuple[int, int, float]]] = {}
+        seen = set()
+        for u, edges in self.adj.items():
+            for v, length_m, _slope, _meta in edges:
+                key = (min(u, v), max(u, v), round(float(length_m), 3))
+                if key in seen or u not in self.nodes or v not in self.nodes:
+                    continue
+                seen.add(key)
+                (x1, y1, _), (x2, y2, _) = self.nodes[u], self.nodes[v]
+                for gx in range(int(math.floor(min(x1, x2) / cell)), int(math.floor(max(x1, x2) / cell)) + 1):
+                    for gy in range(int(math.floor(min(y1, y2) / cell)), int(math.floor(max(y1, y2) / cell)) + 1):
+                        grid.setdefault((gx, gy), []).append((u, v, float(length_m)))
+        return {"cell": cell, "grid": grid}
+
+    @staticmethod
+    def _edges_near(index: Dict[str, Any], pt: Tuple[float, float]):
+        cell = index["cell"]
+        gx = int(math.floor(pt[0] / cell))
+        gy = int(math.floor(pt[1] / cell))
+        found = set()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for edge in index["grid"].get((gx + dx, gy + dy), ()):
+                    if edge not in found:
+                        found.add(edge)
+                        yield edge
+
+    def _reach_from(self, cand: Dict[str, Any], bound_m: float) -> Dict[int, float]:
+        """Network distances (m) from a snapped point to nearby nodes, both ways."""
+        frac = float(cand.get("frac", 0.0))
+        length = float(cand.get("edge_len", 0.0))
+        dist: Dict[int, float] = {}
+        heap: List[Tuple[float, int]] = []
+        for node, d in ((cand["u"], frac * length), (cand["v"], (1.0 - frac) * length)):
+            if d < dist.get(node, math.inf):
+                dist[node] = d
+                heapq.heappush(heap, (d, node))
+        while heap:
+            d, node = heapq.heappop(heap)
+            if d > dist.get(node, math.inf) or d > bound_m:
+                continue
+            for nxt, length_m, _slope, _meta in self.adj.get(node, []):
+                nd = d + float(length_m)
+                if nd < dist.get(nxt, math.inf) and nd <= bound_m:
+                    dist[nxt] = nd
+                    heapq.heappush(heap, (nd, nxt))
+        return dist
+
+    @staticmethod
+    def _network_distance(prev: Dict[str, Any], curr: Dict[str, Any], reach: Dict[int, float]) -> float:
+        same_edge = {prev["u"], prev["v"]} == {curr["u"], curr["v"]}
+        if same_edge:
+            f_prev = prev["frac"] if prev["u"] == curr["u"] else 1.0 - prev["frac"]
+            return abs(curr["frac"] - f_prev) * float(curr.get("edge_len", 0.0))
+        length = float(curr.get("edge_len", 0.0))
+        return min(
+            reach.get(curr["u"], math.inf) + curr["frac"] * length,
+            reach.get(curr["v"], math.inf) + (1.0 - curr["frac"]) * length,
+        )
 
     def _emission_log_prob(self, dist_m: float) -> float:
         """Log emission probability under Gaussian sensor error model."""
@@ -175,12 +248,12 @@ class HMMMapMatcher3D:
 
         s_rad = max(1.0, float(search_radius_m)) if math.isfinite(search_radius_m) else 35.0
         candidates_per_time: List[List[Dict[str, Any]]] = []
+        edge_index = self._edge_grid(s_rad)
 
         for pt in valid_raw:
             cands = []
             pt_coord = (pt.lon, pt.lat)
-            for u in self.nodes:
-                for v, length_m, _slope, _meta in self.adj.get(u, []):
+            for u, v, length_m in self._edges_near(edge_index, pt_coord):
                     snap_pt, d_m, frac = self._project_point_to_edge(pt_coord, u, v)
                     if d_m <= s_rad:
                         cands.append({
@@ -204,6 +277,8 @@ class HMMMapMatcher3D:
                     "frac": 0.0,
                     "edge_len": 1.0,
                 })
+            # Keep the ten *nearest* candidates (not the first ten found).
+            cands.sort(key=lambda c: c["dist_m"])
             candidates_per_time.append(cands[:10])
 
         T = len(valid_raw)
@@ -218,16 +293,26 @@ class HMMMapMatcher3D:
             pt_curr = (valid_raw[t].lon, valid_raw[t].lat)
             d_gc = haversine_distance_2d(pt_prev, pt_curr)
 
+            # Network distance between candidates (bounded Dijkstra from each
+            # previous candidate): the HMM compares it with the straight-line
+            # GPS step, which is what keeps the match on connected roads.
+            bound = 3.0 * d_gc + 4.0 * s_rad
+            prev_reach = [self._reach_from(c, bound) for c in candidates_per_time[t - 1]]
+
             for c_curr_idx, c_curr in enumerate(candidates_per_time[t]):
                 best_prob = -float("inf")
                 best_prev = 0
                 e_prob = self._emission_log_prob(c_curr["dist_m"])
 
                 for c_prev_idx, c_prev in enumerate(candidates_per_time[t - 1]):
-                    d_net = haversine_distance_2d(
-                        (c_prev["snap_lon"], c_prev["snap_lat"]),
-                        (c_curr["snap_lon"], c_curr["snap_lat"]),
-                    )
+                    d_net = self._network_distance(c_prev, c_curr, prev_reach[c_prev_idx])
+                    if not math.isfinite(d_net):
+                        # Not connected within the search bound: allowed, but
+                        # scored as a long detour so connected paths win.
+                        d_net = bound + haversine_distance_2d(
+                            (c_prev["snap_lon"], c_prev["snap_lat"]),
+                            (c_curr["snap_lon"], c_curr["snap_lat"]),
+                        )
                     t_prob = self._transition_log_prob(d_gc, d_net)
                     total_p = viterbi_log[t - 1].get(c_prev_idx, -float("inf")) + t_prob + e_prob
 

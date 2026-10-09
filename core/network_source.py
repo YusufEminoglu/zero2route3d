@@ -44,6 +44,11 @@ class RoadSegment:
     lit: str = ""
     sidewalk: str = ""
     maxspeed_kmh: Optional[float] = None
+    # Mode-specific exceptions to "oneway" (OSM oneway:bicycle / oneway:foot).
+    # "no" opens the contra-flow direction to that mode; "yes" makes a
+    # two-way street one-way for it.
+    oneway_bicycle: str = ""
+    oneway_foot: str = ""
 
 
 class NetworkSourceError(RuntimeError):
@@ -122,9 +127,11 @@ class NetworkSourceManager:
                     temp_cache.replace(cache_file)
 
         if not data or not isinstance(data, dict) or "elements" not in data:
+            reasons = "; ".join(getattr(self, "last_overpass_errors", []) or [])
             raise NetworkSourceError(
-                "OpenStreetMap network download failed. Check the internet connection "
-                "or select a QGIS line network layer."
+                "OpenStreetMap network download failed"
+                + (f" ({reasons})" if reasons else "")
+                + ". Check the internet connection or select a QGIS line network layer."
             )
 
         segments = self._parse_osm_json(data)
@@ -167,8 +174,9 @@ class NetworkSourceManager:
             "User-Agent": "02Route3D-QGIS-Plugin",
         }
 
+        self.last_overpass_errors = []
         for host, path in endpoints:
-            with contextlib.suppress(Exception):
+            try:
                 conn = http.client.HTTPSConnection(host, timeout=12)
                 try:
                     conn.request("POST", path, body=body, headers=headers)
@@ -178,8 +186,13 @@ class NetworkSourceManager:
                         parsed = json.loads(raw)
                         if isinstance(parsed, dict):
                             return parsed
+                        self.last_overpass_errors.append(f"{host}: unexpected response")
+                    else:
+                        self.last_overpass_errors.append(f"{host}: HTTP {resp.status} {resp.reason}".strip())
                 finally:
                     conn.close()
+            except Exception as exc:  # noqa: BLE001 - reported to the user below
+                self.last_overpass_errors.append(f"{host}: {type(exc).__name__}: {exc}")
         return None
 
     def _parse_osm_json(self, data: Dict[str, Any]) -> List[RoadSegment]:
@@ -227,6 +240,8 @@ class NetworkSourceManager:
                 lit = str(tags.get("lit", "") or "").strip()
                 sidewalk = str(tags.get("sidewalk", "") or "").strip()
                 maxspeed_kmh = self._parse_speed_kmh(tags.get("maxspeed"))
+                oneway_bicycle = str(tags.get("oneway:bicycle", "") or "").strip()
+                oneway_foot = str(tags.get("oneway:foot", "") or "").strip()
 
                 way_nodes = el.get("nodes") or []
                 for i in range(len(way_nodes) - 1):
@@ -255,6 +270,8 @@ class NetworkSourceManager:
                                 lit=lit,
                                 sidewalk=sidewalk,
                                 maxspeed_kmh=maxspeed_kmh,
+                                oneway_bicycle=oneway_bicycle,
+                                oneway_foot=oneway_foot,
                             )
                             if reversed_oneway:
                                 # Store it in its true travel direction.
@@ -353,6 +370,8 @@ class NetworkSourceManager:
                 is_oneway = oneway_text in {"yes", "1", "true", "-1", "reverse"}
                 reverse_oneway = oneway_text in {"-1", "reverse"}
                 maxspeed_kmh = self._parse_speed_kmh(attribute(("maxspeed", "speed_limit"), None))
+                oneway_bicycle = str(attribute(("oneway:bicycle", "oneway_bicycle", "oneway_bike"), ""))
+                oneway_foot = str(attribute(("oneway:foot", "oneway_foot"), ""))
                 try:
                     lanes = max(1, int(float(attribute(("lanes", "lane_count"), 1))))
                 except (ValueError, TypeError, OverflowError):
@@ -398,6 +417,8 @@ class NetworkSourceManager:
                                     lit=lit,
                                     sidewalk=sidewalk,
                                     maxspeed_kmh=maxspeed_kmh,
+                                    oneway_bicycle=oneway_bicycle,
+                                    oneway_foot=oneway_foot,
                                 )
                             )
         return segments

@@ -172,6 +172,11 @@ class Pareto3DRoutesAlgorithm(QgsProcessingAlgorithm):
             if start_node is None or end_node is None:
                 raise QgsProcessingException("Could not snap the input points to the selected network.")
             res = pareto_router.solve_pareto_frontier(start_node, end_node, profile_key=profile_key)
+            if res.search_truncated:
+                feedback.pushWarning(
+                    "The Pareto search reached its iteration limit: the routes below are an "
+                    "approximation of the trade-off frontier, not the complete set."
+                )
             for sol in res.solutions:
                 pts = [QgsPoint(c[0], c[1], c[2]) for c in sol.coordinates_3d]
                 geom = QgsGeometry.fromPolyline(pts)

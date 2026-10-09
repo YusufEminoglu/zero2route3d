@@ -26,6 +26,9 @@ class GlobalDemFetcher:
     here. No Copernicus or SRTM product is queried directly.
     """
 
+    # Reason the last request batch failed ("" when every batch succeeded).
+    last_error: str = ""
+
     _CACHE_FILE = Path(tempfile.gettempdir()) / "zero2route3d_cache" / "elevation_cache.json"
     _MEMORY_CACHE: Dict[str, float] = {}
     _MAX_CACHE_ENTRIES = 20_000
@@ -66,6 +69,7 @@ class GlobalDemFetcher:
         could not be resolved -- 0.0 is a real elevation and must never stand in for
         a failed lookup.
         """
+        cls.last_error = ""
         cls._load_disk_cache()
         results: List[Optional[float]] = [None] * len(coords)
         missing_pairs: List[Tuple[int, float, float]] = []
@@ -104,6 +108,8 @@ class GlobalDemFetcher:
                         headers = {"Content-Type": "application/json", "User-Agent": "02Route3D-QGIS"}
                         conn.request("POST", "/api/v1/lookup", body=payload, headers=headers)
                         resp = conn.getresponse()
+                        if resp.status != 200:
+                            cls.last_error = f"Open-Elevation returned HTTP {resp.status} {resp.reason}".strip()
                         if resp.status == 200:
                             data = json.loads(resp.read().decode("utf-8"))
                             ele_list = data.get("results", [])
@@ -128,8 +134,9 @@ class GlobalDemFetcher:
                                     any_success = True
                     finally:
                         conn.close()
-                except Exception:
+                except Exception as exc:  # noqa: BLE001 - kept for the caller's message
                     success_chunk = False
+                    cls.last_error = f"{type(exc).__name__}: {exc}"
 
                 if not success_chunk:
                     unresolved_indices.extend(chunk)

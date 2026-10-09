@@ -89,6 +89,9 @@ def evaluate_edge_access(
     the profile's impedance model.
     """
     mode = _mode(profile)
+    direction = _direction_decision(mode, metadata)
+    if direction is not None:
+        return direction
     highway = normalize_tag(metadata.get("highway")) or "unclassified"
     general = normalize_tag(metadata.get("access"))
     modal = normalize_tag(metadata.get(mode))
@@ -108,6 +111,33 @@ def evaluate_edge_access(
         return EdgeAccessDecision(False, f"{highway} excludes bicycles")
 
     return _night_penalty(profile, metadata)
+
+
+def _direction_decision(mode: str, metadata: Mapping[str, Any]):
+    """Apply one-way rules per mode.
+
+    Edges carry ``against_oneway`` when they run against a one-way street.
+    Motor vehicles never use them; bicycles may when ``oneway:bicycle=no``;
+    pedestrians may unless ``oneway:foot=yes``. ``oneway:<mode>=yes`` also
+    makes a two-way street one-way for that mode (its reverse edge is then
+    blocked). Returns None when direction does not decide the edge.
+    """
+    oneway = bool(metadata.get("oneway"))
+    against = bool(metadata.get("against_oneway"))
+    if mode == "motor_vehicle":
+        if against:
+            return EdgeAccessDecision(False, "against one-way traffic")
+        return None
+    modal_tag = normalize_tag(metadata.get("oneway_bicycle" if mode == "bicycle" else "oneway_foot"))
+    if against:
+        if mode == "bicycle" and modal_tag != "no":
+            return EdgeAccessDecision(False, "against one-way traffic")
+        if mode == "foot" and modal_tag in {"yes", "1", "true"}:
+            return EdgeAccessDecision(False, "oneway:foot=yes")
+        return None
+    if not oneway and modal_tag in {"yes", "1", "true"} and metadata.get("reverse_of_two_way"):
+        return EdgeAccessDecision(False, f"oneway:{'bicycle' if mode == 'bicycle' else 'foot'}=yes")
+    return None
 
 
 def _night_penalty(

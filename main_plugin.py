@@ -7,7 +7,10 @@ from typing import Any, Optional
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction
+try:  # Qt6 (QGIS 4) moved QAction to QtGui.
+    from qgis.PyQt.QtGui import QAction
+except ImportError:  # Qt5 (QGIS 3)
+    from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsApplication
 
 from .gui.dock import Route3DStudioDock

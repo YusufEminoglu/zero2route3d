@@ -1,4 +1,4 @@
-"""Localhost HTTP server for serving 02Route 3D WebGL Studio to QWebEngineView."""
+"""Localhost HTTP server for serving the 02Route 3D WebGL Studio to the system browser."""
 from __future__ import annotations
 
 import contextlib
@@ -13,15 +13,15 @@ from typing import Optional
 
 
 class QuietCorsHandler(http.server.SimpleHTTPRequestHandler):
-    """Simple HTTP Request Handler with CORS headers and quiet logging."""
+    """Simple HTTP request handler for the viewer: no-cache headers and quiet logging."""
 
     def log_message(self, fmt: str, *args: object) -> None:
         return None
 
     def end_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # No CORS header: the viewer is served from this same origin. The old
+        # "Access-Control-Allow-Origin: *" let any web page the user had open
+        # read the current route from localhost.
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
