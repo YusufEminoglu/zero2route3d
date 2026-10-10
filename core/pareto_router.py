@@ -13,7 +13,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .environmental_raster import EnvironmentalSurfaceSampler
 from .kinematics import (
@@ -130,6 +130,26 @@ class ParetoFrontierResult:
         }
 
 
+# A path as a linked list from the newest node back to the start.
+PathChain = Optional[Tuple[int, Any]]
+
+
+def _chain_contains(chain: PathChain, node: int) -> bool:
+    while chain is not None:
+        if chain[0] == node:
+            return True
+        chain = chain[1]
+    return False
+
+
+def _chain_to_path(chain: PathChain) -> Tuple[int, ...]:
+    nodes: List[int] = []
+    while chain is not None:
+        nodes.append(chain[0])
+        chain = chain[1]
+    return tuple(reversed(nodes))
+
+
 def _min_seconds_per_metre(profile: MobilityProfile) -> float:
     """Lower bound on edge travel time per metre for a profile.
 
@@ -234,9 +254,14 @@ class ParetoMultiObjectiveRouter:
         tie = 0
         # Heap entries carry the label object itself: matching a popped entry
         # back to its label by comparing times could pick the wrong label.
-        pq: List[Tuple[float, int, int, ParetoCostVector, Tuple[int, ...]]] = [
-            (h0, tie, start_node, start_label, (start_node,))
+        # A label's path is a parent-pointer chain (node, parent_chain); the
+        # old code copied the whole path tuple into every new label, O(L^2)
+        # memory and time on long routes.
+        start_chain: PathChain = (start_node, None)
+        pq: List[Tuple[float, int, int, ParetoCostVector, PathChain]] = [
+            (h0, tie, start_node, start_label, start_chain)
         ]
+        ever_labelled = {start_node}
 
         dest_solutions: List[Tuple[ParetoCostVector, Tuple[int, ...]]] = []
         max_iters = 80_000
@@ -244,7 +269,7 @@ class ParetoMultiObjectiveRouter:
 
         while pq and iters < max_iters:
             iters += 1
-            _f, _tie, u, g_vec, path = heapq.heappop(pq)
+            _f, _tie, u, g_vec, chain = heapq.heappop(pq)
             if not any(label is g_vec for label in labels_g.get(u, [])):
                 continue  # pruned by a dominating label after it was queued
 
@@ -258,14 +283,15 @@ class ParetoMultiObjectiveRouter:
                         (sc, sp) for sc, sp in dest_solutions
                         if not g_vec.dominates(sc, epsilon_dominance)
                     ]
-                    dest_solutions.append((g_vec, path))
+                    dest_solutions.append((g_vec, _chain_to_path(chain)))
                 continue
 
             if any(sol_cost.dominates(g_vec, epsilon_dominance) for sol_cost, _ in dest_solutions):
                 continue
 
             for v, seg_len, slope_pct, meta in self.adj.get(u, []):
-                if v in path:
+                # A node never labelled cannot be on this label's path.
+                if v in ever_labelled and _chain_contains(chain, v):
                     continue
 
                 access_decision = evaluate_edge_access(profile, meta)
@@ -304,7 +330,8 @@ class ParetoMultiObjectiveRouter:
 
                 h_val = heuristic_time(self.nodes[v])
                 tie += 1
-                heapq.heappush(pq, (new_g.time_s + h_val, tie, v, new_g, path + (v,)))
+                ever_labelled.add(v)
+                heapq.heappush(pq, (new_g.time_s + h_val, tie, v, new_g, (v, chain)))
 
         truncated = bool(pq) and iters >= max_iters
         if not dest_solutions:

@@ -108,11 +108,57 @@ class EnvironmentalSurfaceSampler:
         self._lst_cache: Dict[Tuple[float, float], float] = {}
         self._green_cache: Dict[Tuple[float, float], float] = {}
         self._additional_range_cache: Dict[str, Tuple[float, float]] = {}
+        # WGS84 -> layer CRS transform per layer, built once instead of per sample.
+        self._transforms: Dict[int, Any] = {}
+
+    def _layer_point(self, layer: Any, lon: float, lat: float) -> Any:
+        """(lon, lat) as a QgsPointXY in the layer's CRS, with a cached transform."""
+        from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
+
+        point = QgsPointXY(lon, lat)
+        key = id(layer)
+        if key not in self._transforms:
+            source = QgsCoordinateReferenceSystem("EPSG:4326")
+            target = layer.crs()
+            self._transforms[key] = (
+                QgsCoordinateTransform(source, target, QgsProject.instance()) if source != target else None
+            )
+        transform = self._transforms[key]
+        return transform.transform(point) if transform is not None else point
 
     def set_additional_layers(self, layers: Sequence[Any]) -> None:
         """Replace the unlimited MCDA raster stack without rebuilding the sampler."""
         self.additional_layers = [layer for layer in layers if layer is not None]
         self._additional_range_cache.clear()
+        self._transforms.clear()
+
+    def signature(self) -> Optional[Tuple[Any, ...]]:
+        """Identity of the raster stack, for caching graphs built with this sampler.
+
+        Two samplers with the same layers give the same node heights and edge
+        rasters, so a routing graph built with one can be reused by the other.
+        None when a layer has no QGIS layer id: such a sampler is not cached.
+        """
+        def layer_key(layer: Any) -> Any:
+            if layer is None:
+                return ""
+            layer_id = getattr(layer, "id", None)
+            if callable(layer_id):
+                with contextlib.suppress(Exception):
+                    value = layer_id()
+                    if isinstance(value, str) and value:
+                        return value
+            return None
+
+        keys = (
+            tuple(layer_key(layer) for layer in self.dem_layers),
+            (layer_key(self.lst_layer),),
+            (layer_key(self.green_layer),),
+            tuple(layer_key(layer) for layer in self.additional_layers),
+        )
+        if any(key is None for group in keys for key in group):
+            return None
+        return keys
 
     @property
     def has_elevation_source(self) -> bool:
@@ -136,20 +182,7 @@ class EnvironmentalSurfaceSampler:
 
         for dem_layer in self.dem_layers:
             with contextlib.suppress(Exception):
-                from qgis.core import (
-                    QgsCoordinateReferenceSystem,
-                    QgsCoordinateTransform,
-                    QgsPointXY,
-                    QgsProject,
-                )
-
-                pt = QgsPointXY(lon, lat)
-                crs_src = QgsCoordinateReferenceSystem("EPSG:4326")
-                crs_dest = dem_layer.crs()
-                if crs_src != crs_dest:
-                    transform = QgsCoordinateTransform(crs_src, crs_dest, QgsProject.instance())
-                    pt = transform.transform(pt)
-
+                pt = self._layer_point(dem_layer, lon, lat)
                 val, success = dem_layer.dataProvider().sample(pt, 1)
                 if success and val is not None and math.isfinite(val) and val > -9999:
                     elevation = float(val)
@@ -219,7 +252,7 @@ class EnvironmentalSurfaceSampler:
         sampled. Callers must treat None as "no data" and drop the criterion --
         never as an average value, which would fabricate a thermal surface.
         """
-        if not math.isfinite(lon) or not math.isfinite(lat):
+        if self.lst_layer is None or not math.isfinite(lon) or not math.isfinite(lat):
             return None
 
         coord_key = (round(lon, 5), round(lat, 5))
@@ -228,20 +261,7 @@ class EnvironmentalSurfaceSampler:
 
         if self.lst_layer is not None:
             with contextlib.suppress(Exception):
-                from qgis.core import (
-                    QgsCoordinateReferenceSystem,
-                    QgsCoordinateTransform,
-                    QgsPointXY,
-                    QgsProject,
-                )
-
-                pt = QgsPointXY(lon, lat)
-                crs_src = QgsCoordinateReferenceSystem("EPSG:4326")
-                crs_dest = self.lst_layer.crs()
-                if crs_src != crs_dest:
-                    transform = QgsCoordinateTransform(crs_src, crs_dest, QgsProject.instance())
-                    pt = transform.transform(pt)
-
+                pt = self._layer_point(self.lst_layer, lon, lat)
                 val, success = self.lst_layer.dataProvider().sample(pt, 1)
                 if success and val is not None and math.isfinite(val):
                     normalized = (float(val) - 20.0) / 30.0
@@ -256,7 +276,7 @@ class EnvironmentalSurfaceSampler:
 
         Returns None when no greenery raster is configured -- see sample_lst.
         """
-        if not math.isfinite(lon) or not math.isfinite(lat):
+        if self.green_layer is None or not math.isfinite(lon) or not math.isfinite(lat):
             return None
 
         coord_key = (round(lon, 5), round(lat, 5))
@@ -265,20 +285,7 @@ class EnvironmentalSurfaceSampler:
 
         if self.green_layer is not None:
             with contextlib.suppress(Exception):
-                from qgis.core import (
-                    QgsCoordinateReferenceSystem,
-                    QgsCoordinateTransform,
-                    QgsPointXY,
-                    QgsProject,
-                )
-
-                pt = QgsPointXY(lon, lat)
-                crs_src = QgsCoordinateReferenceSystem("EPSG:4326")
-                crs_dest = self.green_layer.crs()
-                if crs_src != crs_dest:
-                    transform = QgsCoordinateTransform(crs_src, crs_dest, QgsProject.instance())
-                    pt = transform.transform(pt)
-
+                pt = self._layer_point(self.green_layer, lon, lat)
                 val, success = self.green_layer.dataProvider().sample(pt, 1)
                 if success and val is not None and math.isfinite(val):
                     normalized = max(0.0, min(1.0, float(val)))
@@ -313,19 +320,12 @@ class EnvironmentalSurfaceSampler:
         Invalid or unavailable layers are skipped explicitly; they never become
         an invented 0.5 surface and therefore cannot silently affect routing.
         """
-        if not (math.isfinite(lon) and math.isfinite(lat)):
+        if not self.additional_layers or not (math.isfinite(lon) and math.isfinite(lat)):
             return []
         values: List[float] = []
         for layer in self.additional_layers:
             with contextlib.suppress(Exception):
-                from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
-
-                point = QgsPointXY(lon, lat)
-                source_crs = QgsCoordinateReferenceSystem("EPSG:4326")
-                layer_crs = layer.crs()
-                if source_crs != layer_crs:
-                    transform = QgsCoordinateTransform(source_crs, layer_crs, QgsProject.instance())
-                    point = transform.transform(point)
+                point = self._layer_point(layer, lon, lat)
                 raw_value, success = layer.dataProvider().sample(point, 1)
                 if not success or raw_value is None or not math.isfinite(raw_value) or raw_value <= -9999:
                     continue

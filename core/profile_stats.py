@@ -100,50 +100,63 @@ class RouteStatistics:
         }
 
 
-def densify_3d_linestring(
+def _densify(
     coords: Sequence[Sequence[float]],
-    sample_interval_m: float = 8.0,
-    max_points: int = 100_000,
-) -> List[Tuple[float, float, float]]:
-    """Densify a 3D coordinate sequence with a hard memory-safe point cap."""
+    sample_interval_m: float,
+    max_points: int,
+) -> Tuple[List[Tuple[float, float, float]], List[int], List[float]]:
+    """Densify once: points, each point's source segment, and each step's 2D length.
+
+    Points on a segment are linear interpolations between its ends, so every
+    step of a segment has the same horizontal length (segment length / steps);
+    returning it spares callers a great-circle computation per step.
+    """
     valid_coords = [
         (float(c[0]), float(c[1]), float(c[2]) if len(c) > 2 and math.isfinite(float(c[2])) else 0.0)
         for c in coords
         if c and len(c) >= 2 and math.isfinite(float(c[0])) and math.isfinite(float(c[1]))
     ]
     if len(valid_coords) < 2:
-        return valid_coords
+        return valid_coords, [0] * len(valid_coords), [0.0] * max(0, len(valid_coords) - 1)
 
     interval = max(0.5, float(sample_interval_m)) if math.isfinite(sample_interval_m) and sample_interval_m > 0 else 8.0
     point_limit = max(1_000, min(1_000_000, int(max_points))) if max_points > 0 else 100_000
-    total_distance = sum(
-        haversine_distance_2d(valid_coords[index], valid_coords[index + 1])
-        for index in range(len(valid_coords) - 1)
-    )
+    seg_lengths = [haversine_distance_2d(valid_coords[i], valid_coords[i + 1]) for i in range(len(valid_coords) - 1)]
+    total_distance = sum(seg_lengths)
     estimated_points = total_distance / interval if interval > 0 else float("inf")
     if estimated_points > point_limit:
         interval = max(interval, total_distance / point_limit)
-    densified: List[Tuple[float, float, float]] = []
 
-    for i in range(len(valid_coords) - 1):
+    densified: List[Tuple[float, float, float]] = []
+    source: List[int] = []
+    step_lengths: List[float] = []
+    for i, seg_dist in enumerate(seg_lengths):
         p1 = valid_coords[i]
         p2 = valid_coords[i + 1]
-        z1 = p1[2]
-        z2 = p2[2]
-
-        seg_dist = haversine_distance_2d(p1, p2)
         steps = max(1, int(math.ceil(seg_dist / interval)))
-
+        d_lon = p2[0] - p1[0]
+        d_lat = p2[1] - p1[1]
+        d_z = p2[2] - p1[2]
+        step_len = seg_dist / steps
         for step in range(steps):
             frac = step / steps
-            lon = p1[0] + (p2[0] - p1[0]) * frac
-            lat = p1[1] + (p2[1] - p1[1]) * frac
-            z = z1 + (z2 - z1) * frac
-            densified.append((lon, lat, z))
+            densified.append((p1[0] + d_lon * frac, p1[1] + d_lat * frac, p1[2] + d_z * frac))
+            source.append(i)
+            step_lengths.append(step_len)
 
     last = valid_coords[-1]
     densified.append((last[0], last[1], last[2]))
-    return densified
+    source.append(len(seg_lengths) - 1)
+    return densified, source, step_lengths
+
+
+def densify_3d_linestring(
+    coords: Sequence[Sequence[float]],
+    sample_interval_m: float = 8.0,
+    max_points: int = 100_000,
+) -> List[Tuple[float, float, float]]:
+    """Densify a 3D coordinate sequence with a hard memory-safe point cap."""
+    return _densify(coords, sample_interval_m, max_points)[0]
 
 
 def densify_3d_linestring_indexed(
@@ -156,29 +169,11 @@ def densify_3d_linestring_indexed(
     The plain densifier throws away which original segment every interpolated point
     came from, which is why per-edge road attributes (hierarchy, lane count, real
     street name) used to be unavailable downstream and were replaced by constants.
+    The index is recorded while densifying; it used to be guessed afterwards from
+    the nearest vertex, which assigned the second half of every segment to the next.
     """
-    densified = densify_3d_linestring(coords, sample_interval_m, max_points)
-    valid_coords = [
-        (float(c[0]), float(c[1]))
-        for c in coords
-        if c and len(c) >= 2 and math.isfinite(float(c[0])) and math.isfinite(float(c[1]))
-    ]
-    if len(valid_coords) < 2 or not densified:
-        return densified, [0] * len(densified)
-
-    # Walk both sequences once: the densified points are emitted in segment order.
-    source_idx: List[int] = []
-    seg = 0
-    for pt in densified:
-        while seg < len(valid_coords) - 2:
-            here = haversine_distance_2d(pt, valid_coords[seg])
-            nxt = haversine_distance_2d(pt, valid_coords[seg + 1])
-            if nxt < here:
-                seg += 1
-            else:
-                break
-        source_idx.append(min(seg, len(valid_coords) - 2))
-    return densified, source_idx
+    points, source, _steps = _densify(coords, sample_interval_m, max_points)
+    return points, source
 
 
 def smooth_elevation_series(elevations: Sequence[float], window_size: int = 5) -> List[float]:
@@ -355,8 +350,13 @@ def compute_route_statistics(
     lst_samples: Optional[Sequence[Optional[float]]] = None,
     green_samples: Optional[Sequence[Optional[float]]] = None,
     segment_metadata: Optional[Sequence[Dict[str, Any]]] = None,
+    detail: bool = True,
 ) -> RouteStatistics:
-    """Compute comprehensive kinematic, topographic, and thermal statistics along 3D route."""
+    """Compute comprehensive kinematic, topographic, and thermal statistics along 3D route.
+
+    ``detail=False`` skips the per-point elevation profile and the cue sheet
+    (the totals are identical); the OD matrix needs only the totals.
+    """
     if not coords_3d:
         return RouteStatistics(
             total_distance_m=0.0,
@@ -389,7 +389,7 @@ def compute_route_statistics(
     prof = profile if profile is not None else get_profile("adult")
 
     # Densify coordinates
-    dense_pts, dense_src = densify_3d_linestring_indexed(coords_3d, sample_interval_m=6.0)
+    dense_pts, dense_src, step_lengths = _densify(coords_3d, 6.0, 100_000)
 
     def _segment_attr(vertex_index: int, key: str, fallback: Any) -> Any:
         """Real per-edge road attribute for a densified vertex, or the fallback."""
@@ -448,7 +448,7 @@ def compute_route_statistics(
         p1 = dense_pts[i]
         p2 = dense_pts[i + 1]
 
-        d_2d = haversine_distance_2d(p1, p2)
+        d_2d = step_lengths[i]
         dz = p2[2] - p1[2]
         d_3d = math.hypot(d_2d, dz)
 
@@ -538,6 +538,9 @@ def compute_route_statistics(
             if raw_green is not None and math.isfinite(float(raw_green)):
                 green_val = float(raw_green)
 
+        if not detail:
+            cumulative_dist += d_3d
+            continue
         vertex: Dict[str, Any] = {
             "distance_m": round(cumulative_dist, 1),
             "elevation_m": round(p1[2], 1),
@@ -556,7 +559,7 @@ def compute_route_statistics(
         profile_list.append(vertex)
         cumulative_dist += d_3d
 
-    if dense_pts:
+    if dense_pts and detail:
         last_pt = dense_pts[-1]
         last_vertex: Dict[str, Any] = {
             "distance_m": round(cumulative_dist, 1),
@@ -594,7 +597,7 @@ def compute_route_statistics(
         for k, v in slope_bins.items()
     }
 
-    cues = generate_cue_sheet(coords_3d, prof, segment_metadata)
+    cues = generate_cue_sheet(coords_3d, prof, segment_metadata) if detail else []
 
     return RouteStatistics(
         total_distance_m=cumulative_dist,

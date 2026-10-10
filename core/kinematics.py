@@ -87,33 +87,33 @@ ROLLING_RESISTANCE: Dict[str, float] = {
 }
 
 
+_EARTH_RADIUS_M = 6371008.8  # WGS84 mean earth radius in meters
+_DEG_TO_RAD = math.pi / 180.0
+
+
 def haversine_distance_2d(coord1: Sequence[float], coord2: Sequence[float]) -> float:
-    """Calculate the geodesic 2D distance in meters between two (lon, lat) points."""
-    if not coord1 or not coord2 or len(coord1) < 2 or len(coord2) < 2:
+    """Calculate the geodesic 2D distance in meters between two (lon, lat) points.
+
+    Missing, short or non-finite coordinates give 0.0. This is the hottest
+    function in routing and statistics, so it avoids repeated conversions.
+    """
+    try:
+        lon1 = float(coord1[0])
+        lat1 = float(coord1[1])
+        lon2 = float(coord2[0])
+        lat2 = float(coord2[1])
+    except (IndexError, KeyError, TypeError, ValueError):
         return 0.0
-
-    lon1, lat1 = float(coord1[0]), float(coord1[1])
-    lon2, lat2 = float(coord2[0]), float(coord2[1])
-
-    if not (math.isfinite(lon1) and math.isfinite(lat1) and math.isfinite(lon2) and math.isfinite(lat2)):
+    if not math.isfinite(lon1 + lat1 + lon2 + lat2):
         return 0.0
-
     if abs(lon1 - lon2) < 1e-11 and abs(lat1 - lat2) < 1e-11:
         return 0.0
-
-    radius = 6371008.8  # WGS84 mean earth radius in meters
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-
-    a = (
-        math.sin(delta_phi / 2.0) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
-    )
-    a = max(0.0, min(1.0, a))
-    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
-    return radius * c
+    s_phi = math.sin((lat2 - lat1) * _DEG_TO_RAD * 0.5)
+    s_lambda = math.sin((lon2 - lon1) * _DEG_TO_RAD * 0.5)
+    a = s_phi * s_phi + math.cos(lat1 * _DEG_TO_RAD) * math.cos(lat2 * _DEG_TO_RAD) * s_lambda * s_lambda
+    if a >= 1.0:
+        return _EARTH_RADIUS_M * math.pi
+    return 2.0 * _EARTH_RADIUS_M * math.asin(math.sqrt(a)) if a > 0.0 else 0.0
 
 
 def haversine_distance_3d(coord1: Sequence[float], coord2: Sequence[float]) -> float:

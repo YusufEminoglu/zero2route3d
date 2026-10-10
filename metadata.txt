@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=0.6.0
+version=0.7.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -45,6 +45,14 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.7.0 - Faster routing:
+        - A 50 x 50 OD matrix on a 10,000-edge network takes about 7 s instead of over a minute: one search per origin instead of one per pair.
+        - Routes on the same network reuse the built graph and every evaluated edge cost (another profile, the OD matrix, a second click).
+        - Tighter, still exact A* bound; edge costs and raster samples computed once per edge instead of on every visit; raster coordinate transforms built once per layer.
+        - Snapping finds the nearest node per network component in one pass and now covers the full snap radius at high latitudes.
+        - Pareto routes keep paths as parent pointers instead of copying them into every label.
+        - Benchmark suite (1k/10k/100k edges) with a CI speed gate.
+
     0.6.0 - QGIS no longer freezes:
         - Route calculation, the OD matrix, OpenStreetMap downloads and the DEM download run in the background with progress and a cancel button in the QGIS task bar.
         - DEM download budget: large extents use a coarser grid (the real cell size is shown in the layer name) and ask before many requests or when a DEM layer is already selected.
@@ -54,7 +62,7 @@ changelog=
 
     0.5.0 - Correct routes for every profile:
         - Pedestrians may walk against one-way streets; cyclists only where oneway:bicycle=no; vehicles never.
-        - Wheelchair and stroller routes never use slopes above 8.33 % / 10 % (previously only penalised).
+        - Wheelchair and stroller routes never use slopes above 8.33 percent / 10 percent (previously only penalised).
         - Pareto routes: admissible time bound from each profile's real top speed, correct epsilon dominance, and a warning when the search is cut short.
         - Nodes without elevation take their neighbours' height instead of 0 m; DEM slopes are measured over at least 10 m, so DEM noise on short segments no longer blocks routes.
         - Vehicles respect posted speed limits (maxspeed) in cost and travel time.
