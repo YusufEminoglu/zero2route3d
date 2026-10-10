@@ -65,6 +65,8 @@ class RouteStatistics:
     slope_distribution: Dict[str, float] = field(default_factory=dict)
     elevation_profile: List[Dict[str, Any]] = field(default_factory=list)
     cue_sheet: List[CueInstruction] = field(default_factory=list)
+    # Seconds of total_duration_s spent turning at junctions (turn_costs.py).
+    turn_delay_s: float = 0.0
 
     @property
     def total_distance_km(self) -> float:
@@ -80,6 +82,7 @@ class RouteStatistics:
             "total_distance_km": self.total_distance_km,
             "total_duration_s": round(self.total_duration_s, 1),
             "total_duration_min": self.total_duration_min,
+            "turn_delay_s": round(self.turn_delay_s, 1),
             "elevation_gain_m": round(self.elevation_gain_m, 1),
             "elevation_loss_m": round(self.elevation_loss_m, 1),
             "min_elevation_m": round(self.min_elevation_m, 1),

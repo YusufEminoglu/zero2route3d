@@ -19,6 +19,7 @@ from .alg_report_generator import GenerateAnalyticalReportAlgorithm
 from .alg_solar_exposure import SolarExposureAlgorithm
 from .alg_walkability import WalkabilityAuditAlgorithm
 from .alg_network_audit import RoutingNetworkAuditAlgorithm
+from .alg_transit_route import TransitRoute3DAlgorithm
 
 
 class Route3DProcessingProvider(QgsProcessingProvider):
@@ -41,6 +42,7 @@ class Route3DProcessingProvider(QgsProcessingProvider):
         self.addAlgorithm(Pareto3DRoutesAlgorithm())
         self.addAlgorithm(AccessibilityEquityAlgorithm())
         self.addAlgorithm(RoutingNetworkAuditAlgorithm())
+        self.addAlgorithm(TransitRoute3DAlgorithm())
 
     def id(self) -> str:
         return "zero2route3d"

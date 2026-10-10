@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
- A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 15 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and an embedded Three.js WebGL 3D cockpit.
+ A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 16 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and an embedded Three.js WebGL 3D cockpit.
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@
 ## 📖 Live Documentation & Interactive Labs
 
 - 🌐 **[Interactive Web Labs & Web Labs](https://geophilo.com/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
-- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.com/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 15 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
+- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.com/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 16 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
 
 ---
 

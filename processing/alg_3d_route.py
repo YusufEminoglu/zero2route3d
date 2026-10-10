@@ -14,6 +14,7 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingFeedback,
     QgsProcessingException,
+    QgsProcessingParameterBoolean,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterPoint,
@@ -41,6 +42,9 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
     DEM_LAYER = "DEM_LAYER"
     NETWORK_LAYER = "NETWORK_LAYER"
     MAX_SNAP_DISTANCE = "MAX_SNAP_DISTANCE"
+    DEPARTURE_HOUR = "DEPARTURE_HOUR"
+    DAY_OF_YEAR = "DAY_OF_YEAR"
+    DRIVE_ON_LEFT = "DRIVE_ON_LEFT"
     OUTPUT = "OUTPUT"
 
     def shortHelpString(self) -> str:
@@ -55,6 +59,11 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             "Travel time uses the Tobler hiking function for pedestrians, a power "
             "balance for cycling, and road-hierarchy free-flow speeds for vehicles. "
             "Energy uses the Minetti (2002) metabolic cost of transport.\n\n"
+            "Vehicles, cyclists, wheelchairs and strollers pay a delay at junction "
+            "turns (left turns across traffic, sharp turns, U-turns; trucks cannot "
+            "take hairpins), included in the travel time and reported as turn_s. "
+            "With a departure hour, walkers and cyclists avoid unlit streets after "
+            "dark and the heat (LST) weight follows the sun.\n\n"
             "Output is a LineStringZ layer in EPSG:4326 carrying distance, travel "
             "time, cumulative climb, maximum gradient, energy expenditure, network "
             "snap distances, search size and access-blocked edge counts. The maximum "
@@ -112,6 +121,33 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
+            QgsProcessingParameterNumber(
+                self.DEPARTURE_HOUR,
+                "Departure time, local solar hour (-1 = ignore time of day)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=-1.0,
+                minValue=-1.0,
+                maxValue=24.0,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.DAY_OF_YEAR,
+                "Day of year for the sun position (1-365)",
+                type=QgsProcessingParameterNumber.Integer,
+                defaultValue=172,
+                minValue=1,
+                maxValue=366,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.DRIVE_ON_LEFT,
+                "Traffic drives on the left (UK, Japan, ...): right turns cross traffic",
+                defaultValue=False,
+            )
+        )
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "3D Route Layer",
@@ -164,6 +200,10 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             max_snap_distance_m=max_snap_distance,
         )
         engine.build_graph(segments)
+        departure = self.parameterAsDouble(parameters, self.DEPARTURE_HOUR, context)
+        engine.departure_hour = departure if departure >= 0 else None
+        engine.day_of_year = self.parameterAsInt(parameters, self.DAY_OF_YEAR, context) or 172
+        engine.drive_on_left = self.parameterAsBool(parameters, self.DRIVE_ON_LEFT, context)
 
         feedback.setProgressText(f"Computing 3D path for {profile.name}...")
         w1 = Waypoint(lon=p1.x(), lat=p1.y())
@@ -184,6 +224,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
         fields.append(make_field("snap_b_m", DOUBLE))
         fields.append(make_field("expanded", INT))
         fields.append(make_field("blocked", INT))
+        fields.append(make_field("turn_s", DOUBLE))
 
         # The engine emits WGS84 coordinates, so the sink must declare WGS84.
         crs_wgs84 = wgs84()
@@ -213,6 +254,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             diagnostics.get("end_snap_m", 0.0),
             diagnostics.get("expanded_nodes", 0),
             diagnostics.get("blocked_by_access", 0),
+            round(res.statistics.turn_delay_s, 1),
         ])
         sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
@@ -251,7 +293,7 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
             getattr(self, "_dest_id", ""),
             title='3D Least-Cost Route',
             abstract='Least-cost 3D route computed by 02Route 3D from a real network and DEM. Attributes carry distance, travel time, cumulative climb, maximum slope and metabolic energy for the selected mobility profile.',
-            aliases={'profile': 'Mobility profile', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)', 'max_slope': 'Maximum slope (%)', 'calories': 'Energy (kcal)', 'snap_a_m': 'Origin snap distance (m)', 'snap_b_m': 'Destination snap distance (m)', 'expanded': 'Expanded graph nodes', 'blocked': 'Edges blocked by access policy'},
+            aliases={'profile': 'Mobility profile', 'dist_km': 'Distance (km)', 'time_min': 'Travel time (min)', 'climb_m': 'Cumulative climb (m)', 'max_slope': 'Maximum slope (%)', 'calories': 'Energy (kcal)', 'snap_a_m': 'Origin snap distance (m)', 'snap_b_m': 'Destination snap distance (m)', 'expanded': 'Expanded graph nodes', 'blocked': 'Edges blocked by access policy', 'turn_s': 'Junction turn delay (s)'},
             line_color='#0ea5e9',
             feedback=feedback,
         )
