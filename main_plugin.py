@@ -90,3 +90,9 @@ class Route3DPlugin:
             with contextlib.suppress(Exception):
                 QgsApplication.processingRegistry().removeProvider(self.provider)
             self.provider = None
+
+        # Release the cached routing graph (can be 100+ MB for a large city).
+        with contextlib.suppress(Exception):
+            from .core.routing_engine import clear_graph_cache
+
+            clear_graph_cache()

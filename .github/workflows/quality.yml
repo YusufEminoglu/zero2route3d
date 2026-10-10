@@ -79,6 +79,11 @@ jobs:
         working-directory: zero2route3d
         run: python -m pytest -o pythonpath=.. -q -p no:cacheprovider tests/test_pure_logic.py
 
+      # Synthetic 1k/10k/100k-edge networks; fails when a timing exceeds its
+      # (generous) budget, so a change that makes routing 5x slower is caught.
+      - name: Routing benchmark gate
+        run: python -m zero2route3d.tests.benchmark_routing --gate
+
   # The GUI smoke suite and the Processing algorithm suite need a real QGIS.
   # Ubuntu 24.04 ships QGIS 3.34 with Python bindings; Qt runs offscreen.
   qgis-tests:

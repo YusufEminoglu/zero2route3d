@@ -1476,6 +1476,146 @@ class NetworkErrorReportingTests(unittest.TestCase):
         self.assertIn("timed out", OsmDataFetcher.last_error)
 
 
+class RoutingPerformanceTests(unittest.TestCase):
+    """Phase 3 speed-ups must not change any answer."""
+
+    def setUp(self) -> None:
+        from zero2route3d.core.routing_engine import clear_graph_cache
+
+        clear_graph_cache()
+
+    def _grid_engine(self, edges: int = 1000):
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+        from zero2route3d.tests.benchmark_routing import grid_segments, side_for_edges
+
+        n = side_for_edges(edges)
+        engine = RoutingEngine3D()
+        engine.build_graph(grid_segments(n))
+        return engine, n
+
+    def test_od_matrix_matches_individual_routes(self) -> None:
+        from zero2route3d.tests.benchmark_routing import spread_points
+
+        engine, n = self._grid_engine()
+        points = spread_points(n, 6)
+        for profile in ("adult", "wheelchair", "car"):
+            rows = engine.calculate_od_matrix(points, points, profile_key=profile)
+            self.assertEqual(len(rows), 36)
+            for row in rows:
+                single = engine.calculate_route(
+                    [points[row["origin_id"] - 1], points[row["dest_id"] - 1]],
+                    profile_key=profile,
+                    compute_alternatives=False,
+                )
+                self.assertAlmostEqual(row["distance_m"], single.statistics.total_distance_m, places=6)
+                self.assertAlmostEqual(row["duration_min"], single.statistics.total_duration_min, places=9)
+
+    def test_astar_cost_equals_dijkstra_cost(self) -> None:
+        """The tightened heuristic stays admissible: A* finds the optimal cost."""
+        from zero2route3d.core.mobility_profiles import get_profile
+
+        engine, _n = self._grid_engine()
+        nodes = sorted(engine.nodes)
+        for profile_key in ("adult", "bicycle", "car", "wheelchair"):
+            profile = get_profile(profile_key)
+            for start, goal in ((nodes[0], nodes[-1]), (nodes[5], nodes[len(nodes) // 2]), (nodes[-3], nodes[40])):
+                tree, settled, _ = engine._search(start, profile, set(engine.nodes))
+                path, _visited, _ = engine._search(start, profile, {goal}, goal=goal)
+                if goal not in settled:
+                    self.assertNotIn(goal, path)
+                    continue
+
+                def cost(prev):
+                    """Sum of the cheapest evaluated edge along the predecessor chain."""
+                    total, node = 0.0, goal
+                    table = engine._edge_table(profile)
+                    while node != start:
+                        parent = prev[node]
+                        total += min(
+                            entry[0]
+                            for edge, entry in zip(engine.adj[parent], table[parent])
+                            if edge[0] == node and entry is not None
+                        )
+                        node = parent
+                    return total
+
+                self.assertAlmostEqual(cost(path), cost(tree), places=6)
+
+    def test_planar_bound_never_exceeds_haversine(self) -> None:
+        from zero2route3d.core.kinematics import haversine_distance_2d
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+
+        for lat0 in (-62.0, 0.0, 38.4, 69.5):
+            engine = RoutingEngine3D()
+            # Deterministic scatter (bandit flags the random module in shipped tests).
+            pts = [(10.0 + (k * 0.6180339) % 0.5, lat0 - 0.3 + (k * 0.4142135) % 0.6, 0.0) for k in range(40)]
+            engine.build_graph(
+                [RoadSegment(p1=a, p2=b, length_m=haversine_distance_2d(a, b)) for a, b in zip(pts, pts[1:])]
+            )
+            for a in pts:
+                for b in pts[::7]:
+                    self.assertLessEqual(engine.planar_distance_lower_bound(a, b), haversine_distance_2d(a, b) + 1e-9)
+
+    def test_snapping_reaches_the_full_radius_at_high_latitude(self) -> None:
+        """Buckets narrow toward the poles; the old fixed span missed nodes there."""
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+
+        lat = 69.6  # Tromso
+        lon_900m = 900.0 / (111_195.0 * math.cos(math.radians(lat)))
+        a, b = (18.95 + lon_900m, lat, 0.0), (18.95 + lon_900m, lat + 0.001, 0.0)
+        engine = RoutingEngine3D(max_snap_distance_m=1000.0)
+        engine.build_graph([RoadSegment(p1=a, p2=b, length_m=111.0)])
+        self.assertIsNotNone(engine.find_nearest_node((18.95, lat), max_search_radius_m=1000.0))
+        self.assertIsNone(engine.find_nearest_node((18.95, lat), max_search_radius_m=800.0))
+
+    def test_snapping_prefers_the_component_both_points_reach(self) -> None:
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+
+        # A long street both points can reach, and a tiny island next to the origin.
+        street = [((27.0 + i * 0.0005, 38.4, 0.0), (27.0 + (i + 1) * 0.0005, 38.4, 0.0)) for i in range(10)]
+        island = [((27.0, 38.4002, 0.0), (27.0001, 38.4002, 0.0))]
+        engine = RoutingEngine3D()
+        engine.build_graph([RoadSegment(p1=a, p2=b, length_m=40.0) for a, b in street + island])
+        start, end = engine.find_compatible_nodes((27.0, 38.40015), (27.005, 38.4001))
+        self.assertEqual(engine.component_by_node[start], engine.component_by_node[end])
+
+    def test_graph_cache_reuses_a_built_graph(self) -> None:
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+        from zero2route3d.tests.benchmark_routing import grid_segments
+
+        segments = grid_segments(12)
+        first = RoutingEngine3D()
+        first.build_graph(segments)
+        second = RoutingEngine3D()
+        second.build_graph(list(segments))
+        self.assertEqual(first.graph_diagnostics["graph_cache"], "miss")
+        self.assertEqual(second.graph_diagnostics["graph_cache"], "hit")
+        self.assertIs(first.adj, second.adj)
+        changed = list(segments)
+        changed[0] = type(changed[0])(**{**changed[0].__dict__, "is_oneway": not changed[0].is_oneway})
+        third = RoutingEngine3D()
+        third.build_graph(changed)
+        self.assertEqual(third.graph_diagnostics["graph_cache"], "miss")
+        # Rebuilding a cached engine must not clear the shared graph.
+        first.build_graph(changed)
+        self.assertTrue(second.adj)
+
+    def test_densify_records_the_true_source_segment(self) -> None:
+        from zero2route3d.core.profile_stats import densify_3d_linestring_indexed
+
+        coords = [(27.0, 38.4, 0.0), (27.001, 38.4, 0.0), (27.001, 38.401, 0.0)]
+        points, source = densify_3d_linestring_indexed(coords, sample_interval_m=10.0)
+        self.assertEqual(len(points), len(source))
+        for point, seg in zip(points[:-1], source[:-1]):
+            if seg == 0:
+                self.assertAlmostEqual(point[1], 38.4)
+            else:
+                self.assertAlmostEqual(point[0], 27.001)
+
+
 class MetadataTests(unittest.TestCase):
     def test_every_metadata_value_survives_interpolation(self) -> None:
         """The QGIS Hub reads metadata.txt with ConfigParser interpolation: a bare

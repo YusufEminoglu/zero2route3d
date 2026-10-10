@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from .input_validation import deduplicate_adjacent_coordinates, validate_waypoint_coordinates
@@ -26,6 +27,56 @@ DEM_MIN_RUN_M = 10.0
 VERTEX_MIN_RUN_M = 1.0
 # Cost multiplier on the primary route's edges when searching an alternative.
 ALTERNATIVE_PENALTY = 4.0
+
+# Spatial hash for snapping: buckets of 1/300 degree (about 370 m north-south).
+BUCKETS_PER_DEGREE = 300
+# Metres per degree of latitude on the sphere used by haversine_distance_2d.
+METRES_PER_DEGREE = 6371008.8 * math.pi / 180.0
+
+# Built graphs kept in memory, keyed by network content and raster stack:
+# routing the same network again (another profile, the OD matrix, a second
+# click) skips graph building, DEM sampling and edge-cost evaluation. One
+# graph only: a 100k-edge network holds about 140 MB. Plugin unload clears it.
+GRAPH_CACHE_SIZE = 1
+_GRAPH_CACHE: "OrderedDict[Tuple[Any, ...], Dict[str, Any]]" = OrderedDict()
+
+
+def clear_graph_cache() -> None:
+    """Forget every cached graph (tests, or after editing layers in place)."""
+    _GRAPH_CACHE.clear()
+
+
+def segments_digest(segments: Sequence[RoadSegment]) -> Tuple[int, int]:
+    """Content key of a segment list: every attribute that changes the graph."""
+    keys = []
+    for seg in segments:
+        try:
+            keys.append(
+                (
+                    tuple(seg.p1),
+                    tuple(seg.p2),
+                    seg.length_m,
+                    seg.highway_type,
+                    seg.hierarchy_rank,
+                    seg.lanes,
+                    seg.is_steps,
+                    seg.surface,
+                    seg.is_oneway,
+                    seg.name,
+                    seg.access,
+                    seg.foot,
+                    seg.bicycle,
+                    seg.motor_vehicle,
+                    seg.lit,
+                    seg.sidewalk,
+                    seg.maxspeed_kmh,
+                    seg.oneway_bicycle,
+                    seg.oneway_foot,
+                )
+            )
+        except AttributeError:
+            keys.append(("unhashable", id(seg)))
+    return len(keys), hash(tuple(keys))
 
 
 def _distinct_route(primary, alternative, max_shared: float = 0.9) -> bool:
@@ -180,16 +231,58 @@ class RoutingEngine3D:
         self.max_snap_distance_m = max(10.0, float(max_snap_distance_m))
         self.graph_diagnostics: Dict[str, Any] = {}
         self.last_segment_diagnostics: Dict[str, Any] = {}
+        # Per-graph memo of edge costs, keyed by profile and weights; shared by
+        # every engine that reuses the same cached graph.
+        self._edge_cost_cache: Dict[Tuple[Any, ...], Dict[int, List[Optional[Tuple[float, str, str]]]]] = {}
+        self._planar_kx = METRES_PER_DEGREE
+        self._planar_ky = METRES_PER_DEGREE
+        self._hierarchy_ranks: frozenset = frozenset()
         self._built = False
 
-    def build_graph(self, segments: Sequence[RoadSegment]) -> None:
-        """Build topological graph with spatial hash grid from road segments."""
-        self.nodes.clear()
-        self.coord_to_node.clear()
-        self.adj.clear()
-        self.grid_buckets.clear()
-        self.component_by_node.clear()
-        self.component_sizes.clear()
+    _GRAPH_ATTRS = (
+        "nodes",
+        "coord_to_node",
+        "adj",
+        "grid_buckets",
+        "component_by_node",
+        "component_sizes",
+        "graph_diagnostics",
+        "_edge_cost_cache",
+        "_planar_kx",
+        "_planar_ky",
+        "_hierarchy_ranks",
+    )
+
+    def build_graph(self, segments: Sequence[RoadSegment], use_cache: bool = True) -> None:
+        """Build topological graph with spatial hash grid from road segments.
+
+        With ``use_cache`` a graph built earlier from the same segments and the
+        same raster stack is reused instead of rebuilt (see GRAPH_CACHE_SIZE).
+        """
+        cache_key: Optional[Tuple[Any, ...]] = None
+        if use_cache:
+            try:
+                signature = self.sampler.signature()
+                cache_key = (segments_digest(segments), signature) if signature is not None else None
+            except Exception:  # noqa: BLE001 - an exotic sampler just skips the cache
+                cache_key = None
+            cached = _GRAPH_CACHE.get(cache_key) if cache_key is not None else None
+            if cached is not None:
+                _GRAPH_CACHE.move_to_end(cache_key)
+                for name in self._GRAPH_ATTRS:
+                    setattr(self, name, cached[name])
+                self.graph_diagnostics = dict(cached["graph_diagnostics"], graph_cache="hit")
+                self._built = True
+                return
+
+        # Fresh containers, never .clear(): a cached graph may share them.
+        self.nodes = {}
+        self.coord_to_node = {}
+        self.adj = {}
+        self.grid_buckets = {}
+        self.component_by_node = {}
+        self.component_sizes = {}
+        self._edge_cost_cache = {}
 
         node_counter = 0
         skipped_invalid = 0
@@ -212,7 +305,9 @@ class RoutingEngine3D:
 
             key = (round(lon, 5), round(lat, 5))
             if key not in self.coord_to_node:
-                sampled_z = self.sampler.sample_elevation(lon, lat)
+                # A height carried by the network's own 3D vertex wins; the DEM
+                # is only sampled for nodes without one.
+                sampled_z = self.sampler.sample_elevation(lon, lat) if raw_z == 0.0 else None
                 if raw_z != 0.0:
                     z, source = raw_z, "vertex"
                 elif sampled_z is not None and math.isfinite(sampled_z):
@@ -228,9 +323,7 @@ class RoutingEngine3D:
                 self.adj[node_counter] = []
                 weak_adj[node_counter] = set()
 
-                bx = int(lon * 300)
-                by = int(lat * 300)
-                b_key = (bx, by)
+                b_key = (math.floor(lon * BUCKETS_PER_DEGREE), math.floor(lat * BUCKETS_PER_DEGREE))
                 if b_key not in self.grid_buckets:
                     self.grid_buckets[b_key] = []
                 self.grid_buckets[b_key].append(node_counter)
@@ -242,18 +335,7 @@ class RoutingEngine3D:
         # their neighbours, so edge slopes below are computed on final heights.
         z_source: Dict[int, str] = {}
         endpoint_pairs: List[Tuple[int, int]] = []
-        for seg in segments:
-            if not seg or len(seg.p1) < 2 or len(seg.p2) < 2:
-                continue
-            try:
-                if not all(math.isfinite(float(v)) for v in (*seg.p1[:2], *seg.p2[:2])):
-                    continue
-            except (TypeError, ValueError):
-                continue
-            endpoint_pairs.append((get_or_create_node(seg.p1), get_or_create_node(seg.p2)))
-        missing_elevation = self._fill_missing_elevation(z_source, endpoint_pairs)
-
-        edge_keys = set()
+        valid_segments: List[Tuple[RoadSegment, int, int]] = []
         for seg in segments:
             if not seg or len(seg.p1) < 2 or len(seg.p2) < 2:
                 skipped_invalid += 1
@@ -265,8 +347,13 @@ class RoutingEngine3D:
             except (TypeError, ValueError):
                 skipped_invalid += 1
                 continue
-            u = get_or_create_node(seg.p1)
-            v = get_or_create_node(seg.p2)
+            pair = (get_or_create_node(seg.p1), get_or_create_node(seg.p2))
+            endpoint_pairs.append(pair)
+            valid_segments.append((seg, pair[0], pair[1]))
+        missing_elevation = self._fill_missing_elevation(z_source, endpoint_pairs)
+
+        edge_keys = set()
+        for seg, u, v in valid_segments:
             if u == v:
                 skipped_invalid += 1
                 continue
@@ -387,8 +474,35 @@ class RoutingEngine3D:
             "skipped_duplicate_segments": skipped_duplicate,
             "elevation_filled_nodes": missing_elevation["filled"],
             "elevation_missing_nodes": missing_elevation["unresolved"],
+            "graph_cache": "miss" if cache_key is not None else "off",
         }
+        self._prepare_planar_heuristic()
+        self._hierarchy_ranks = frozenset(
+            meta.get("hierarchy", 4) for edges in self.adj.values() for _v, _l, _s, meta in edges
+        )
         self._built = True
+        if cache_key is not None:
+            _GRAPH_CACHE[cache_key] = {name: getattr(self, name) for name in self._GRAPH_ATTRS}
+            while len(_GRAPH_CACHE) > GRAPH_CACHE_SIZE:
+                _GRAPH_CACHE.popitem(last=False)
+
+    def _prepare_planar_heuristic(self) -> None:
+        """Scale factors for a cheap straight-line distance that never exceeds haversine.
+
+        Longitude degrees shrink toward the poles; using the cosine of the
+        graph's highest latitude makes every east-west distance an
+        under-estimate, and 0.999 absorbs the curvature term. An admissible
+        A* heuristic needs exactly that, without trigonometry per node.
+        """
+        max_abs_lat = max((abs(c[1]) for c in self.nodes.values()), default=0.0)
+        self._planar_ky = METRES_PER_DEGREE * 0.999
+        self._planar_kx = METRES_PER_DEGREE * 0.999 * math.cos(math.radians(min(89.9, max_abs_lat)))
+
+    def planar_distance_lower_bound(self, a: Sequence[float], b: Sequence[float]) -> float:
+        """Metres between two (lon, lat) points, never more than the great-circle distance."""
+        dx = (a[0] - b[0]) * self._planar_kx
+        dy = (a[1] - b[1]) * self._planar_ky
+        return math.sqrt(dx * dx + dy * dy)
 
     def _fill_missing_elevation(
         self,
@@ -430,91 +544,296 @@ class RoutingEngine3D:
             frontier = set(missing)
         return {"filled": filled, "unresolved": len(missing)}
 
+    def _nearby_nodes(self, lon: float, lat: float, radius_m: float) -> Iterable[int]:
+        """Nodes in every hash bucket that can lie within radius_m of (lon, lat)."""
+        bucket_m = METRES_PER_DEGREE / BUCKETS_PER_DEGREE
+        cos_lat = max(0.01, math.cos(math.radians(min(89.0, abs(lat) + radius_m / METRES_PER_DEGREE))))
+        span_y = int(math.ceil(radius_m / bucket_m)) + 1
+        span_x = int(math.ceil(radius_m / (bucket_m * cos_lat))) + 1
+        bx = math.floor(lon * BUCKETS_PER_DEGREE)
+        by = math.floor(lat * BUCKETS_PER_DEGREE)
+        buckets = self.grid_buckets
+        # Few nodes but a huge search window (sparse rural graphs): scanning
+        # the nodes is cheaper than visiting thousands of empty buckets.
+        if (2 * span_x + 1) * (2 * span_y + 1) > len(self.nodes):
+            yield from self.nodes
+            return
+        for dx in range(-span_x, span_x + 1):
+            for dy in range(-span_y, span_y + 1):
+                yield from buckets.get((bx + dx, by + dy), ())
+
+    def _nearest_by_component(
+        self, coord: Tuple[float, float], radius_m: float
+    ) -> Dict[int, Tuple[float, int]]:
+        """Nearest node within radius_m in each connected component: {component: (metres, node)}.
+
+        Candidates are ranked by a local flat-earth distance (exact to well
+        under 0.1 % at snapping range); only each component's winner gets the
+        great-circle distance that callers see.
+        """
+        lon, lat = float(coord[0]), float(coord[1])
+        best: Dict[int, Tuple[float, int]] = {}
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            return best
+        nodes = self.nodes
+        components = self.component_by_node
+        kx = METRES_PER_DEGREE * math.cos(math.radians(lat))
+        ky = METRES_PER_DEGREE
+        limit = (radius_m * 1.001) ** 2
+        for nid in self._nearby_nodes(lon, lat, radius_m):
+            c = nodes[nid]
+            dx = (c[0] - lon) * kx
+            dy = (c[1] - lat) * ky
+            d2 = dx * dx + dy * dy
+            if d2 > limit:
+                continue
+            comp = components.get(nid, -1)
+            current = best.get(comp)
+            if current is None or d2 < current[0] or (d2 == current[0] and nid < current[1]):
+                best[comp] = (d2, nid)
+        result: Dict[int, Tuple[float, int]] = {}
+        for comp, (_d2, nid) in best.items():
+            d = haversine_distance_2d((lon, lat), nodes[nid])
+            if d <= radius_m:
+                result[comp] = (d, nid)
+        return result
+
     def find_nearest_node(
         self,
         coord: Tuple[float, float],
         target_component: Optional[int] = None,
         max_search_radius_m: float = 2500.0,
     ) -> Optional[int]:
-        """Find the nearest graph node with spatial bucket optimization."""
+        """Nearest graph node within max_search_radius_m (optionally in one component)."""
         if not self.nodes or not coord or len(coord) < 2:
             return None
-
-        lon, lat = float(coord[0]), float(coord[1])
-        if not math.isfinite(lon) or not math.isfinite(lat):
+        best = self._nearest_by_component(coord, max_search_radius_m)
+        if target_component is not None:
+            hit = best.get(target_component)
+            return hit[1] if hit else None
+        if not best:
             return None
-
-        bx = int(lon * 300)
-        by = int(lat * 300)
-        best_node = None
-        min_dist = float("inf")
-
-        span = max(2, int(math.ceil(max_search_radius_m / 300.0)))
-        for dx in range(-span, span + 1):
-            for dy in range(-span, span + 1):
-                b_key = (bx + dx, by + dy)
-                for nid in self.grid_buckets.get(b_key, []):
-                    if target_component is not None and self.component_by_node.get(nid) != target_component:
-                        continue
-                    d = haversine_distance_2d((lon, lat), self.nodes[nid])
-                    if d < min_dist and d <= max_search_radius_m:
-                        min_dist = d
-                        best_node = nid
-
-        if best_node is not None:
-            return best_node
-
-        for nid, n_coord in self.nodes.items():
-            if target_component is not None and self.component_by_node.get(nid) != target_component:
-                continue
-            d = haversine_distance_2d((lon, lat), n_coord)
-            if d < min_dist and d <= max_search_radius_m:
-                min_dist = d
-                best_node = nid
-        return best_node
+        return min(best.values())[1]
 
     def find_compatible_nodes(
         self,
         origin: Tuple[float, float],
         destination: Tuple[float, float],
     ) -> Tuple[Optional[int], Optional[int]]:
-        """Snap origin and destination to the largest shared connected component."""
+        """Snap origin and destination into one shared connected component.
+
+        Picks the component with the smallest total snap distance (ties: the
+        larger component). The search radius doubles from 64 m up to the snap
+        limit and stops once a shared component's total is within the radius:
+        any component not yet seen is farther than that for at least one
+        point, so it cannot do better. The old code ran a separate full search
+        per component, O(components x nodes).
+        """
         if not self.nodes or not self.component_sizes:
             return None, None
+        memo_key = (
+            round(float(origin[0]), 7), round(float(origin[1]), 7),
+            round(float(destination[0]), 7), round(float(destination[1]), 7),
+        )
+        memo = self.__dict__.setdefault("_snap_memo", {})
+        if memo.get("graph") is not self.adj:
+            memo.clear()
+            memo["graph"] = self.adj
+        if memo_key in memo:
+            return memo[memo_key]
 
-        origin_by_component = {
-            component: self.find_nearest_node(
-                origin,
-                target_component=component,
-                max_search_radius_m=self.max_snap_distance_m,
-            )
-            for component in self.component_sizes
-        }
-        destination_by_component = {
-            component: self.find_nearest_node(
-                destination,
-                target_component=component,
-                max_search_radius_m=self.max_snap_distance_m,
-            )
-            for component in self.component_sizes
-        }
-        shared = []
-        for component, start_node in origin_by_component.items():
-            end_node = destination_by_component.get(component)
-            if start_node is None or end_node is None:
-                continue
-            score = haversine_distance_2d(origin, self.nodes[start_node]) + haversine_distance_2d(
-                destination, self.nodes[end_node]
-            )
-            shared.append((score, -self.component_sizes.get(component, 0), start_node, end_node))
+        limit = self.max_snap_distance_m
+        radius = min(64.0, limit)
+        while True:
+            near_origin = self._nearest_by_component(origin, radius)
+            near_destination = self._nearest_by_component(destination, radius)
+            shared = [
+                (d_o + near_destination[comp][0], -self.component_sizes.get(comp, 0), n_o, near_destination[comp][1])
+                for comp, (d_o, n_o) in near_origin.items()
+                if comp in near_destination
+            ]
+            if shared and min(shared)[0] <= radius:
+                break
+            if radius >= limit:
+                break
+            radius = min(limit, radius * 2.0)
+
         if shared:
             _score, _size, start_node, end_node = min(shared)
-            return start_node, end_node
+            answer: Tuple[Optional[int], Optional[int]] = (start_node, end_node)
+        else:
+            answer = (
+                min(near_origin.values())[1] if near_origin else None,
+                min(near_destination.values())[1] if near_destination else None,
+            )
+        if len(memo) > 4096:
+            memo.clear()
+            memo["graph"] = self.adj
+        memo[memo_key] = answer
+        return answer
 
-        return (
-            self.find_nearest_node(origin, max_search_radius_m=self.max_snap_distance_m),
-            self.find_nearest_node(destination, max_search_radius_m=self.max_snap_distance_m),
+    def _edge_table(self, profile: MobilityProfile) -> Dict[int, List[Optional[Tuple[float, str, str]]]]:
+        """Memo of evaluated edges for this profile and weight set (see _evaluate_edge)."""
+        w_dict = self.weights.normalized_dict()
+        key = (
+            repr(profile),
+            tuple(sorted(w_dict.items())),
+            float(self.weights.weight_extra),
         )
+        table = self._edge_cost_cache.get(key)
+        if table is None:
+            table = {}
+            self._edge_cost_cache[key] = table
+        return table
+
+    def _evaluate_edge(
+        self,
+        edge: Tuple[int, float, float, Dict[str, Any]],
+        profile: MobilityProfile,
+        w_dict: Dict[str, float],
+    ) -> Tuple[float, str, str]:
+        """Cost of one directed edge for this profile: (cost, status, reason).
+
+        status is "ok", "access" (blocked by modal access rules, reason set)
+        or "profile" (the profile cannot traverse it). A cost depends only on
+        the edge, the profile, the weights and the rasters at the edge's end,
+        so it is computed once per graph and memoised (see _edge_table).
+        """
+        v, seg_len, slope_pct, meta = edge
+        access_decision = evaluate_edge_access(profile, meta)
+        if not access_decision.allowed:
+            return (math.inf, "access", access_decision.reason)
+        v_coord = self.nodes[v]
+        lst_val = self.sampler.sample_lst(v_coord[0], v_coord[1])
+        green_val = self.sampler.sample_greenery(v_coord[0], v_coord[1])
+        extra_values = self.sampler.sample_additional_resistance(v_coord[0], v_coord[1])
+        edge_cost = profile.calculate_edge_resistance(
+            length_m=seg_len,
+            slope_pct=slope_pct,
+            is_steps=meta.get("is_steps", False),
+            surface_quality=surface_quality(meta.get("surface")),
+            hierarchy_rank=meta.get("hierarchy", 4),
+            lst_normalized=lst_val,
+            green_normalized=green_val,
+            custom_weights=w_dict,
+            maxspeed_kmh=meta.get("maxspeed_kmh"),
+        )
+        if not math.isfinite(edge_cost) or edge_cost < 0:
+            return (math.inf, "profile", "")
+        edge_cost *= access_decision.penalty
+        # Every additional raster contributes its real normalized value.
+        # The mean keeps the factor stable when the user adds many layers;
+        # unavailable layers are omitted by the sampler, never fabricated.
+        if extra_values:
+            extra_mean = sum(extra_values) / len(extra_values)
+            edge_cost *= 1.0 + max(0.0, min(1.0, extra_mean)) * self.weights.weight_extra
+        return (edge_cost, "ok", "")
+
+    def _search(
+        self,
+        start_node: int,
+        profile: MobilityProfile,
+        targets: Set[int],
+        goal: Optional[int] = None,
+        avoid_edges: Optional[set] = None,
+        penalize_edges: Optional[set] = None,
+        penalty_factor: float = 1.0,
+    ) -> Tuple[Dict[int, int], Set[int], Dict[str, Any]]:
+        """Least-cost search from start_node until every target is settled.
+
+        With a single ``goal`` this is A* with an admissible straight-line
+        heuristic; with several targets it is a one-to-many Dijkstra, which is
+        how the OD matrix answers a whole row with one search.
+        Returns (predecessors, settled nodes, counters).
+        """
+        nodes = self.nodes
+        adj = self.adj
+        table = self._edge_table(profile)
+        w_dict = self.weights.normalized_dict()
+        evaluate = self._evaluate_edge
+        avoid_set = avoid_edges or set()
+        penalized = penalize_edges or set()
+        penalty = max(1.0, float(penalty_factor)) if math.isfinite(penalty_factor) else 1.0
+
+        # A* is only optimal when the heuristic never over-estimates the
+        # remaining cost. g accumulates impedance, not metres, and impedance
+        # can be well below 1.0 per metre (a car on a motorway, a shaded edge),
+        # so the distance is scaled by the profile's own cost floor.
+        if goal is not None:
+            gx, gy = nodes[goal][0], nodes[goal][1]
+            floor = profile.min_cost_per_metre(
+                hierarchy_ranks=self._hierarchy_ranks or None,
+                thermal_bonus=getattr(self.sampler, "green_layer", True) is not None,
+            )
+            kx = self._planar_kx * floor
+            ky = self._planar_ky * floor
+
+            def heuristic(nid: int) -> float:
+                c = nodes[nid]
+                dx = (c[0] - gx) * kx
+                dy = (c[1] - gy) * ky
+                return math.sqrt(dx * dx + dy * dy)
+        else:
+            def heuristic(nid: int) -> float:
+                return 0.0
+
+        remaining = set(targets)
+        pq: List[Tuple[float, float, int]] = [(heuristic(start_node), 0.0, start_node)]
+        g_scores: Dict[int, float] = {start_node: 0.0}
+        prev_map: Dict[int, int] = {}
+        visited: Set[int] = set()
+        max_iters = min(150_000, len(nodes) * 3) if goal is not None else len(nodes) * 3 + 10
+        iters = 0
+        blocked_by_access = 0
+        blocked_by_profile = 0
+        access_reasons: Dict[str, int] = {}
+
+        while pq and iters < max_iters and remaining:
+            iters += 1
+            _f, cost, u = heapq.heappop(pq)
+            if u in visited:
+                continue
+            visited.add(u)
+            remaining.discard(u)
+            if not remaining:
+                break
+            edges = adj.get(u, ())
+            row = table.get(u)
+            if row is None:
+                row = [None] * len(edges)
+                table[u] = row
+            for index, edge in enumerate(edges):
+                v = edge[0]
+                if v in visited:
+                    continue
+                entry = row[index]
+                if entry is None:
+                    entry = row[index] = evaluate(edge, profile, w_dict)
+                edge_cost, status, reason = entry
+                if status != "ok":
+                    if status == "access":
+                        blocked_by_access += 1
+                        access_reasons[reason] = access_reasons.get(reason, 0) + 1
+                    else:
+                        blocked_by_profile += 1
+                    continue
+                if avoid_set and (u, v) in avoid_set:
+                    continue
+                if penalized and ((u, v) in penalized or (v, u) in penalized):
+                    edge_cost *= penalty
+                tentative_g = cost + edge_cost
+                if tentative_g < g_scores.get(v, math.inf):
+                    g_scores[v] = tentative_g
+                    prev_map[v] = u
+                    heapq.heappush(pq, (tentative_g + heuristic(v), tentative_g, v))
+
+        counters = {
+            "expanded_nodes": len(visited),
+            "blocked_by_access": blocked_by_access,
+            "blocked_by_profile": blocked_by_profile,
+            "access_reasons": access_reasons,
+        }
+        return prev_map, visited, counters
 
     def compute_segment_route(
         self,
@@ -524,12 +843,15 @@ class RoutingEngine3D:
         avoid_edges: Optional[set] = None,
         penalize_edges: Optional[set] = None,
         penalty_factor: float = 1.0,
+        search_trees: Optional[Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]]] = None,
     ) -> Tuple[List[Tuple[float, float, float]], bool]:
         """Compute A* least-cost path between single origin and destination pair.
 
         ``avoid_edges`` are forbidden; ``penalize_edges`` (either direction)
         cost ``penalty_factor`` times more, which is how alternatives are found
         without failing where the primary route uses the only bridge.
+        ``search_trees`` maps a start node to a finished one-to-many search
+        (see _search); the OD matrix passes it to reuse one search per origin.
         """
         if not self.nodes:
             self.last_segment_diagnostics = {"status": "empty_graph"}
@@ -564,107 +886,26 @@ class RoutingEngine3D:
             }
             return [], False
 
-        dest_coord = self.nodes[end_node]
-        w_dict = self.weights.normalized_dict()
-        avoid_set = avoid_edges or set()
-        penalized = penalize_edges or set()
-        penalty = max(1.0, float(penalty_factor)) if math.isfinite(penalty_factor) else 1.0
+        tree = search_trees.get(start_node) if search_trees else None
+        if tree is not None and end_node in tree[1] and not avoid_edges and not penalize_edges:
+            prev_map, _visited, counters = tree
+        else:
+            prev_map, _visited, counters = self._search(
+                start_node,
+                profile,
+                {end_node},
+                goal=end_node,
+                avoid_edges=avoid_edges,
+                penalize_edges=penalize_edges,
+                penalty_factor=penalty_factor,
+            )
 
-        # A* is only optimal when the heuristic never over-estimates the remaining
-        # cost. g accumulates impedance, not metres, and impedance can be well
-        # below 1.0 per metre (a car on a motorway, a paramedic, a shaded edge),
-        # so a raw great-circle distance in metres over-estimated and produced
-        # non-optimal routes. Scaling by the profile's own floor fixes that.
-        cost_floor = profile.min_cost_per_metre()
-
-        def heuristic(u_coord: Tuple[float, float, float]) -> float:
-            h = haversine_distance_2d(u_coord, dest_coord)
-            return (h * cost_floor) if math.isfinite(h) else 0.0
-
-        h_start = heuristic(self.nodes[start_node])
-        pq: List[Tuple[float, float, int]] = [(h_start, 0.0, start_node)]
-        g_scores: Dict[int, float] = {start_node: 0.0}
-        prev_map: Dict[int, int] = {}
-        visited = set()
-
-        max_iters = min(150_000, len(self.nodes) * 3)
-        iters = 0
-        blocked_by_access = 0
-        blocked_by_profile = 0
-        access_reasons: Dict[str, int] = {}
-
-        while pq and iters < max_iters:
-            iters += 1
-            _f, cost, u = heapq.heappop(pq)
-
-            if u in visited:
-                continue
-            visited.add(u)
-
-            if u == end_node:
-                break
-
-            for v, seg_len, slope_pct, meta in self.adj.get(u, []):
-                if v in visited:
-                    continue
-                if (u, v) in avoid_set:
-                    continue
-
-                access_decision = evaluate_edge_access(profile, meta)
-                if not access_decision.allowed:
-                    blocked_by_access += 1
-                    access_reasons[access_decision.reason] = access_reasons.get(access_decision.reason, 0) + 1
-                    continue
-
-                v_coord = self.nodes[v]
-                lst_val = self.sampler.sample_lst(v_coord[0], v_coord[1])
-                green_val = self.sampler.sample_greenery(v_coord[0], v_coord[1])
-                extra_values = self.sampler.sample_additional_resistance(v_coord[0], v_coord[1])
-
-                edge_cost = profile.calculate_edge_resistance(
-                    length_m=seg_len,
-                    slope_pct=slope_pct,
-                    is_steps=meta.get("is_steps", False),
-                    surface_quality=surface_quality(meta.get("surface")),
-                    hierarchy_rank=meta.get("hierarchy", 4),
-                    lst_normalized=lst_val,
-                    green_normalized=green_val,
-                    custom_weights=w_dict,
-                    maxspeed_kmh=meta.get("maxspeed_kmh"),
-                )
-
-                if not math.isfinite(edge_cost) or math.isinf(edge_cost) or edge_cost < 0:
-                    blocked_by_profile += 1
-                    continue
-                edge_cost *= access_decision.penalty
-
-                # Every additional raster contributes its real normalized value.
-                # The mean keeps the factor stable when the user adds many layers;
-                # unavailable layers are omitted by the sampler, never fabricated.
-                if extra_values:
-                    extra_mean = sum(extra_values) / len(extra_values)
-                    extra_factor = 1.0 + max(0.0, min(1.0, extra_mean)) * self.weights.weight_extra
-                    edge_cost *= extra_factor
-
-                if penalized and ((u, v) in penalized or (v, u) in penalized):
-                    edge_cost *= penalty
-
-                tentative_g = cost + edge_cost
-                if tentative_g < g_scores.get(v, float("inf")):
-                    g_scores[v] = tentative_g
-                    prev_map[v] = u
-                    h_v = heuristic(v_coord)
-                    heapq.heappush(pq, (tentative_g + h_v, tentative_g, v))
-
-        if end_node not in prev_map and start_node != end_node:
+        if end_node not in prev_map:
             self.last_segment_diagnostics = {
                 "status": "no_directed_path",
                 "start_snap_m": start_snap_m,
                 "end_snap_m": end_snap_m,
-                "expanded_nodes": len(visited),
-                "blocked_by_access": blocked_by_access,
-                "blocked_by_profile": blocked_by_profile,
-                "access_reasons": access_reasons,
+                **counters,
             }
             return [], False
 
@@ -673,7 +914,7 @@ class RoutingEngine3D:
         curr: Optional[int] = end_node
         while curr is not None:
             path.append(self.nodes[curr])
-            curr = prev_map.get(curr)
+            curr = prev_map.get(curr) if curr != start_node else None
 
         path.reverse()
         z_start = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
@@ -694,10 +935,7 @@ class RoutingEngine3D:
             "status": "matched",
             "start_snap_m": start_snap_m,
             "end_snap_m": end_snap_m,
-            "expanded_nodes": len(visited),
-            "blocked_by_access": blocked_by_access,
-            "blocked_by_profile": blocked_by_profile,
-            "access_reasons": access_reasons,
+            **counters,
         }
         return final_path, True
 
@@ -712,6 +950,13 @@ class RoutingEngine3D:
         drop the criterion entirely rather than average in a fabricated constant.
         """
         if not coords:
+            return None
+        # No raster behind this surface: nothing to sample, skip densifying.
+        owner = getattr(sampler_fn, "__self__", None)
+        layer_attr = {"sample_lst": "lst_layer", "sample_greenery": "green_layer"}.get(
+            getattr(sampler_fn, "__name__", ""), ""
+        )
+        if owner is not None and layer_attr and getattr(owner, layer_attr, True) is None:
             return None
         dense, _src = densify_3d_linestring_indexed(coords, sample_interval_m=6.0)
         values: List[Optional[float]] = []
@@ -762,8 +1007,14 @@ class RoutingEngine3D:
         profile_key: str = "adult",
         optimize_tsp: bool = False,
         compute_alternatives: bool = True,
+        search_trees: Optional[Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]]] = None,
+        detail: bool = True,
     ) -> RouteResult3D:
-        """Compute complete multi-stop 3D route traversing all waypoints."""
+        """Compute complete multi-stop 3D route traversing all waypoints.
+
+        ``detail=False`` returns totals only (no elevation profile, cue sheet
+        or environmental samples), for matrix-style callers.
+        """
         profile = get_profile(profile_key)
         validation_error = validate_waypoint_coordinates(waypoints)
         if validation_error:
@@ -819,6 +1070,7 @@ class RoutingEngine3D:
                 (w1.lon, w1.lat),
                 (w2.lon, w2.lat),
                 profile,
+                search_trees=search_trees,
             )
             segment_diagnostics.append(dict(self.last_segment_diagnostics))
             if not matched:
@@ -864,9 +1116,10 @@ class RoutingEngine3D:
         stats = compute_route_statistics(
             all_coords,
             profile,
-            lst_samples=self._sample_series(all_coords, self.sampler.sample_lst),
-            green_samples=self._sample_series(all_coords, self.sampler.sample_greenery),
+            lst_samples=self._sample_series(all_coords, self.sampler.sample_lst) if detail else None,
+            green_samples=self._sample_series(all_coords, self.sampler.sample_greenery) if detail else None,
             segment_metadata=self._segment_metadata_for(all_coords),
+            detail=detail,
         )
 
         # Compute Alternative Route (e.g. Flattest or Coolest)
@@ -936,13 +1189,25 @@ class RoutingEngine3D:
         """Compute complete N x M Origin-Destination 3D cost matrix.
 
         progress_callback(done, total) is invoked after each pair and may return
-        False to abort. An N x M matrix is N x M Dijkstra runs, so without this
-        the caller had no way to cancel or to report progress.
+        False to abort.
+
+        Each origin is searched once, one-to-many, until all of its
+        destinations are settled (N searches instead of N x M); every pair
+        then reads its path from that search tree.
         """
         matrix_rows = []
         profile = get_profile(profile_key)
         total_pairs = max(1, len(origins) * len(destinations))
         done_pairs = 0
+
+        # Snap every pair first, so each origin node knows all of its targets.
+        targets_by_start: Dict[int, Set[int]] = {}
+        for orig in origins:
+            for dest in destinations:
+                start_node, end_node = self.find_compatible_nodes((orig.lon, orig.lat), (dest.lon, dest.lat))
+                if start_node is not None and end_node is not None and start_node != end_node:
+                    targets_by_start.setdefault(start_node, set()).add(end_node)
+        search_trees: Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]] = {}
 
         for i, orig in enumerate(origins):
             for j, dest in enumerate(destinations):
@@ -950,7 +1215,16 @@ class RoutingEngine3D:
                     if progress_callback(done_pairs, total_pairs) is False:
                         return matrix_rows
                 done_pairs += 1
-                res = self.calculate_route([orig, dest], profile_key=profile_key, compute_alternatives=False)
+                start_node, _end = self.find_compatible_nodes((orig.lon, orig.lat), (dest.lon, dest.lat))
+                if start_node in targets_by_start and start_node not in search_trees:
+                    search_trees[start_node] = self._search(start_node, profile, targets_by_start[start_node])
+                res = self.calculate_route(
+                    [orig, dest],
+                    profile_key=profile_key,
+                    compute_alternatives=False,
+                    search_trees=search_trees,
+                    detail=False,
+                )
                 matrix_rows.append(
                     {
                         "origin_id": i + 1,

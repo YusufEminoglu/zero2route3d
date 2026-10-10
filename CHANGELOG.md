@@ -5,6 +5,54 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-10
+
+Roadmap phase 3: speed (see docs/ROADMAP.md). Measured with
+`python -m zero2route3d.tests.benchmark_routing` on synthetic street grids:
+
+| | 0.6.0 | 0.7.0 |
+|---|---|---|
+| 10k edges, one route | 0.17 s | 0.10 s |
+| 10k edges, 10 x 10 OD matrix | 6.1 s | 0.5 s |
+| 10k edges, 50 x 50 OD matrix | ~150 s (est.) | 6.9 s |
+| 100k edges, graph build | 4.9 s | 3.9 s |
+| 100k edges, one route | 1.6 s | 1.0-1.2 s |
+
+### Changed
+- OD matrix: one one-to-many search per origin instead of one A* per pair;
+  pairs read their paths from that search, with totals-only statistics.
+  Results are identical to routing each pair on its own (tested).
+- Built graphs are cached by network content and raster stack (one graph;
+  cleared on plugin unload). Edge costs, access decisions and raster values
+  are evaluated once per edge, profile and weight set, and reused.
+- A* uses a per-graph cost floor (road classes actually present; the 0.6
+  thermal floor only when a greenery raster can lower the cost) and a
+  trigonometry-free planar distance that never exceeds the great-circle
+  distance, so it stays exact while expanding fewer nodes.
+- Snapping searches nearby buckets once per point and keeps the nearest node
+  of every component, widening from 64 m to the snap limit. The old code ran
+  one search per component and fell back to a full scan.
+- Raster sampling builds the WGS84-to-layer transform once per layer instead
+  of once per sample, and returns at once when a raster is not set.
+- Route statistics reuse the densifier's step lengths; densification records
+  each point's real source segment (the old nearest-vertex guess assigned the
+  second half of every segment to the next one).
+- Pareto routes store paths as parent pointers.
+- Faster great-circle distance (same results to machine precision).
+
+### Fixed
+- Snapping missed nodes at high latitudes: hash buckets shrink east-west, and
+  the search span ignored that (at 69 degrees N a node 900 m east was not
+  found with a 1,000 m snap radius).
+- Nodes with a height from the network's own 3D vertices no longer trigger a
+  DEM sample that was then discarded.
+- metadata.txt: no bare percent sign in the changelog (the QGIS Hub rejected
+  0.6.0 at first because it parses the file with interpolation).
+
+### Added
+- `tests/benchmark_routing.py`: deterministic 1k/10k/100k-edge benchmark and
+  a CI gate with generous time budgets.
+
 ## [0.6.0] - 2026-10-10
 
 Roadmap phase 2: QGIS stays responsive (see docs/ROADMAP.md).

@@ -9,7 +9,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 @dataclass
@@ -36,7 +36,11 @@ class MobilityProfile:
     # preference (ADA / ISO 21542 maximum ramp gradient 1:12 = 8.33 %).
     hard_slope_limit_pct: Optional[float] = None
 
-    def min_cost_per_metre(self) -> float:
+    def min_cost_per_metre(
+        self,
+        hierarchy_ranks: Optional[Iterable[int]] = None,
+        thermal_bonus: bool = True,
+    ) -> float:
         """Smallest impedance this profile can charge for one metre of edge.
 
         calculate_edge_resistance multiplies length by slope, stair, smoothness,
@@ -45,10 +49,23 @@ class MobilityProfile:
         below 1.0 for preferred road classes. The product of those two floors is
         therefore a valid lower bound on cost per metre, which is exactly what an
         admissible A* heuristic needs.
+
+        ``hierarchy_ranks`` (the road classes present in a graph) and
+        ``thermal_bonus`` (False when no greenery raster can lower the thermal
+        term below 1) tighten the bound to the network at hand: a tighter
+        bound makes A* expand far fewer nodes, and it stays admissible.
         """
-        thermal_floor = 0.6
+        thermal_floor = 0.6 if thermal_bonus else 1.0
         hierarchy_floor = 1.0
-        if self.hierarchy_weights:
+        if hierarchy_ranks is not None:
+            floors = []
+            for rank in hierarchy_ranks:
+                value = self.hierarchy_weights.get(rank, 1.0)
+                valid = isinstance(value, (int, float)) and math.isfinite(float(value)) and float(value) > 0
+                floors.append(float(value) if valid else 1.0)
+            if floors:
+                hierarchy_floor = min(floors)
+        elif self.hierarchy_weights:
             finite = [
                 float(v)
                 for v in self.hierarchy_weights.values()

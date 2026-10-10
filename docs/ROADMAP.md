@@ -94,6 +94,22 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 
 ## Faz 3 — Hız
 
+> **Durum (Ekim 2026): v0.7.0.** Ölçüm: `tests/benchmark_routing.py` (1k /
+> 10k / 100k kenarlı sentetik sokak ızgarası), CI'da hız kapısı. 10k ağda
+> tek rota 0,10 sn, 50×50 OD matrisi 6,9 sn (başarı ölçütleri karşılandı;
+> önce 50×50 tahmini ~150 sn). Yapılanlar: 1 (grafik önbelleği: segment
+> içeriği + raster yığını, tek grafik, eklenti kapanınca boşalır); 2
+> (CSR yerine kenar başına tembel bellek: erişim, maliyet ve raster değerleri
+> profil+ağırlık başına bir kez); 3 (bileşen başına tek geçişli yakalama,
+> 64 m'den büyüyen halka, yüksek enlem hatası düzeltildi); 4 (OD için
+> başlangıç başına bire-çok arama; sonuçlar tek tek rotalarla aynı); 6
+> (v0.5.0'da yapılmıştı); 7 (ebeveyn işaretçisi); 8. Kısmen: 5 — sezgisel
+> grafikteki yol sınıflarına göre sıkılaştırıldı (hâlâ kesin), ama ALT /
+> çift yönlü A* yapılmadı: 100k ızgarada köşeden köşeye rota 1,0–1,4 sn ve
+> tüm düğümleri açıyor. Kenara izdüşümle yakalama yapılmadı (OSM segmentleri
+> ardışık düğüm çiftleri olduğu için kısa). İzokron kendi Dijkstra'sını
+> kullanmaya devam ediyor.
+
 1. Grafik bir kez kurulur, önbelleğe alınır (segment özeti + DEM kimliği);
    şu an her çalıştırma ve her algoritma grafiği baştan kuruyor.
 2. Kenar başına raster değerleri ve profil maliyetleri önceden hesaplanır
