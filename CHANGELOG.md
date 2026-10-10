@@ -5,6 +5,17 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `web/js/app3d.js` (about 2,400 lines) is split by topic: the class keeps
+  construction, route loading, playback and the render loop (about 520
+  lines), and its other methods live in `lighting.js`, `controls.js`,
+  `route_layers.js`, `terrain.js`, `basemap.js`, `scene_builders.js`,
+  `capture.js` and `charts.js`, mixed into the class prototype. Behaviour is
+  unchanged: the pixel baselines match exactly. A unit test fails if two
+  modules define the same method (the mixin would silently keep one).
+
 ## [1.0.0] - 2026-10-10
 
 Roadmap phase 6: engineering and honesty (see docs/ROADMAP.md).
