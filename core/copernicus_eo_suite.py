@@ -19,9 +19,10 @@ import contextlib
 import math
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from .dem_fetcher import NODATA, GlobalDemFetcher
 from .kinematics import haversine_distance_2d
@@ -42,6 +43,50 @@ class EnvironmentalLayerResult:
     color_palette: str
 
 
+# Most elevation samples one request may ask Open-Elevation for: 25,000
+# points is about 170 requests of 150 points. Larger extents get a coarser
+# grid instead of thousands of sequential requests (an 800 x 800 grid was
+# 640,000 points, about 4,300 requests, and froze QGIS for a long time).
+MAX_DEM_POINTS = 25_000
+METRES_PER_DEGREE = 111_320.0
+
+
+def plan_dem_grid(
+    bbox: Sequence[float],
+    resolution_deg: float = 0.000277777777778,
+    max_points: int = MAX_DEM_POINTS,
+) -> dict:
+    """Grid size, cell size and request count for an elevation download.
+
+    The cell size is the requested one (about 30 m) unless that would exceed
+    ``max_points``; then it grows until the whole extent fits the budget.
+    """
+    min_lon, min_lat, max_lon, max_lat = (float(v) for v in bbox[:4])
+    min_lon, max_lon = sorted((min_lon, max_lon))
+    min_lat, max_lat = sorted((min_lat, max_lat))
+    d_lon = max(1e-9, max_lon - min_lon)
+    d_lat = max(1e-9, max_lat - min_lat)
+    res = max(0.00005, float(resolution_deg))
+    budget = max(64, int(max_points))
+    if (d_lon / res) * (d_lat / res) > budget:
+        res = math.sqrt(d_lon * d_lat / budget)
+    width = max(8, int(math.ceil(d_lon / res)))
+    height = max(8, int(math.ceil(d_lat / res)))
+    mid_lat = math.radians((min_lat + max_lat) / 2.0)
+    res_m = res * METRES_PER_DEGREE * math.sqrt(max(0.05, math.cos(mid_lat)))
+    points = width * height
+    return {
+        "bbox": (min_lon, min_lat, max_lon, max_lat),
+        "res_deg": res,
+        "res_m": res_m,
+        "width": width,
+        "height": height,
+        "points": points,
+        "requests": int(math.ceil(points / 150.0)),
+        "coarsened": res > float(resolution_deg) * 1.0001,
+    }
+
+
 class CorridorElevationSuite:
     """Acquires and corridor-clips a real elevation raster for a route extent."""
 
@@ -58,25 +103,34 @@ class CorridorElevationSuite:
         corridor_coords: Optional[Sequence[Tuple[float, float, ...]]] = None,
         buffer_meters: float = 30.0,
         resolution_deg: float = 0.000277777777778,  # ~30m at equator
+        progress: Optional[Callable[[float], None]] = None,
+        is_canceled: Optional[Callable[[], bool]] = None,
+        max_points: int = MAX_DEM_POINTS,
     ) -> List[EnvironmentalLayerResult]:
-        """Acquire and corridor-clip a real elevation raster for the given extent."""
-        min_lon, min_lat, max_lon, max_lat = (float(v) for v in bbox[:4])
-        if min_lon > max_lon:
-            min_lon, max_lon = max_lon, min_lon
-        if min_lat > max_lat:
-            min_lat, max_lat = max_lat, min_lat
+        """Acquire and corridor-clip a real elevation raster for the given extent.
 
-        out_dir = cls.get_output_dir()
-
-        # Grid dimensions
-        res = max(0.00005, float(resolution_deg))
-        width = max(8, min(800, int(math.ceil((max_lon - min_lon) / res))))
-        height = max(8, min(800, int(math.ceil((max_lat - min_lat) / res))))
+        The grid follows plan_dem_grid: about 30 m cells, coarser when the
+        extent would need more than ``max_points`` samples. It always covers
+        the whole extent (the old 800-cell cap silently cut it off).
+        Returns [] when cancelled.
+        """
+        plan = plan_dem_grid(bbox, resolution_deg, max_points)
+        min_lon, min_lat, _max_lon, _max_lat = plan["bbox"]
+        res = plan["res_deg"]
+        width = plan["width"]
+        height = plan["height"]
         actual_max_lon = min_lon + width * res
         actual_max_lat = min_lat + height * res
 
+        out_dir = cls.get_output_dir()
+
         # 1. Fetch / derive DEM grid
-        dem_grid = cls._acquire_dem_grid(min_lon, min_lat, actual_max_lon, actual_max_lat, width, height, res)
+        dem_grid = cls._acquire_dem_grid(
+            min_lon, min_lat, actual_max_lon, actual_max_lat, width, height, res,
+            progress=progress, is_canceled=is_canceled,
+        )
+        if is_canceled is not None and is_canceled():
+            return []
 
         # 2. Apply the corridor buffer mask if a corridor line is provided
         if corridor_coords and len(corridor_coords) >= 2:
@@ -95,10 +149,13 @@ class CorridorElevationSuite:
         geotransform = (min_lon, res, 0.0, actual_max_lat, 0.0, -res)
         results: List[EnvironmentalLayerResult] = []
 
+        # The name states the real cell size: on large extents it is coarser
+        # than the nominal 30 m.
+        cell = f"~{plan['res_m']:.0f} m"
         dem_name = (
-            "Corridor Elevation (Open-Elevation 30m)"
+            f"Corridor Elevation (Open-Elevation, {cell})"
             if (corridor_coords and len(corridor_coords) >= 2)
-            else "Elevation DEM (Open-Elevation 30m)"
+            else f"Elevation DEM (Open-Elevation, {cell})"
         )
         specs = [
             ("dem", dem_name, dem_grid, "m", "terrain"),
@@ -107,7 +164,9 @@ class CorridorElevationSuite:
         # tempfile has no `time` attribute, so the old expression always took the
         # else-branch and every run reused one filename, overwriting rasters that
         # were still open in the project.
-        timestamp = int(time.time())
+        # Unique per run: second-resolution timestamps collided when two
+        # downloads finished within the same second.
+        timestamp = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
         for key, name, grid, unit, palette in specs:
             file_path = out_dir / f"corridor_{key}_{timestamp}.tif"
             min_v, max_v = cls._write_geotiff(file_path, grid, width, height, geotransform, nodata_val=-9999.0)
@@ -135,6 +194,8 @@ class CorridorElevationSuite:
         width: int,
         height: int,
         res: float,
+        progress: Optional[Callable[[float], None]] = None,
+        is_canceled: Optional[Callable[[], bool]] = None,
     ) -> List[List[float]]:
         """Populate the elevation grid from the Open-Elevation API and its cache.
 
@@ -151,7 +212,9 @@ class CorridorElevationSuite:
                 lon = min_lon + (c + 0.5) * res
                 coords_to_sample.append((lon, lat))
 
-        elevations = GlobalDemFetcher.fetch_elevations_for_coords(coords_to_sample)
+        elevations = GlobalDemFetcher.fetch_elevations_for_coords(
+            coords_to_sample, progress=progress, is_canceled=is_canceled
+        )
         idx = 0
         for r in range(height):
             for c in range(width):

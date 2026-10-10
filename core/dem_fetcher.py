@@ -11,7 +11,7 @@ import json
 import math
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 # Raster NoData value. Distinct from 0.0, which is a legal elevation: filling
 # unresolved samples with zero produced a flat sea-level plateau that downstream
@@ -61,7 +61,11 @@ class GlobalDemFetcher:
 
     @classmethod
     def fetch_elevations_for_coords(
-        cls, coords: Sequence[Tuple[float, float]], timeout_sec: float = 3.0
+        cls,
+        coords: Sequence[Tuple[float, float]],
+        timeout_sec: float = 3.0,
+        progress: Optional[Callable[[float], None]] = None,
+        is_canceled: Optional[Callable[[], bool]] = None,
     ) -> List[Optional[float]]:
         """Fetch real elevations in metres for a sequence of (lon, lat) WGS84 points.
 
@@ -95,6 +99,13 @@ class GlobalDemFetcher:
             any_success = False
 
             for i in range(0, len(missing_pairs), chunk_size):
+                # Background callers can stop a long download between requests;
+                # whatever was not fetched stays unresolved (None).
+                if is_canceled is not None and is_canceled():
+                    unresolved_indices.extend(missing_pairs[i:])
+                    break
+                if progress is not None:
+                    progress(100.0 * i / len(missing_pairs))
                 chunk = missing_pairs[i : i + chunk_size]
                 chunk_locations = [{"latitude": round(lat, 6), "longitude": round(lon, 6)} for _, lon, lat in chunk]
                 success_chunk = False

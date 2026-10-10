@@ -59,9 +59,11 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
 from ..core.basemap import add_osm_basemap
+from .tasks import FunctionTask, TaskContext, cancel_tasks, snapshot, start_task
 from ..core.copernicus_eo_suite import (
     CorridorElevationSuite,
     apply_environmental_raster_symbology,
+    plan_dem_grid,
 )
 from ..core.dem_fetcher import GlobalDemFetcher
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
@@ -173,6 +175,10 @@ def _apply_route_point_labeling(layer: QgsVectorLayer, label_text: str, text_col
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
     layer.setLabelsEnabled(True)
 
+
+
+# Elevation downloads above this many requests ask for confirmation first.
+DEM_CONFIRM_REQUESTS = 40
 
 class Route3DStudioDock(QDockWidget):
     """Next-generation 3D Mobility & Route Planning Studio Dock."""
@@ -1547,7 +1553,11 @@ class Route3DStudioDock(QDockWidget):
         self.cmb_profile.setCurrentIndex(index)
 
     def quick_compute_route(self) -> None:
-        """1-Click streamlined workflow: auto-load basemap, auto-fetch real 3D environment (buildings, trees, parks), compute 3D route, and launch 3D Studio."""
+        """1-Click workflow: basemap, real OSM environment, 3D routes and the 3D Studio.
+
+        The OSM environment download and the routing run together in one
+        background task (compute_route with fetch_environment=True).
+        """
         if not self.point_a or not self.point_b:
             msg = "Please select both Point A (Origin) and Point B (Destination) first using 'Pick on Map'."
             if self.iface:
@@ -1556,32 +1566,11 @@ class Route3DStudioDock(QDockWidget):
                 QMessageBox.warning(self, "02Route 3D", msg)
             return
 
-        # 1. Ensure OSM Basemap exists in project
         self._on_add_osm_basemap()
-
-        # 2. Auto-fetch real OSM urban environment (roads, 3D buildings, trees, parks) if missing
-        lons = [self.point_a.lon, self.point_b.lon]
-        lats = [self.point_a.lat, self.point_b.lat]
-        d_lon = max(0.001, max(lons) - min(lons))
-        d_lat = max(0.001, max(lats) - min(lats))
-        buf_lon = min(0.008, max(0.0035, d_lon * 0.45))
-        buf_lat = min(0.008, max(0.0035, d_lat * 0.45))
-        bbox = (min(lons) - buf_lon, min(lats) - buf_lat, max(lons) + buf_lon, max(lats) + buf_lat)
-
-        if not self.cached_osm_buildings or not self.cached_osm_trees:
-            if self.iface:
-                self.iface.messageBar().pushInfo("02Route 3D", "⚡ Quick Mode: Auto-acquiring real 3D buildings, trees, and park greenery...")
-            roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
-            if buildings:
-                self.cached_osm_buildings = buildings
-            if trees:
-                self.cached_osm_trees = trees
-            if parks:
-                self.cached_osm_parks = parks
-            self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
-
-        # 3. Compute route & sync 3D WebGL diorama
-        self.compute_route()
+        need_environment = not self.cached_osm_buildings or not self.cached_osm_trees
+        if need_environment:
+            self._notify("info", "⚡ Quick Mode: acquiring real 3D buildings, trees and parks, then routing...")
+        self.compute_route(fetch_environment=need_environment)
 
     def _selected_extra_raster_layers(self) -> List[Any]:
         """Return the current unlimited MCDA raster stack in list-widget order."""
@@ -1815,75 +1804,128 @@ class Route3DStudioDock(QDockWidget):
                 proj.addMapLayer(tree_layer)
 
     def _fetch_osm_layers_for_extent(self) -> None:
-        """Download real OSM roads, 3D buildings, trees, and park greenery for current area and load into QGIS."""
+        """Download real OSM roads, 3D buildings, trees and parks in the background."""
         bbox = self._get_active_bbox()
         if bbox is None:
             self._warn_no_extent()
             return
-        if self.iface:
-            self.iface.messageBar().pushInfo("02Route 3D", "Fetching real OSM roads, 3D building footprints, trees, and parks from Overpass API...")
-
-        roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
-        self.cached_osm_buildings = buildings
-        self.cached_osm_trees = trees
-        self.cached_osm_parks = parks
-
-        if not roads and not buildings and not trees:
-            if self.iface:
-                reason = OsmDataFetcher.last_error
-                message = (
-                    f"OpenStreetMap download failed: {reason}" if reason
-                    else "No OSM elements found in current bounding box."
-                )
-                self.iface.messageBar().pushWarning("02Route 3D", message)
+        if getattr(self, "_osm_task_running", False):
+            self._notify("info", "An OpenStreetMap download is already running.")
             return
+        self._notify("info", "Fetching OSM roads, buildings, trees and parks in the background...")
 
-        self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
+        def work(ctx: TaskContext) -> Any:
+            ctx.check()
+            data = OsmDataFetcher.fetch_full_urban_environment(bbox)
+            return data, OsmDataFetcher.last_error
 
-        if self.iface:
-            self.iface.messageBar().pushSuccess(
-                "02Route 3D",
+        def done(outcome: Any) -> None:
+            self._osm_task_running = False
+            (roads, buildings, trees, parks), reason = outcome
+            self.cached_osm_buildings = buildings
+            self.cached_osm_trees = trees
+            self.cached_osm_parks = parks
+            if not roads and not buildings and not trees:
+                self._notify(
+                    "warning",
+                    f"OpenStreetMap download failed: {reason}" if reason
+                    else "No OSM elements found in current bounding box.",
+                )
+                return
+            self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
+            self._notify(
+                "success",
                 f"Acquired {len(roads)} OSM roads, {len(buildings)} buildings, {len(trees)} trees, and {len(parks)} parks!",
             )
 
+        def failed(message: str) -> None:
+            self._osm_task_running = False
+            self._notify("warning", f"OpenStreetMap download failed: {message}")
+
+        def cancelled() -> None:
+            self._osm_task_running = False
+            self._notify("info", "OpenStreetMap download cancelled.")
+
+        self._osm_task_running = True
+        start_task(self, FunctionTask("02Route 3D: OpenStreetMap download", work, done, failed, cancelled))
+
     def _on_fetch_global_dem_clicked(self) -> None:
-        """Acquire a real elevation raster for the full active map extent."""
+        """Download a real elevation raster for the map extent in the background.
+
+        The grid is budgeted (plan_dem_grid): large extents get coarser cells
+        instead of thousands of requests, and the user confirms big downloads.
+        """
         bbox = self._get_active_bbox()
         if bbox is None:
             self._warn_no_extent()
             return
+        if getattr(self, "_dem_task_running", False):
+            self._notify("info", "An elevation download is already running.")
+            return
 
-        if self.iface:
-            self.iface.messageBar().pushInfo(
-                "02Route 3D",
-                "Fetching real elevation raster for full map extent from Open-Elevation API...",
-            )
+        plan = plan_dem_grid(bbox)
+        if plan["requests"] > DEM_CONFIRM_REQUESTS or (
+            self.cmb_dem_layer.currentLayer() is not None
+        ):
+            existing = self.cmb_dem_layer.currentLayer()
+            lines = [
+                f"This downloads {plan['points']:,} elevation samples "
+                f"({plan['requests']} requests to Open-Elevation) at about "
+                f"{plan['res_m']:.0f} m resolution."
+            ]
+            if plan["coarsened"]:
+                lines.append("The extent is large, so the cells are coarser than 30 m.")
+            if existing is not None:
+                lines.append(
+                    f"A DEM layer is already selected ({existing.name()}); routing uses it."
+                )
+            lines.append("Continue?")
+            answer = QMessageBox.question(self, "02Route 3D", "\n\n".join(lines))
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
-        try:
+        self._notify(
+            "info",
+            f"Downloading elevation ({plan['points']:,} samples, ~{plan['res_m']:.0f} m) in the background. "
+            "Cancel it from the QGIS task bar.",
+        )
+
+        def work(ctx: TaskContext) -> Any:
             results = CorridorElevationSuite.fetch_and_clip_corridor_elevation(
                 bbox,
-                corridor_coords=None,  # Full map extent DEM coverage without corridor clipping
+                corridor_coords=None,
+                progress=ctx.progress,
+                is_canceled=ctx.is_canceled,
             )
-        except Exception as exc:
-            message = f"Elevation acquisition failed: {exc}"
-            if self.iface:
-                self.iface.messageBar().pushWarning("02Route 3D", message)
-            else:
-                QMessageBox.warning(self, "02Route 3D", message)
-            return
+            ctx.check()
+            return results, GlobalDemFetcher.last_error
 
+        def done(outcome: Any) -> None:
+            self._dem_task_running = False
+            results, reason = outcome
+            self._load_dem_results(results, reason)
+
+        def failed(message: str) -> None:
+            self._dem_task_running = False
+            self._notify("warning", f"Elevation acquisition failed: {message}")
+
+        def cancelled() -> None:
+            self._dem_task_running = False
+            self._notify("info", "Elevation download cancelled.")
+
+        self._dem_task_running = True
+        start_task(self, FunctionTask("02Route 3D: elevation download", work, done, failed, cancelled))
+
+    def _load_dem_results(self, results: List[Any], reason: str = "") -> None:
+        """Add downloaded elevation rasters to the project (main thread)."""
         if not results:
-            reason = GlobalDemFetcher.last_error
-            message = "No elevation layer could be generated for the active extent" + (
-                f" (Open-Elevation: {reason})." if reason else "."
+            self._notify(
+                "warning",
+                "No elevation layer could be generated for the active extent"
+                + (f" (Open-Elevation: {reason})." if reason else "."),
             )
-            if self.iface:
-                self.iface.messageBar().pushWarning("02Route 3D", message)
-            else:
-                QMessageBox.warning(self, "02Route 3D", message)
             return
 
-        # Prepare layer tree group in QGIS
         project = QgsProject.instance()
         root = project.layerTreeRoot()
         group_name = "Elevation DEM"
@@ -1904,24 +1946,23 @@ class Route3DStudioDock(QDockWidget):
             else:
                 project.addMapLayer(layer, True)
             loaded_count += 1
-
             if res.key == "dem":
                 self.cmb_dem_layer.setLayer(layer)
 
         if loaded_count > 0:
-            message = (
-                f"Successfully loaded full map extent Elevation DEM ({loaded_count} layer(s)) into QGIS."
-            )
-            if self.iface:
-                self.iface.messageBar().pushSuccess("02Route 3D", message)
-            else:
-                QMessageBox.information(self, "02Route 3D", message)
+            self._notify("success", f"Loaded the elevation DEM ({results[0].name}) into QGIS.")
         else:
-            message = "The elevation raster was written but could not be loaded into QGIS."
-            if self.iface:
-                self.iface.messageBar().pushWarning("02Route 3D", message)
-            else:
-                QMessageBox.warning(self, "02Route 3D", message)
+            self._notify("warning", "The elevation raster was written but could not be loaded into QGIS.")
+
+    def _notify(self, level: str, message: str) -> None:
+        """Message bar when running inside QGIS, a dialog otherwise."""
+        if self.iface:
+            bar = self.iface.messageBar()
+            {"success": bar.pushSuccess, "warning": bar.pushWarning}.get(level, bar.pushInfo)(
+                "02Route 3D", message
+            )
+        elif level == "warning":
+            QMessageBox.warning(self, "02Route 3D", message)
 
     def _set_compute_busy(self, busy: bool) -> None:
         """Disable the compute buttons while a computation is running.
@@ -1946,11 +1987,15 @@ class Route3DStudioDock(QDockWidget):
                 if getattr(self, name, None) is not None
             }
 
-    def compute_route(self) -> None:
-        """Compute 3D route(s), add the layer to QGIS and start the canvas animation."""
+    def compute_route(self, fetch_environment: bool = False) -> None:
+        """Compute 3D route(s) in the background, then show them (layer, animation, 3D).
+
+        The main thread only reads the inputs (points, weights, layers) and,
+        when the task finishes, updates the UI; downloads, graph building and
+        routing run in a QgsTask that can be cancelled from the task bar.
+        """
         if getattr(self, "_computing", False):
-            # The work below blocks the UI thread, so without this a second click
-            # re-entered it on a frozen window.
+            self._notify("info", "A route calculation is already running.")
             return
         if not self.point_a or not self.point_b:
             msg = "Please select both Point A (Origin) and Point B (Destination) first using 'Pick on Map' or 'Use Layer'."
@@ -1960,127 +2005,193 @@ class Route3DStudioDock(QDockWidget):
                 QMessageBox.warning(self, "02Route 3D", msg)
             return
 
+        job = self._prepare_route_job(fetch_environment)
+        if job is None:
+            return
+
         self._computing = True
         self._set_compute_busy(True)
-        try:
-            self._compute_route_inner()
-        finally:
-            self._computing = False
-            self._set_compute_busy(False)
-            self.progress_bar.setVisible(False)
-            if hasattr(self, "quick_progress_bar"):
-                self.quick_progress_bar.setVisible(False)
+        self._set_route_progress(15)
 
-    def _compute_route_inner(self) -> None:
-        """The actual computation; always run inside compute_route's busy guard."""
-        self.waypoints = [self.point_a, self.point_b]
+        def work(ctx: TaskContext) -> Any:
+            return self._route_work(job, ctx)
 
-        # Both progress bars are driven, so the Quick tab is no longer blank for
-        # the whole (multi-second, network-bound) run.
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(15)
-        if hasattr(self, "quick_progress_bar"):
-            self.quick_progress_bar.setValue(15)
-        if hasattr(self, "quick_progress_bar"):
-            self.quick_progress_bar.setVisible(True)
-            self.quick_progress_bar.setValue(15)
+        def done(outcome: Any) -> None:
+            self._end_route_task()
+            self._finish_route(job, outcome)
 
-        # Bounding box calculation scaled to route extent
-        lons = [w.lon for w in self.waypoints]
-        lats = [w.lat for w in self.waypoints]
+        def failed(message: str) -> None:
+            self._end_route_task()
+            self._show_route_error(message)
+
+        def cancelled() -> None:
+            self._end_route_task()
+            self._notify("info", "Route calculation cancelled.")
+
+        self._route_task = start_task(
+            self, FunctionTask("02Route 3D: route calculation", work, done, failed, cancelled)
+        )
+        self._route_task.progressChanged.connect(self._set_route_progress)
+
+    def _set_route_progress(self, value: float) -> None:
+        for bar_name in ("progress_bar", "quick_progress_bar"):
+            bar = getattr(self, bar_name, None)
+            if bar is not None:
+                bar.setVisible(True)
+                bar.setValue(int(value))
+
+    def _end_route_task(self) -> None:
+        self._computing = False
+        self._set_compute_busy(False)
+        for bar_name in ("progress_bar", "quick_progress_bar"):
+            bar = getattr(self, bar_name, None)
+            if bar is not None:
+                bar.setVisible(False)
+
+    def _prepare_route_job(self, fetch_environment: bool) -> Optional[Dict[str, Any]]:
+        """Read every input the routing needs on the main thread.
+
+        Vector layers are read into plain segments here; raster layers are
+        snapshotted (cloned providers), so the task never touches live layers.
+        """
+        waypoints = [self.point_a, self.point_b]
+        lons = [w.lon for w in waypoints]
+        lats = [w.lat for w in waypoints]
         d_lon = max(0.001, max(lons) - min(lons))
         d_lat = max(0.001, max(lats) - min(lats))
         buf_lon = min(0.006, max(0.0025, d_lon * 0.35))
         buf_lat = min(0.006, max(0.0025, d_lat * 0.35))
         bbox = (min(lons) - buf_lon, min(lats) - buf_lat, max(lons) + buf_lon, max(lats) + buf_lat)
+        env_lons_buf = min(0.008, max(0.0035, d_lon * 0.45))
+        env_lats_buf = min(0.008, max(0.0035, d_lat * 0.45))
+        env_bbox = (
+            min(lons) - env_lons_buf, min(lats) - env_lats_buf,
+            max(lons) + env_lons_buf, max(lats) + env_lats_buf,
+        )
 
-        self.progress_bar.setValue(35)
-
-        if hasattr(self, "quick_progress_bar"):
-
-            self.quick_progress_bar.setValue(35)
-
-        # Environmental raster sampling
         weights = MCDAWeights(
             weight_slope=self.sld_slope.value() / 100.0,
             weight_heat=self.sld_heat.value() / 100.0,
             weight_green=self.sld_green.value() / 100.0,
         )
         sampler = EnvironmentalSurfaceSampler(
-            dem_layer=self.cmb_dem_layer.currentLayer(),
-            lst_layer=self.cmb_lst_layer.currentLayer(),
-            green_layer=self.cmb_green_layer.currentLayer(),
-            additional_layers=self._selected_extra_raster_layers(),
+            dem_layer=snapshot(self.cmb_dem_layer.currentLayer()),
+            lst_layer=snapshot(self.cmb_lst_layer.currentLayer()),
+            green_layer=snapshot(self.cmb_green_layer.currentLayer()),
+            additional_layers=[
+                snap for snap in (snapshot(layer) for layer in self._selected_extra_raster_layers()) if snap
+            ],
             weights=weights,
         )
 
-        engine = RoutingEngine3D(sampler=sampler, weights=weights)
         selected_road_layer = self.cmb_route_road_layer.currentLayer()
         selected_building_layer = self.cmb_route_building_layer.currentLayer()
         for source_layer in (selected_road_layer, selected_building_layer):
             if source_layer is not None and source_layer.isValid():
                 apply_osm_atlas_style(source_layer)
-        try:
-            segments = self.network_manager.require_segments(
-                vector_layer=selected_road_layer if selected_road_layer and selected_road_layer.isValid() else None,
-                bbox=bbox,
-            )
-        except NetworkSourceError as exc:
-            self.progress_bar.setVisible(False)
-            self._show_route_error(str(exc))
-            return
-        try:
-            engine.build_graph(segments)
-        except Exception as exc:
-            self.progress_bar.setVisible(False)
-            self._show_route_error(f"Could not build the route network: {exc}")
-            return
 
-        if not engine.nodes:
-            self.progress_bar.setVisible(False)
-            self._show_route_error("The selected extent contains no usable network nodes.")
-            return
+        layer_segments = None
+        if selected_road_layer is not None and selected_road_layer.isValid():
+            try:
+                layer_segments = self.network_manager.require_segments(vector_layer=selected_road_layer)
+            except NetworkSourceError as exc:
+                self._show_route_error(str(exc))
+                return None
 
-        self.progress_bar.setValue(55)
+        buildings_from_layer = None
+        if selected_building_layer is not None and selected_building_layer.isValid():
+            buildings_from_layer = self._extract_buildings_from_layer(selected_building_layer)
 
-        if hasattr(self, "quick_progress_bar"):
-
-            self.quick_progress_bar.setValue(55)
-
-        # Determine which profile keys to calculate
         scope_key = self.cmb_mode_scope.currentData() or "single"
         if scope_key == "single":
             target_keys = [self.cmb_profile.currentData() or "adult"]
         else:
             target_keys = list_profile_keys_for_group(scope_key)
-
-        self.multi_route_results = {}
-        for p_key in target_keys:
-            try:
-                res = engine.calculate_route(self.waypoints, profile_key=p_key, optimize_tsp=False)
-            except Exception as exc:
-                self.progress_bar.setVisible(False)
-                self._show_route_error(f"Route calculation failed for {p_key}: {exc}")
-                return
-            self.multi_route_results[p_key] = res
-
         primary_key = self.cmb_profile.currentData() or target_keys[0]
-        if primary_key not in self.multi_route_results:
-            primary_key = target_keys[0]
+
+        return {
+            "waypoints": waypoints,
+            "bbox": bbox,
+            "env_bbox": env_bbox,
+            "weights": weights,
+            "sampler": sampler,
+            "layer_segments": layer_segments,
+            "buildings_from_layer": buildings_from_layer,
+            "target_keys": target_keys,
+            "primary_key": primary_key,
+            # Download buildings/trees/parks too: Quick Mode, or no building
+            # layer and nothing cached yet.
+            "fetch_environment": bool(fetch_environment)
+            or (buildings_from_layer is None and not self.cached_osm_buildings),
+        }
+
+    def _route_work(self, job: Dict[str, Any], ctx: TaskContext) -> Dict[str, Any]:
+        """Background part of a route calculation: no widgets, no live layers."""
+        outcome: Dict[str, Any] = {"environment": None, "environment_error": ""}
+        if job["fetch_environment"]:
+            ctx.progress(5)
+            outcome["environment"] = OsmDataFetcher.fetch_full_urban_environment(job["env_bbox"])
+            outcome["environment_error"] = OsmDataFetcher.last_error
+            ctx.check()
+
+        ctx.progress(20)
+        segments = job["layer_segments"]
+        if segments is None:
+            segments = self.network_manager.require_segments(bbox=job["bbox"])
+        ctx.check()
+
+        ctx.progress(35)
+        engine = RoutingEngine3D(sampler=job["sampler"], weights=job["weights"])
+        engine.build_graph(segments)
+        if not engine.nodes:
+            raise NetworkSourceError("The selected extent contains no usable network nodes.")
+        ctx.check()
+
+        results: Dict[str, RouteResult3D] = {}
+        keys = job["target_keys"]
+        for index, key in enumerate(keys):
+            ctx.progress(55 + 35 * index / max(1, len(keys)))
+            results[key] = engine.calculate_route(job["waypoints"], profile_key=key, optimize_tsp=False)
+            ctx.check()
+        outcome["results"] = results
+        ctx.progress(95)
+        return outcome
+
+    def _finish_route(self, job: Dict[str, Any], outcome: Dict[str, Any]) -> None:
+        """Main-thread part: store results and update panels, layers and 3D data."""
+        self.waypoints = list(job["waypoints"])
+        if outcome.get("environment") is not None:
+            roads, buildings, trees, parks = outcome["environment"]
+            if buildings:
+                self.cached_osm_buildings = buildings
+            if trees:
+                self.cached_osm_trees = trees
+            if parks:
+                self.cached_osm_parks = parks
+            if roads or buildings or trees or parks:
+                self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
+            elif outcome.get("environment_error"):
+                self._notify(
+                    "warning",
+                    f"OpenStreetMap buildings/trees could not be downloaded: {outcome['environment_error']}",
+                )
+        if job["buildings_from_layer"] is not None:
+            self.cached_osm_buildings = job["buildings_from_layer"]
+
+        self.multi_route_results = dict(outcome["results"])
+        keys = job["target_keys"]
+        primary_key = job["primary_key"] if job["primary_key"] in self.multi_route_results else keys[0]
         result = self.multi_route_results[primary_key]
         self.current_route_result = result
 
         if not result.coordinates_3d:
-            self.progress_bar.setVisible(False)
             self._show_route_error(result.status_message or "No route could be found between the selected points.")
             return
 
-        self.progress_bar.setValue(80)
+        self._show_route_results(result)
 
-        if hasattr(self, "quick_progress_bar"):
-
-            self.quick_progress_bar.setValue(80)
-
+    def _show_route_results(self, result: RouteResult3D) -> None:
+        """Show computed routes: KPIs, ribbons, cue sheet, layer, animation, 3D data."""
         # Update KPIs
         self._update_kpi_display(result)
 
@@ -2100,19 +2211,6 @@ class Route3DStudioDock(QDockWidget):
 
         # Load 2D canvas animator with all calculated routes
         self.canvas_animator.load_routes(list(self.multi_route_results.values()))
-
-        # 30m Linear Corridor Building & Tree Filter & 3D WebGL data sync
-        if selected_building_layer is not None and selected_building_layer.isValid():
-            self.cached_osm_buildings = self._extract_buildings_from_layer(selected_building_layer)
-        elif not self.cached_osm_buildings:
-            roads, buildings, trees, parks = OsmDataFetcher.fetch_full_urban_environment(bbox)
-            if buildings:
-                self.cached_osm_buildings = buildings
-            if trees:
-                self.cached_osm_trees = trees
-            if parks:
-                self.cached_osm_parks = parks
-            self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
 
         geojson_data = self._build_web_route_payload(result)
 
@@ -2146,15 +2244,6 @@ class Route3DStudioDock(QDockWidget):
             self.btn_quick_stop.setEnabled(True)
             self.sld_quick_progress.setEnabled(True)
 
-        self.progress_bar.setValue(100)
-
-        if hasattr(self, "quick_progress_bar"):
-
-            self.quick_progress_bar.setValue(100)
-        self.progress_bar.setVisible(False)
-        if hasattr(self, "quick_progress_bar"):
-            self.quick_progress_bar.setValue(100)
-            self.quick_progress_bar.setVisible(False)
         if self.iface:
             self.iface.messageBar().pushSuccess(
                 "02Route 3D",
@@ -2578,6 +2667,10 @@ class Route3DStudioDock(QDockWidget):
         project, without asking, and permanently disconnect the project signal so
         the reopened dock no longer tracked layer removal at all.
         """
+        # On plugin unload, running downloads/routing are cancelled and must not
+        # call back into the deleted dock. Merely hiding the panel lets them finish.
+        if remove_layers:
+            cancel_tasks(self)
         if self.active_tool is not None and self.canvas is not None:
             with contextlib.suppress(Exception):
                 self.canvas.unsetMapTool(self.active_tool)
