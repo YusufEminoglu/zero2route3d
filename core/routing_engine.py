@@ -870,7 +870,7 @@ class RoutingEngine3D:
         end_snap_m = haversine_distance_2d(end_pt, self.nodes[end_node])
 
         if start_node == end_node:
-            z1 = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
+            z1 = self._endpoint_elevation(start_pt, start_node)
             dist_d = haversine_distance_2d(start_pt, end_pt)
             if dist_d < 0.1:
                 self.last_segment_diagnostics = {
@@ -917,8 +917,8 @@ class RoutingEngine3D:
             curr = prev_map.get(curr) if curr != start_node else None
 
         path.reverse()
-        z_start = self.sampler.sample_elevation(start_pt[0], start_pt[1]) or 0.0
-        z_end = self.sampler.sample_elevation(end_pt[0], end_pt[1]) or 0.0
+        z_start = self._endpoint_elevation(start_pt, start_node)
+        z_end = self._endpoint_elevation(end_pt, end_node)
 
         final_path: List[Tuple[float, float, float]] = []
         p_start_3d = (start_pt[0], start_pt[1], z_start)
@@ -938,6 +938,18 @@ class RoutingEngine3D:
             **counters,
         }
         return final_path, True
+
+    def _endpoint_elevation(self, point: Tuple[float, float], snapped_node: int) -> float:
+        """Height of a route end point: the DEM there, else its snapped node's height.
+
+        It used to fall back to 0 m, so without a DEM (heights from a 3D
+        network) the short link to the first node became a cliff: a 40 m
+        node 20 m away read as a 200 % slope in the route statistics.
+        """
+        sampled = self.sampler.sample_elevation(point[0], point[1])
+        if sampled is not None and math.isfinite(sampled):
+            return float(sampled)
+        return float(self.nodes[snapped_node][2])
 
     def _sample_series(
         self,

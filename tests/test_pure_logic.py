@@ -1603,6 +1603,22 @@ class RoutingPerformanceTests(unittest.TestCase):
         first.build_graph(changed)
         self.assertTrue(second.adj)
 
+    def test_route_ends_take_the_snapped_node_height_without_a_dem(self) -> None:
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+
+        # A flat 3D street at 40 m; the waypoints lie 20 m off its ends.
+        pts = [(27.0 + i * 0.0005, 38.4, 40.0) for i in range(6)]
+        engine = RoutingEngine3D()
+        engine.build_graph([RoadSegment(p1=a, p2=b, length_m=44.0) for a, b in zip(pts, pts[1:])])
+        result = engine.calculate_route(
+            [Waypoint(27.0, 38.40018), Waypoint(27.0025, 38.40018)], compute_alternatives=False
+        )
+        self.assertTrue(result.coordinates_3d)
+        self.assertEqual(result.coordinates_3d[0][2], 40.0)
+        self.assertEqual(result.coordinates_3d[-1][2], 40.0)
+        self.assertLess(result.statistics.max_slope_pct, 1.0)
+
     def test_densify_records_the_true_source_segment(self) -> None:
         from zero2route3d.core.profile_stats import densify_3d_linestring_indexed
 
@@ -1614,6 +1630,77 @@ class RoutingPerformanceTests(unittest.TestCase):
                 self.assertAlmostEqual(point[1], 38.4)
             else:
                 self.assertAlmostEqual(point[0], 27.001)
+
+
+class ViewerDataTests(unittest.TestCase):
+    """Phase 4: what the 3D viewer receives from QGIS."""
+
+    def test_terrain_grid_is_north_first_and_real(self) -> None:
+        from zero2route3d.core.terrain_grid import sample_terrain_grid
+
+        # Height rises 1 m per 0.0001 degree northwards.
+        grid = sample_terrain_grid(lambda lon, lat: (lat - 38.40) * 10_000, (27.10, 38.40, 27.11, 38.41))
+        self.assertIsNotNone(grid)
+        cols, rows, heights = grid["cols"], grid["rows"], grid["heights"]
+        self.assertEqual(len(heights), cols * rows)
+        self.assertAlmostEqual(heights[0], 100.0, places=1)  # first row is the north edge
+        self.assertAlmostEqual(heights[-1], 0.0, places=1)
+        self.assertLessEqual(grid["cell_m"], 12.0)
+        self.assertEqual(grid["coverage"], 1.0)
+
+    def test_terrain_grid_fills_small_gaps_and_rejects_sparse_data(self) -> None:
+        from zero2route3d.core.terrain_grid import sample_terrain_grid
+
+        bbox = (27.10, 38.40, 27.105, 38.405)
+        holes = sample_terrain_grid(lambda lon, lat: None if lon < 27.1005 else 50.0, bbox)
+        self.assertIsNotNone(holes)
+        self.assertLess(holes["coverage"], 1.0)
+        self.assertTrue(all(h == 50.0 for h in holes["heights"]))
+        self.assertIsNone(sample_terrain_grid(lambda lon, lat: None if lon < 27.104 else 50.0, bbox))
+        self.assertIsNone(sample_terrain_grid(lambda lon, lat: None, bbox))
+
+    def test_terrain_grid_size_is_capped(self) -> None:
+        from zero2route3d.core.terrain_grid import grid_bbox, sample_terrain_grid
+
+        bbox = grid_bbox([[(27.0, 38.3), (27.3, 38.6)]], buffer_m=60.0)
+        grid = sample_terrain_grid(lambda lon, lat: 10.0, bbox, max_cells_axis=160)
+        self.assertLessEqual(grid["cols"], 160)
+        self.assertLessEqual(grid["rows"], 160)
+        self.assertGreater(grid["cell_m"], 100.0)
+
+    def test_local_server_pushes_route_events(self) -> None:
+        import threading
+        import time
+        import urllib.request
+
+        from zero2route3d.core.local_server import Route3DLocalServer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            (root / "index.html").write_text("ok", encoding="utf-8")
+            server = Route3DLocalServer(root, start_port=8960, end_port=8980)
+            base = server.start().rsplit("/", 1)[0]
+            events = []
+
+            def read() -> None:
+                with urllib.request.urlopen(base + "/events", timeout=10) as stream:  # nosec B310
+                    for raw in stream:
+                        line = raw.decode().strip()
+                        if line.startswith("event:"):
+                            events.append(line)
+                        if len(events) >= 2:
+                            return
+
+            reader = threading.Thread(target=read, daemon=True)
+            reader.start()
+            time.sleep(0.5)
+            (root / "data" / "current_route.json").write_text("{}", encoding="utf-8")
+            reader.join(timeout=5)
+            started = time.time()
+            server.stop()
+            self.assertEqual(events, ["event: route", "event: route"])
+            self.assertLess(time.time() - started, 3.0)
 
 
 class MetadataTests(unittest.TestCase):

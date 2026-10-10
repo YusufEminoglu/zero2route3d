@@ -130,6 +130,21 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 
 ## Faz 4 — 3D görüntüleyici
 
+> **Durum (Ekim 2026): v0.8.0.** 1–9 yapıldı: DEM ızgarasından gerçek arazi
+> (QGIS rota görevinde örnekliyor; DEM yoksa görüntüleyici "yaklaşık" diyor),
+> instanced ağaçlar ve birleşik binalar (çizim çağrısı 169 → 91), isteğe bağlı
+> çizim (boştayken kare çizilmiyor), Mercator şeritleriyle doğru altlık +
+> toplu doku yüklemesi + çevrimdışı tepe gölgesi, eksenli yükseklik grafiği
+> (grafik ↔ 3D çift yönlü), rota karşılaştırma şeritleri ve tablosu, SSE ile
+> canlı bağlantı + görünür hata mesajları, klavye / odak / azaltılmış hareket /
+> etiketler, 2×–4× ekran görüntüsü ve HUD'lu video (Safari için MP4). Bu
+> sırada bulunan hatalar da düzeltildi: rota şeridi yükseklikleri %12'ye
+> eziyordu (tepelerde rota arazinin altına giriyordu), DEM yokken rota uçları
+> 0 m (yüzlerce % sahte eğim), profil değerleri yanlış yerden okunuyordu,
+> abartma rota noktalarına uygulanmıyordu, yakalama düğmeleri alt panelin
+> altında kalıyordu. Kalan: QGIS içi gömülü görünüm (madde 7'nin ikinci
+> yarısı) ve görüntüleyicinin modüllere bölünmesi + JS testleri (Faz 6.4).
+
 1. **Gerçek arazi**: bugünkü arazi rota boyunca 180 noktadan uydurulan bir
    yüzey (`web/js/app3d.js:692-916`); rota dışındaki rölyef gerçek değil.
    DEM ızgarasından (QGIS katmanı veya çekilen DEM) gerçek yükseklik ağı;

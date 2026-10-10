@@ -95,6 +95,7 @@ from ..core.osm_styling import (
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
 from ..core.route_corridor_3d import filter_corridor_assets_multi_route
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
+from ..core.terrain_grid import grid_bbox, sample_terrain_grid
 from ..core.scenario_io import (
     ScenarioError,
     build_scenario,
@@ -2192,8 +2193,24 @@ class Route3DStudioDock(QDockWidget):
             results[key] = engine.calculate_route(job["waypoints"], profile_key=key, optimize_tsp=False)
             ctx.check()
         outcome["results"] = results
+        # The 3D viewer's terrain grid is sampled here, off the GUI thread
+        # (a few thousand DEM reads per route).
+        ctx.progress(92)
+        outcome["terrain"] = self._sample_terrain(job["sampler"], results.values())
         ctx.progress(95)
         return outcome
+
+    @staticmethod
+    def _routes_key(results: Any) -> int:
+        return hash(tuple(tuple(map(tuple, r.coordinates_3d)) for r in results if r is not None and r.coordinates_3d))
+
+    @staticmethod
+    def _sample_terrain(sampler: Any, results: Any) -> Optional[Dict[str, Any]]:
+        coords = [r.coordinates_3d for r in results if r is not None and r.coordinates_3d]
+        bbox = grid_bbox(coords, buffer_m=60.0)
+        if bbox is None or not getattr(sampler, "has_elevation_source", False):
+            return None
+        return sample_terrain_grid(sampler.sample_elevation, bbox)
 
     def _finish_route(self, job: Dict[str, Any], outcome: Dict[str, Any]) -> None:
         """Main-thread part: store results and update panels, layers and 3D data."""
@@ -2217,6 +2234,7 @@ class Route3DStudioDock(QDockWidget):
             self.cached_osm_buildings = job["buildings_from_layer"]
 
         self.multi_route_results = dict(outcome["results"])
+        self._terrain_cache = (self._routes_key(self.multi_route_results.values()), outcome.get("terrain"))
         keys = job["target_keys"]
         primary_key = job["primary_key"] if job["primary_key"] in self.multi_route_results else keys[0]
         result = self.multi_route_results[primary_key]
@@ -2566,12 +2584,19 @@ class Route3DStudioDock(QDockWidget):
             osm_parks=self.cached_osm_parks,
         )
 
-        features = []
-        for route_result in route_results:
-            feature = route_result.to_geojson_feature()
-            feature["properties"]["corridor_buildings"] = corridor_blds
-            feature["properties"]["corridor_trees"] = corridor_trees
-            features.append(feature)
+        # Buildings and trees are stored once on the collection; copying them
+        # into every profile's feature multiplied the payload by the profile count.
+        features = [route_result.to_geojson_feature() for route_result in route_results]
+
+        # Real terrain for the viewer: heights sampled from the DEM on a grid
+        # around the routes. Without enough DEM coverage it is omitted and the
+        # viewer labels its route-fitted surface as approximate.
+        # Normally sampled already in the route task (see _route_work).
+        cached = getattr(self, "_terrain_cache", None)
+        if cached is not None and cached[0] == self._routes_key(route_results):
+            terrain = cached[1]
+        else:
+            terrain = self._sample_terrain(sampler, route_results)
         return {
             "type": "FeatureCollection",
             "features": features,
@@ -2581,6 +2606,7 @@ class Route3DStudioDock(QDockWidget):
                 "source": "02Route 3D QGIS multi-profile result",
                 "corridor_buildings": corridor_blds,
                 "corridor_trees": corridor_trees,
+                "terrain": terrain,
             },
         }
 

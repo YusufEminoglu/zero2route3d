@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=0.7.0
+version=0.8.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -45,6 +45,18 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.8.0 - A truthful 3D viewer:
+        - Real terrain: heights sampled from the selected DEM around the routes (sampled in the background task); without a DEM the viewer says its surface is approximate.
+        - Elevation chart with distance and height axes, coloured by slope; hovering it moves the walker in 3D and playback moves its cursor.
+        - Other profiles are drawn as coloured ribbons, with a comparison table (distance, time, climb, max slope and differences).
+        - Routes now sit on the terrain: the route ribbon was squashed to 12 percent of its height and sank under hills.
+        - Renders only when something changes; trees instanced and buildings merged (about half the draw calls).
+        - Basemap tiles placed correctly in Web Mercator, uploaded in batches, with a DEM hillshade when offline.
+        - Live link to QGIS by server-sent events instead of polling every 1.5 s; unreadable route files and lost links are shown.
+        - Keyboard control (Space, arrows, Home/End, R), visible focus, reduced motion, screen-reader labels.
+        - Snapshot at 2x or 4x and video with a caption and the map credit; MP4 in Safari.
+        - Fixes: route ends at 0 m without a DEM (false 400 percent slopes), chart values read at the wrong places, exaggeration not applied to the route, capture buttons hidden behind the bottom panel.
+
     0.7.0 - Faster routing:
         - A 50 x 50 OD matrix on a 10,000-edge network takes about 7 s instead of over a minute: one search per origin instead of one per pair.
         - Routes on the same network reuse the built graph and every evaluated edge cost (another profile, the OD matrix, a second click).

@@ -44,14 +44,125 @@ function disposeHierarchy(obj) {
   });
 }
 
+// Concatenate non-indexed copies of geometries that share one material.
+// (three.module.js ships without BufferGeometryUtils.)
+function mergeGeometries(geometries) {
+  const parts = geometries.map((g) => (g.index ? g.toNonIndexed() : g));
+  const names = ['position', 'normal', 'uv'].filter((name) => parts.every((g) => g.attributes[name]));
+  const merged = new THREE.BufferGeometry();
+  names.forEach((name) => {
+    const itemSize = parts[0].attributes[name].itemSize;
+    const total = parts.reduce((n, g) => n + g.attributes[name].array.length, 0);
+    const array = new Float32Array(total);
+    let offset = 0;
+    parts.forEach((g) => {
+      array.set(g.attributes[name].array, offset);
+      offset += g.attributes[name].array.length;
+    });
+    merged.setAttribute(name, new THREE.BufferAttribute(array, itemSize));
+  });
+  parts.forEach((g, i) => {
+    if (g !== geometries[i]) g.dispose();
+  });
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+// "Nice" axis ticks (1, 2, 5 x 10^n steps) covering [lo, hi].
+function niceTicks(lo, hi, target) {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0];
+  if (hi - lo < 1e-9) return [lo];
+  const raw = (hi - lo) / Math.max(1, target);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 5, 10].map((k) => k * mag).find((v) => v >= raw) || raw;
+  const ticks = [];
+  for (let t = Math.floor(lo / step) * step; t <= hi + step * 0.5; t += step) {
+    ticks.push(Number(t.toFixed(10)));
+  }
+  return ticks;
+}
+
+// A flat ribbon of the given width that follows a route path at its true
+// heights. (The old ribbons were tubes squashed with geometry.scale(1, 0.12, 1),
+// which also squashed the route's heights to 12 %: on hills the ribbon sank
+// under the terrain.)
+function ribbonGeometry(path, width, yOffset = 0) {
+  const samples = Math.max(64, Math.min(4000, Math.round(path.total / 3)));
+  const half = width / 2;
+  const positions = new Float32Array((samples + 1) * 6);
+  const normals = new Float32Array((samples + 1) * 6);
+  const indices = [];
+  for (let i = 0; i <= samples; i++) {
+    const { point, tangent } = path.at(i / samples);
+    let sx = -tangent.z;
+    let sz = tangent.x;
+    const len = Math.hypot(sx, sz) || 1;
+    sx /= len;
+    sz /= len;
+    positions.set([point.x + sx * half, point.y + yOffset, point.z + sz * half,
+      point.x - sx * half, point.y + yOffset, point.z - sz * half], i * 6);
+    normals.set([0, 1, 0, 0, 1, 0], i * 6);
+    if (i < samples) {
+      const a = i * 2;
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+// A route in scene space, parameterised by horizontal distance travelled.
+// CatmullRomCurve3.getPointAt() walks by 3D arc length, which the elevation
+// exaggeration distorts; walking by real distance keeps playback at a steady
+// speed and lets the elevation chart and the 3D marker agree exactly.
+class RoutePath {
+  constructor(points) {
+    this.points = points;
+    this.curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.15);
+    this.cumulative = [0];
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+      total += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+      this.cumulative.push(total);
+    }
+    this.total = total;
+  }
+
+  paramAt(fraction) {
+    const n = this.points.length;
+    if (n < 2 || this.total <= 0) return 0;
+    const d = Math.max(0, Math.min(1, fraction)) * this.total;
+    let lo = 0;
+    let hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (this.cumulative[mid] <= d) lo = mid;
+      else hi = mid;
+    }
+    const span = this.cumulative[hi] - this.cumulative[lo];
+    const f = span > 0 ? (d - this.cumulative[lo]) / span : 0;
+    return Math.min(1, (lo + f) / (n - 1));
+  }
+
+  at(fraction) {
+    const t = this.paramAt(fraction);
+    return { point: this.curve.getPoint(t), tangent: this.curve.getTangent(t).normalize() };
+  }
+}
+
 class Studio3DApp {
   constructor() {
     this.container = document.getElementById('canvasContainer');
     this.width = window.innerWidth;
     this.height = window.innerHeight;
 
-    // Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    // Renderer. No preserveDrawingBuffer: captures render a frame and read it
+    // back in the same task, and keeping the buffer costs every frame.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setSize(this.width, this.height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
@@ -78,6 +189,13 @@ class Studio3DApp {
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
     this.controls.minDistance = 10;
     this.controls.maxDistance = 15000;
+    // Render on demand: a frame is drawn only when something changed (camera,
+    // playback, a loaded tile, a toggle), so an idle viewer costs no GPU time.
+    this.needsRender = true;
+    this.framesRendered = 0;
+    this.controls.addEventListener('change', () => this.requestRender());
+    this.reducedMotion = Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (this.reducedMotion) this.controls.enableDamping = false;
 
     this.setupLighting();
 
@@ -118,6 +236,9 @@ class Studio3DApp {
     this.curve = null;
     this.originLonLat = null;
     this.baseElevation = 0.0;
+    this.activePath = null;
+    this.terrainGrid = null;
+    this.terrainSource = 'none';
     this.activeScenario = 'shortest';
 
     // Feature Toggles & State
@@ -142,10 +263,27 @@ class Studio3DApp {
 
     this.initHudElements();
     this.bindEvents();
+    this.watchBottomPanel();
 
     this.clock = new THREE.Clock();
     this.animate = this.animate.bind(this);
     requestAnimationFrame(this.animate);
+  }
+
+  requestRender() {
+    this.needsRender = true;
+  }
+
+  // Side panels stop above the bottom panel, whose height changes with the
+  // number of metric rows; publish it as a CSS variable.
+  watchBottomPanel() {
+    const panel = document.querySelector('.bottom-controls');
+    if (!panel || typeof ResizeObserver === 'undefined') return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--bottom-panel-h', `${Math.ceil(panel.getBoundingClientRect().height)}px`);
+    };
+    new ResizeObserver(publish).observe(panel);
+    publish();
   }
 
   setupLighting() {
@@ -197,6 +335,35 @@ class Studio3DApp {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(this.width, this.height);
       if (this.routeData) this.renderProfileChart();
+      this.requestRender();
+    });
+    // Any interaction with the panels can change the scene (toggles, opacity,
+    // basemap); with on-demand rendering it must ask for a frame.
+    ['click', 'input', 'keydown', 'pointerup'].forEach((type) => {
+      document.addEventListener(type, () => this.requestRender(), true);
+    });
+
+    // Keyboard: Space plays/pauses, arrows move along the route (Shift: 5 %),
+    // Home/End jump to the ends, R resets the view.
+    window.addEventListener('keydown', (e) => {
+      const target = e.target;
+      const tag = (target?.tagName || '').toLowerCase();
+      if (['input', 'textarea', 'select'].includes(tag) || target?.isContentEditable) return;
+      if (target?.closest && target.closest('#elevationChart')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const step = e.shiftKey ? 0.05 : 0.01;
+      if (e.key === ' ' && tag !== 'button') {
+        e.preventDefault();
+        this.togglePlay();
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.setProgress(this.progress + (e.key === 'ArrowRight' ? step : -step));
+      } else if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        this.setProgress(e.key === 'Home' ? 0 : 1);
+      } else if (e.key === 'r' || e.key === 'R') {
+        this.resetCameraView();
+      }
     });
 
     const btnPlay = document.getElementById('btnPlay');
@@ -258,7 +425,9 @@ class Studio3DApp {
         const nextIdx = (exags.indexOf(this.elevationExaggeration) + 1) % exags.length;
         this.elevationExaggeration = exags[nextIdx];
         if (this.lblExag) this.lblExag.textContent = `${this.elevationExaggeration.toFixed(1)}x`;
-        if (this.routeData) this.rebuildScene();
+        // Scene heights depend on the exaggeration, so the route points (not
+        // just the meshes) must be recomputed.
+        if (this.routeData) this.refreshActiveRoute(false);
       });
     }
 
@@ -332,7 +501,7 @@ class Studio3DApp {
     // Snapshot button
     const btnSnap = document.getElementById('btnSnapshot');
     if (btnSnap) {
-      btnSnap.addEventListener('click', () => this.takeSnapshot());
+      btnSnap.addEventListener('click', (e) => this.takeSnapshot(e.shiftKey ? 4 : 2));
     }
 
     // Video record button
@@ -423,21 +592,29 @@ class Studio3DApp {
         }
       });
     }
-    this.baseElevation = allElevations.length ? Math.min(...allElevations) : 0.0;
+    this.setTerrainGrid(this.routeCollection?.properties?.terrain);
+    if (this.terrainGrid) {
+      // Math.min(...array) overflows the call stack on large grids.
+      allElevations.push(this.terrainGrid.heights.reduce((m, h) => Math.min(m, h), Infinity));
+    }
+    this.baseElevation = allElevations.length ? allElevations.reduce((m, h) => Math.min(m, h), Infinity) : 0.0;
 
     this.originLonLat = { lon: coords[0][0], lat: coords[0][1] };
     this.scenePoints = coords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
-    this.curve = new THREE.CatmullRomCurve3(this.scenePoints, false, 'catmullrom', 0.15);
+    this.activePath = new RoutePath(this.scenePoints);
+    this.curve = this.activePath.curve;
     this.routeVisuals = this.routeFeatures
       .filter((feature) => this.selectedProfileKeys.has(feature?.properties?.profile_key || 'adult'))
       .map((feature) => {
         const featureCoords = feature.geometry.coordinates;
         const points = featureCoords.map((c) => this.lonLatToSceneMeters(c[0], c[1], c[2] || 0.0));
+        const path = new RoutePath(points);
         return {
           key: feature?.properties?.profile_key || 'adult',
           feature,
           points,
-          curve: new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.15),
+          path,
+          curve: path.curve,
         };
       });
     this.updateHudMetrics();
@@ -572,6 +749,66 @@ class Studio3DApp {
       row.appendChild(swatch);
       this.elLayerList.appendChild(row);
     });
+    this.renderComparisonTable();
+  }
+
+  // Side-by-side numbers for every computed profile, with the difference to
+  // the selected one, so routes can be compared without hovering each layer.
+  renderComparisonTable() {
+    const host = document.getElementById('compareTable');
+    if (!host) return;
+    host.innerHTML = '';
+    if (this.routeFeatures.length < 2) return;
+    const active = this.routeFeatures.find((f) => (f?.properties?.profile_key || 'adult') === this.activeProfileKey);
+    const ref = active?.properties || {};
+    const cols = [
+      ['Profile', null, null],
+      ['km', 'distance_km', 2],
+      ['min', 'duration_min', 1],
+      ['climb m', 'elevation_gain_m', 0],
+      ['max %', 'max_slope_pct', 1],
+    ];
+    const table = document.createElement('table');
+    table.className = 'compare-table';
+    const caption = document.createElement('caption');
+    caption.textContent = 'Compared with the selected profile';
+    table.appendChild(caption);
+    const head = table.createTHead().insertRow();
+    cols.forEach(([label]) => {
+      const th = document.createElement('th');
+      th.scope = 'col';
+      th.textContent = label;
+      head.appendChild(th);
+    });
+    const body = table.createTBody();
+    this.routeFeatures.forEach((feature) => {
+      const props = feature.properties || {};
+      const key = props.profile_key || 'adult';
+      const tr = body.insertRow();
+      if (key === this.activeProfileKey) tr.className = 'active';
+      cols.forEach(([, field, digits], i) => {
+        const cell = i === 0 ? document.createElement('th') : tr.insertCell();
+        if (i === 0) {
+          cell.scope = 'row';
+          cell.style.setProperty('--layer-color', this.profileColor(feature));
+          cell.textContent = props.profile_name || key;
+          tr.appendChild(cell);
+          return;
+        }
+        const value = Number(props[field] || 0);
+        cell.textContent = value.toFixed(digits);
+        if (key !== this.activeProfileKey && Number.isFinite(Number(ref[field]))) {
+          const diff = value - Number(ref[field]);
+          if (Math.abs(diff) >= Math.pow(10, -digits) / 2) {
+            const delta = document.createElement('span');
+            delta.className = diff > 0 ? 'delta up' : 'delta down';
+            delta.textContent = ` ${diff > 0 ? '+' : ''}${diff.toFixed(digits)}`;
+            cell.appendChild(delta);
+          }
+        }
+      });
+    });
+    host.appendChild(table);
   }
 
   updateHudMetrics() {
@@ -681,6 +918,44 @@ class Studio3DApp {
     this.updateAvatarPosition();
   }
 
+  setTerrainGrid(grid) {
+    const valid = grid && Array.isArray(grid.bbox) && grid.bbox.length === 4
+      && Number.isInteger(grid.cols) && Number.isInteger(grid.rows) && grid.cols >= 2 && grid.rows >= 2
+      && Array.isArray(grid.heights) && grid.heights.length === grid.cols * grid.rows
+      && grid.bbox.every(Number.isFinite) && grid.heights.every(Number.isFinite);
+    this.terrainGrid = valid ? grid : null;
+  }
+
+  sceneToLonLat(x, z) {
+    const meanLat = (this.originLonLat.lat * Math.PI) / 180.0;
+    return {
+      lon: this.originLonLat.lon + x / (111320.0 * Math.cos(meanLat)),
+      lat: this.originLonLat.lat - z / 110574.0,
+    };
+  }
+
+  // Ground height (scene y) under a scene point: the DEM grid when QGIS sent
+  // one, otherwise the approximate surface fitted through the route.
+  groundY(x, z) {
+    const g = this.terrainGrid;
+    if (!g || !this.originLonLat) return this.getTerrainElevationAt(x, z);
+    const { lon, lat } = this.sceneToLonLat(x, z);
+    const [west, south, east, north] = g.bbox;
+    const fx = Math.max(0, Math.min(g.cols - 1, ((lon - west) / (east - west)) * (g.cols - 1)));
+    const fy = Math.max(0, Math.min(g.rows - 1, ((north - lat) / (north - south)) * (g.rows - 1)));
+    const c0 = Math.floor(fx);
+    const r0 = Math.floor(fy);
+    const c1 = Math.min(g.cols - 1, c0 + 1);
+    const r1 = Math.min(g.rows - 1, r0 + 1);
+    const tx = fx - c0;
+    const ty = fy - r0;
+    const h = (r, c) => g.heights[r * g.cols + c];
+    const top = h(r0, c0) * (1 - tx) + h(r0, c1) * tx;
+    const bottom = h(r1, c0) * (1 - tx) + h(r1, c1) * tx;
+    const elevation = top * (1 - ty) + bottom * ty;
+    return (elevation - this.baseElevation) * this.elevationExaggeration;
+  }
+
   getTerrainElevationAt(x, z) {
     if (!this.curve || !this.scenePoints.length) return 0.0;
     const sampleSteps = 32;
@@ -700,115 +975,13 @@ class Studio3DApp {
 
   buildTerrain() {
     if (!this.scenePoints.length) return;
-
-    // Collect all active route points, corridor buildings, and trees for unified diorama bounds
-    const allRoutePoints = [];
-    if (this.routeVisuals && this.routeVisuals.length) {
-      this.routeVisuals.forEach((v) => {
-        if (v.points) allRoutePoints.push(...v.points);
-      });
-    }
-    if (!allRoutePoints.length) allRoutePoints.push(...this.scenePoints);
-
-    // Also include corridor building vertices and trees if available
-    const buildings = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings || [];
-    if (Array.isArray(buildings)) {
-      buildings.forEach((bld) => {
-        const coords = bld.polygon || bld.coordinates || [];
-        coords.forEach(([lon, lat]) => {
-          allRoutePoints.push(this.lonLatToSceneMeters(lon, lat, this.baseElevation || 0.0));
-        });
-      });
-    }
-    const trees = this.routeData?.properties?.corridor_trees || this.routeCollection?.properties?.corridor_trees || [];
-    if (Array.isArray(trees)) {
-      trees.forEach((tr) => {
-        const coords = tr.coordinates || [];
-        if (coords.length >= 2) {
-          allRoutePoints.push(this.lonLatToSceneMeters(coords[0], coords[1], this.baseElevation || 0.0));
-        }
-      });
-    }
-
-    const box = new THREE.Box3().setFromPoints(allRoutePoints);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-
-    // Architectural corridor diorama framing with ample padding for complete environment coverage
-    const pad = Math.max(50, Math.min(140, Math.max(size.x, size.z) * 0.12));
-    const width = Math.max(size.x + pad * 2, 100);
-    const depth = Math.max(size.z + pad * 2, 100);
-
-    const segments = 96;
-    const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
-    geo.rotateX(-Math.PI / 2);
-    geo.translate(center.x, 0, center.z);
-
-    // 3D Topographic Elevation Surface Interpolation
+    const built = this.terrainGrid ? this.buildDemTerrainGeometry() : this.buildApproximateTerrainGeometry();
+    const { geo, width, depth, center, nx, ny } = built;
+    this.terrainSource = this.terrainGrid ? 'dem' : 'approximate';
+    this.updateTerrainNote();
     const posAttr = geo.attributes.position;
-    const count = posAttr.count;
-
-    const routeSamples = [];
-    const sampleSteps = Math.max(30, Math.min(180, this.scenePoints.length * 2));
-    for (let s = 0; s <= sampleSteps; s++) {
-      const u = s / sampleSteps;
-      const spt = this.curve.getPointAt(u);
-      routeSamples.push(spt);
-    }
-
-    // Topographic regional gradient plane
-    let sumX = 0, sumZ = 0, sumY = 0, sumXX = 0, sumZZ = 0, sumXZ = 0, sumXY = 0, sumZY = 0;
-    const n = this.scenePoints.length;
-    for (let p of this.scenePoints) {
-      const x = p.x - center.x;
-      const z = p.z - center.z;
-      const y = p.y;
-      sumX += x; sumZ += z; sumY += y;
-      sumXX += x * x; sumZZ += z * z; sumXZ += x * z;
-      sumXY += x * y; sumZY += z * y;
-    }
-    const denom = (sumXX * sumZZ - sumXZ * sumXZ);
-    const gradX = Math.abs(denom) > 1e-4 ? (sumXY * sumZZ - sumZY * sumXZ) / denom : 0;
-    const gradZ = Math.abs(denom) > 1e-4 ? (sumZY * sumXX - sumXY * sumXZ) / denom : 0;
-    const meanY = sumY / Math.max(1, n);
-
     let minTerrainY = Infinity;
-    let maxTerrainY = -Infinity;
-
-    for (let i = 0; i < count; i++) {
-      const vx = posAttr.getX(i);
-      const vz = posAttr.getZ(i);
-
-      let weightedY = 0;
-      let totalWeight = 0;
-      let minDist = Infinity;
-
-      for (let s of routeSamples) {
-        const dx = vx - s.x;
-        const dz = vz - s.z;
-        const distSq = dx * dx + dz * dz;
-        const dist = Math.sqrt(distSq);
-        if (dist < minDist) minDist = dist;
-
-        const w = 1.0 / Math.pow(Math.max(10.0, dist), 1.6);
-        weightedY += s.y * w;
-        totalWeight += w;
-      }
-
-      const localRouteEle = totalWeight > 0 ? (weightedY / totalWeight) : meanY;
-      const regionalEle = meanY + gradX * (vx - center.x) + gradZ * (vz - center.z);
-
-      const corridorRadius = 60.0;
-      const blend = Math.max(0.0, Math.min(1.0, (minDist - 20.0) / corridorRadius));
-      const finalY = (1.0 - blend) * localRouteEle + blend * regionalEle - 0.35;
-
-      posAttr.setY(i, finalY);
-      if (finalY < minTerrainY) minTerrainY = finalY;
-      if (finalY > maxTerrainY) maxTerrainY = finalY;
-    }
-
+    for (let i = 0; i < posAttr.count; i++) minTerrainY = Math.min(minTerrainY, posAttr.getY(i));
     posAttr.needsUpdate = true;
     geo.computeVertexNormals();
 
@@ -834,8 +1007,7 @@ class Studio3DApp {
     // Tight Architectural Diorama Plinth Skirt (5m below min point)
     // -------------------------------------------------------------
     const baseSkirtY = minTerrainY - 5.0;
-    const N = segments;
-    const stride = N + 1;
+    const stride = nx + 1;
     const skirtVerts = [];
     const skirtNorms = [];
 
@@ -855,8 +1027,8 @@ class Studio3DApp {
       }
     };
 
-    // North Edge (row 0: ix from 0 to N-1)
-    for (let ix = 0; ix < N; ix++) {
+    // North Edge (row 0: ix from 0 to nx-1)
+    for (let ix = 0; ix < nx; ix++) {
       const i1 = ix;
       const i2 = ix + 1;
       addSkirtQuad(
@@ -864,26 +1036,26 @@ class Studio3DApp {
         posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
       );
     }
-    // East Edge (col N: iy from 0 to N-1)
-    for (let iy = 0; iy < N; iy++) {
-      const i1 = iy * stride + N;
-      const i2 = (iy + 1) * stride + N;
+    // East Edge (col nx: iy from 0 to ny-1)
+    for (let iy = 0; iy < ny; iy++) {
+      const i1 = iy * stride + nx;
+      const i2 = (iy + 1) * stride + nx;
       addSkirtQuad(
         posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
         posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
       );
     }
-    // South Edge (row N: ix from N down to 1)
-    for (let ix = N; ix > 0; ix--) {
-      const i1 = N * stride + ix;
-      const i2 = N * stride + (ix - 1);
+    // South Edge (row ny: ix from nx down to 1)
+    for (let ix = nx; ix > 0; ix--) {
+      const i1 = ny * stride + ix;
+      const i2 = ny * stride + (ix - 1);
       addSkirtQuad(
         posAttr.getX(i1), posAttr.getY(i1), posAttr.getZ(i1),
         posAttr.getX(i2), posAttr.getY(i2), posAttr.getZ(i2)
       );
     }
-    // West Edge (col 0: iy from N down to 1)
-    for (let iy = N; iy > 0; iy--) {
+    // West Edge (col 0: iy from ny down to 1)
+    for (let iy = ny; iy > 0; iy--) {
       const i1 = iy * stride;
       const i2 = (iy - 1) * stride;
       addSkirtQuad(
@@ -894,9 +1066,9 @@ class Studio3DApp {
 
     // Bottom Base Plinth Cap
     const nwX = posAttr.getX(0), nwZ = posAttr.getZ(0);
-    const neX = posAttr.getX(N), neZ = posAttr.getZ(N);
-    const seX = posAttr.getX(stride * stride - 1), seZ = posAttr.getZ(stride * stride - 1);
-    const swX = posAttr.getX(N * stride), swZ = posAttr.getZ(N * stride);
+    const neX = posAttr.getX(nx), neZ = posAttr.getZ(nx);
+    const seX = posAttr.getX(ny * stride + nx), seZ = posAttr.getZ(ny * stride + nx);
+    const swX = posAttr.getX(ny * stride), swZ = posAttr.getZ(ny * stride);
 
     skirtVerts.push(
       nwX, baseSkirtY, nwZ,  swX, baseSkirtY, swZ,  seX, baseSkirtY, seZ,
@@ -922,6 +1094,137 @@ class Studio3DApp {
     this.skirtMesh.castShadow = true;
     this.skirtMesh.visible = this.showBasemap;
     this.scene.add(this.skirtMesh);
+  }
+
+  // Terrain mesh from the DEM grid QGIS sampled around the routes: one vertex
+  // per grid sample, so relief away from the route is the real relief.
+  buildDemTerrainGeometry() {
+    const g = this.terrainGrid;
+    const [west, south, east, north] = g.bbox;
+    const nw = this.lonLatToSceneMeters(west, north, this.baseElevation);
+    const se = this.lonLatToSceneMeters(east, south, this.baseElevation);
+    const width = Math.max(1, se.x - nw.x);
+    const depth = Math.max(1, se.z - nw.z);
+    const center = new THREE.Vector3((nw.x + se.x) / 2, 0, (nw.z + se.z) / 2);
+    const nx = g.cols - 1;
+    const ny = g.rows - 1;
+    const geo = new THREE.PlaneGeometry(width, depth, nx, ny);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(center.x, 0, center.z);
+    // PlaneGeometry rows run north to south after the rotation, matching the
+    // grid's north-first row order, so vertex i is grid sample i.
+    const posAttr = geo.attributes.position;
+    for (let i = 0; i < posAttr.count; i++) {
+      posAttr.setY(i, (g.heights[i] - this.baseElevation) * this.elevationExaggeration - 0.35);
+    }
+    return { geo, width, depth, center, nx, ny };
+  }
+
+  // Without a DEM: a surface fitted through points along the route. Relief
+  // away from the route is a guess, and the viewer says so (updateTerrainNote).
+  buildApproximateTerrainGeometry() {
+    // Collect all active route points, corridor buildings, and trees for unified diorama bounds
+    const allRoutePoints = [];
+    if (this.routeVisuals && this.routeVisuals.length) {
+      this.routeVisuals.forEach((v) => {
+        if (v.points) allRoutePoints.push(...v.points);
+      });
+    }
+    if (!allRoutePoints.length) allRoutePoints.push(...this.scenePoints);
+    this.corridorBuildings().forEach((bld) => {
+      const coords = bld.polygon || bld.coordinates || [];
+      coords.forEach(([lon, lat]) => {
+        allRoutePoints.push(this.lonLatToSceneMeters(lon, lat, this.baseElevation || 0.0));
+      });
+    });
+    this.corridorTrees().forEach((tr) => {
+      const coords = tr.coordinates || [];
+      if (coords.length >= 2) {
+        allRoutePoints.push(this.lonLatToSceneMeters(coords[0], coords[1], this.baseElevation || 0.0));
+      }
+    });
+
+    const box = new THREE.Box3().setFromPoints(allRoutePoints);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const pad = Math.max(50, Math.min(140, Math.max(size.x, size.z) * 0.12));
+    const width = Math.max(size.x + pad * 2, 100);
+    const depth = Math.max(size.z + pad * 2, 100);
+
+    const segments = 96;
+    const geo = new THREE.PlaneGeometry(width, depth, segments, segments);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(center.x, 0, center.z);
+    const posAttr = geo.attributes.position;
+
+    const routeSamples = [];
+    const sampleSteps = Math.max(30, Math.min(180, this.scenePoints.length * 2));
+    for (let s = 0; s <= sampleSteps; s++) {
+      routeSamples.push(this.curve.getPointAt(s / sampleSteps));
+    }
+
+    // Least-squares plane through the route for the regional slope.
+    let sumX = 0, sumZ = 0, sumY = 0, sumXX = 0, sumZZ = 0, sumXZ = 0, sumXY = 0, sumZY = 0;
+    const n = this.scenePoints.length;
+    for (const p of this.scenePoints) {
+      const x = p.x - center.x;
+      const z = p.z - center.z;
+      sumX += x; sumZ += z; sumY += p.y;
+      sumXX += x * x; sumZZ += z * z; sumXZ += x * z;
+      sumXY += x * p.y; sumZY += z * p.y;
+    }
+    const denom = (sumXX * sumZZ - sumXZ * sumXZ);
+    const gradX = Math.abs(denom) > 1e-4 ? (sumXY * sumZZ - sumZY * sumXZ) / denom : 0;
+    const gradZ = Math.abs(denom) > 1e-4 ? (sumZY * sumXX - sumXY * sumXZ) / denom : 0;
+    const meanY = sumY / Math.max(1, n);
+
+    for (let i = 0; i < posAttr.count; i++) {
+      const vx = posAttr.getX(i);
+      const vz = posAttr.getZ(i);
+      let weightedY = 0;
+      let totalWeight = 0;
+      let minDist = Infinity;
+      for (const sample of routeSamples) {
+        const dist = Math.hypot(vx - sample.x, vz - sample.z);
+        if (dist < minDist) minDist = dist;
+        const w = 1.0 / Math.pow(Math.max(10.0, dist), 1.6);
+        weightedY += sample.y * w;
+        totalWeight += w;
+      }
+      const localRouteEle = totalWeight > 0 ? (weightedY / totalWeight) : meanY;
+      const regionalEle = meanY + gradX * (vx - center.x) + gradZ * (vz - center.z);
+      const blend = Math.max(0.0, Math.min(1.0, (minDist - 20.0) / 60.0));
+      posAttr.setY(i, (1.0 - blend) * localRouteEle + blend * regionalEle - 0.35);
+    }
+    return { geo, width, depth, center, nx: segments, ny: segments };
+  }
+
+  corridorBuildings() {
+    const list = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings;
+    return Array.isArray(list) ? list : [];
+  }
+
+  corridorTrees() {
+    const list = this.routeData?.properties?.corridor_trees || this.routeCollection?.properties?.corridor_trees;
+    return Array.isArray(list) ? list : [];
+  }
+
+  updateTerrainNote() {
+    const el = document.getElementById('terrainNote');
+    if (!el) return;
+    if (this.terrainSource === 'dem') {
+      const g = this.terrainGrid;
+      const cell = Number(g.cell_m);
+      const coverage = Number(g.coverage);
+      el.textContent = `Terrain: DEM grid${Number.isFinite(cell) ? ` ~${cell.toFixed(0)} m` : ''}`
+        + (Number.isFinite(coverage) && coverage < 0.999 ? ` (${Math.round(coverage * 100)}% sampled)` : '');
+      el.classList.remove('approximate');
+    } else {
+      el.textContent = 'Terrain: approximate (no DEM selected in QGIS)';
+      el.classList.add('approximate');
+    }
   }
 
   updateBasemapTexture() {
@@ -1025,10 +1328,55 @@ class Studio3DApp {
     // Tiles requested for a previous scene must not write into a texture that
     // rebuildScene() has already disposed. Track this build and abort the old one.
     this.cancelPendingTiles();
-    const buildToken = { cancelled: false, images: [] };
+    const buildToken = { cancelled: false, images: [], uploadTimer: null };
     this.pendingTileBuild = buildToken;
+    const totalTiles = (maxTileX - minTileX + 1) * (maxTileY - minTileY + 1);
     let failedTiles = 0;
+    let doneTiles = 0;
+    if (this.elBasemapNote) this.elBasemapNote.textContent = '';
 
+    // Uploading a 4096 px texture after every tile re-sent 64 MB to the GPU up
+    // to 64 times; uploads are now batched every 250 ms and once at the end.
+    const scheduleUpload = (final) => {
+      if (final) {
+        clearTimeout(buildToken.uploadTimer);
+        buildToken.uploadTimer = null;
+        tex.needsUpdate = true;
+        this.requestRender();
+        return;
+      }
+      if (buildToken.uploadTimer !== null) return;
+      buildToken.uploadTimer = setTimeout(() => {
+        buildToken.uploadTimer = null;
+        if (buildToken.cancelled) return;
+        tex.needsUpdate = true;
+        this.requestRender();
+      }, 250);
+    };
+    const tileFinished = () => {
+      doneTiles += 1;
+      if (doneTiles < totalTiles) {
+        scheduleUpload(false);
+        return;
+      }
+      if (failedTiles === totalTiles) {
+        // Offline or blocked: show the real relief instead of a blank plate.
+        this.drawHillshade(ctx, textureResolution, { minLon, maxLon, minLat, maxLat }, isDark);
+        if (this.elBasemapNote) {
+          this.elBasemapNote.textContent = this.terrainGrid
+            ? 'Basemap tiles unavailable (offline?) - showing DEM hillshade.'
+            : 'Basemap tiles unavailable (offline?).';
+        }
+      } else if (failedTiles > 0 && this.elBasemapNote) {
+        this.elBasemapNote.textContent = `${failedTiles} of ${totalTiles} basemap tiles failed to load.`;
+      }
+      scheduleUpload(true);
+    };
+
+    // Map tiles are Web Mercator: within a tile, rows are not evenly spaced in
+    // latitude, while the terrain is. Each tile is drawn in horizontal strips
+    // placed at their true latitudes so roads line up with the route.
+    const STRIPS = 8;
     for (let tx = minTileX; tx <= maxTileX; tx++) {
       for (let ty = minTileY; ty <= maxTileY; ty++) {
         const img = new Image();
@@ -1036,32 +1384,75 @@ class Studio3DApp {
         img.crossOrigin = 'anonymous';
         img.onload = () => {
           if (buildToken.cancelled) return;
-          const tMinLon = tile2lon(tx, zoom);
-          const tMaxLon = tile2lon(tx + 1, zoom);
-          const tMaxLat = tile2lat(ty, zoom);
-          const tMinLat = tile2lat(ty + 1, zoom);
-
-          const px0 = ((tMinLon - minLon) / lonSpan) * textureResolution;
-          const px1 = ((tMaxLon - minLon) / lonSpan) * textureResolution;
-          const py0 = ((maxLat - tMaxLat) / latSpan) * textureResolution;
-          const py1 = ((maxLat - tMinLat) / latSpan) * textureResolution;
-
-          ctx.drawImage(img, px0, py0, Math.max(1, px1 - px0), Math.max(1, py1 - py0));
-          tex.needsUpdate = true;
+          const px0 = ((tile2lon(tx, zoom) - minLon) / lonSpan) * textureResolution;
+          const px1 = ((tile2lon(tx + 1, zoom) - minLon) / lonSpan) * textureResolution;
+          const srcStrip = img.height / STRIPS;
+          for (let k = 0; k < STRIPS; k++) {
+            const latTop = tile2lat(ty + k / STRIPS, zoom);
+            const latBottom = tile2lat(ty + (k + 1) / STRIPS, zoom);
+            const py0 = ((maxLat - latTop) / latSpan) * textureResolution;
+            const py1 = ((maxLat - latBottom) / latSpan) * textureResolution;
+            ctx.drawImage(
+              img, 0, k * srcStrip, img.width, srcStrip,
+              px0, py0, Math.max(1, px1 - px0), Math.max(0.5, py1 - py0),
+            );
+          }
+          tileFinished();
         };
         img.onerror = () => {
           if (buildToken.cancelled) return;
           failedTiles += 1;
-          if (this.elBasemapNote) {
-            this.elBasemapNote.textContent =
-              `${failedTiles} basemap tile(s) failed to load.`;
-          }
+          tileFinished();
         };
         img.src = getTileUrl(tx, ty, zoom);
       }
     }
 
     return tex;
+  }
+
+  // Shaded relief from the DEM grid, drawn into the basemap canvas when no
+  // tiles could be loaded. Without a grid, a neutral plate stays.
+  drawHillshade(ctx, size, extent, dark) {
+    const g = this.terrainGrid;
+    if (!g) return;
+    const [west, south, east, north] = g.bbox;
+    const midLat = ((south + north) / 2) * Math.PI / 180;
+    const dx = ((east - west) / (g.cols - 1)) * 111320 * Math.cos(midLat);
+    const dy = ((north - south) / (g.rows - 1)) * 110574;
+    const img = ctx.createImageData(g.cols, g.rows);
+    const h = (r, c) => g.heights[Math.max(0, Math.min(g.rows - 1, r)) * g.cols + Math.max(0, Math.min(g.cols - 1, c))];
+    // Light from the north-west, 45 degrees up (the cartographic convention).
+    const lx = -0.5;
+    const ly = 0.5;
+    const lz = Math.SQRT1_2;
+    for (let r = 0; r < g.rows; r++) {
+      for (let c = 0; c < g.cols; c++) {
+        // z-factor 5: city-scale relief is gentle and would barely show.
+        const sx = (h(r, c + 1) - h(r, c - 1)) / (2 * dx) * 5.0;
+        const sy = (h(r - 1, c) - h(r + 1, c)) / (2 * dy) * 5.0;
+        const len = Math.hypot(sx, sy, 1);
+        const shade = Math.max(0, (-sx * lx - sy * ly + lz) / len);
+        const v = dark ? 25 + shade * 110 : 95 + shade * 160;
+        const i = (r * g.cols + c) * 4;
+        img.data[i] = v;
+        img.data[i + 1] = v;
+        img.data[i + 2] = v + (dark ? 10 : 0);
+        img.data[i + 3] = 255;
+      }
+    }
+    const tmp = document.createElement('canvas');
+    tmp.width = g.cols;
+    tmp.height = g.rows;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    const lonSpan = extent.maxLon - extent.minLon;
+    const latSpan = extent.maxLat - extent.minLat;
+    const x0 = ((west - extent.minLon) / lonSpan) * size;
+    const x1 = ((east - extent.minLon) / lonSpan) * size;
+    const y0 = ((extent.maxLat - north) / latSpan) * size;
+    const y1 = ((extent.maxLat - south) / latSpan) * size;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(tmp, x0, y0, x1 - x0, y1 - y0);
   }
 
   updateBasemapAttribution() {
@@ -1081,6 +1472,7 @@ class Studio3DApp {
     const pending = this.pendingTileBuild;
     if (!pending) return;
     pending.cancelled = true;
+    clearTimeout(pending.uploadTimer);
     // Dropping the src aborts the in-flight request in every current browser.
     pending.images.forEach((img) => {
       img.onload = null;
@@ -1091,70 +1483,49 @@ class Studio3DApp {
   }
 
   buildClassyRoadRibbon() {
-    if (!this.curve || this.scenePoints.length < 2) return;
+    if (!this.activePath || this.scenePoints.length < 2) return;
+    const profColor = new THREE.Color(this.profileColor(this.routeData));
+    const side = THREE.DoubleSide;
 
-    const tubularSegments = Math.max(160, this.scenePoints.length * 8);
-    const roadWidth = 7.5;
-    const profColorHex = this.routeData?.properties?.profile_color || '#0ea5e9';
-    const profColor = new THREE.Color(profColorHex);
-
-    // Layer 1: Road Asphalt Base (Floating +0.8m above ground to eliminate clipping)
-    const roadGeo = new THREE.TubeGeometry(this.curve, tubularSegments, roadWidth * 0.5, 6, false);
-    roadGeo.scale(1.0, 0.12, 1.0);
-
-    const roadMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.7,
-      metalness: 0.15,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -2,
-    });
-
-    this.roadMesh = new THREE.Mesh(roadGeo, roadMat);
-    this.roadMesh.position.y += 0.8;
+    // Layer 1: asphalt band, 7.5 m wide, 0.8 m above the route line.
+    this.roadMesh = new THREE.Mesh(
+      ribbonGeometry(this.activePath, 7.5, 0.8),
+      new THREE.MeshStandardMaterial({
+        color: 0x1e293b, roughness: 0.7, metalness: 0.15, side,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
+      }),
+    );
     this.roadMesh.receiveShadow = true;
     this.roadMesh.renderOrder = 8;
     this.scene.add(this.roadMesh);
 
-    // Layer 2: Glowing Outer Neon Ribbon (+1.2m)
-    const glowGeo = new THREE.TubeGeometry(this.curve, tubularSegments, 1.2, 6, false);
-    glowGeo.scale(1.0, 0.2, 1.0);
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: profColor,
-      transparent: true,
-      opacity: 0.35,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -4,
-    });
-    this.glowTubeMesh = new THREE.Mesh(glowGeo, glowMat);
-    this.glowTubeMesh.position.y += 1.1;
+    // Layer 2: translucent glow band in the profile colour.
+    this.glowTubeMesh = new THREE.Mesh(
+      ribbonGeometry(this.activePath, 2.6, 1.1),
+      new THREE.MeshBasicMaterial({
+        color: profColor, transparent: true, opacity: 0.35, side,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+      }),
+    );
     this.glowTubeMesh.renderOrder = 9;
     this.scene.add(this.glowTubeMesh);
 
-    // Layer 3: Vibrant Core Centerline Neon Beam (+1.5m)
-    const centerGeo = new THREE.TubeGeometry(this.curve, tubularSegments, 0.45, 6, false);
-    centerGeo.scale(1.0, 0.25, 1.0);
-    const centerMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      emissive: profColor,
-      emissiveIntensity: 0.95,
-      roughness: 0.15,
-      polygonOffset: true,
-      polygonOffsetFactor: -3,
-      polygonOffsetUnits: -6,
-    });
-    this.centerlineMesh = new THREE.Mesh(centerGeo, centerMat);
-    this.centerlineMesh.position.y += 1.4;
+    // Layer 3: bright centre line.
+    this.centerlineMesh = new THREE.Mesh(
+      ribbonGeometry(this.activePath, 0.9, 1.4),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff, emissive: profColor, emissiveIntensity: 0.95, roughness: 0.15, side,
+        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+      }),
+    );
     this.centerlineMesh.renderOrder = 10;
     this.scene.add(this.centerlineMesh);
 
-    // Layer 4: Dynamic Moving Pulse Light Beacon
-    const beaconGeo = new THREE.SphereGeometry(1.6, 16, 16);
-    const beaconMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9 });
-    this.pulseBeacon = new THREE.Mesh(beaconGeo, beaconMat);
-    this.pulseBeacon.position.y += 1.8;
+    // Layer 4: pulse beacon (moves ahead of the walker during playback).
+    this.pulseBeacon = new THREE.Mesh(
+      new THREE.SphereGeometry(1.6, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9 }),
+    );
     this.scene.add(this.pulseBeacon);
   }
 
@@ -1374,177 +1745,154 @@ class Studio3DApp {
     this.applyProfileAppearance();
   }
 
+  // The other profiles: coloured ribbons wide enough to compare at any zoom
+  // (WebGL draws THREE.Line one pixel wide on most systems), stacked a few
+  // centimetres apart so overlapping routes do not flicker.
   buildRouteOverlays() {
     while (this.routeOverlayGroup.children.length) {
       const child = this.routeOverlayGroup.children[0];
       this.routeOverlayGroup.remove(child);
       disposeHierarchy(child);
     }
+    let layer = 0;
     this.routeVisuals.forEach((visual) => {
       if (visual.key === this.activeProfileKey || visual.points.length < 2) return;
-      const color = this.profileColor(visual.feature);
-      const geometry = new THREE.BufferGeometry().setFromPoints(visual.points);
-      const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.72 });
-      const line = new THREE.Line(geometry, material);
-      line.userData.profileKey = visual.key;
-      this.routeOverlayGroup.add(line);
+      layer += 1;
+      const material = new THREE.MeshBasicMaterial({
+        color: this.profileColor(visual.feature), transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -1 - layer, polygonOffsetUnits: -2 - layer,
+      });
+      const ribbon = new THREE.Mesh(ribbonGeometry(visual.path, 2.4, 0.9 + layer * 0.12), material);
+      ribbon.userData.profileKey = visual.key;
+      ribbon.renderOrder = 7;
+      this.routeOverlayGroup.add(ribbon);
     });
   }
 
   buildUrbanEnvironment() {
-    const buildings = this.routeData?.properties?.corridor_buildings || this.routeCollection?.properties?.corridor_buildings || [];
-    const trees = this.routeData?.properties?.corridor_trees || this.routeCollection?.properties?.corridor_trees || [];
-
-    const bldMats = [
-      new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7, metalness: 0.08 }),
-      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.65, metalness: 0.12 }),
-      new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.6, metalness: 0.18 }),
-      new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.75, metalness: 0.1 }),
-      new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.8, metalness: 0.05 }),
-    ];
-
-    // 1. Render real OSM polygon buildings
-    if (buildings.length > 0) {
-      buildings.forEach((bld, idx) => {
-        const coords = bld.polygon || bld.coordinates || [];
-        if (coords.length < 3) return;
-
-        const bldBaseEle = bld.base_elevation_m !== undefined ? bld.base_elevation_m : (this.baseElevation || 0.0);
-        const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, bldBaseEle));
-
-        let avgY = 0;
-        scenePts.forEach((p) => {
-          avgY += p.y;
-        });
-        avgY /= scenePts.length;
-
-        const shape = new THREE.Shape();
-        shape.moveTo(scenePts[0].x, -scenePts[0].z);
-        for (let i = 1; i < scenePts.length; i++) {
-          shape.lineTo(scenePts[i].x, -scenePts[i].z);
-        }
-        shape.closePath();
-
-        const height = Math.max(6.0, bld.height_m || (bld.levels ? bld.levels * 3.2 : 12.0));
-        const extrudeSettings = {
-          depth: height,
-          bevelEnabled: true,
-          bevelSegments: 1,
-          steps: 1,
-          bevelSize: 0.2,
-          bevelThickness: 0.2,
-        };
-
-        const bldGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-        bldGeo.rotateX(-Math.PI / 2);
-
-        const mat = bldMats[idx % bldMats.length];
-        const bldMesh = new THREE.Mesh(bldGeo, mat);
-        bldMesh.position.y = avgY;
-        bldMesh.castShadow = true;
-        bldMesh.receiveShadow = true;
-        this.buildingsGroup.add(bldMesh);
-      });
-    }
+    this.buildBuildings(this.corridorBuildings());
+    this.buildTrees(this.corridorTrees());
     this.buildingsGroup.visible = this.showBuildings;
-
-    // 2. Render volumetric 3D corridor trees (trunks + lush multi-layer canopies with shadows)
-    if (trees.length > 0) {
-      trees.forEach((tree) => {
-        const coords = tree.coordinates || [];
-        if (coords.length < 2) return;
-        const lon = coords[0];
-        const lat = coords[1];
-        const treeBaseEle = tree.base_elevation_m !== undefined ? tree.base_elevation_m : (this.baseElevation || 0.0);
-        const pos = this.lonLatToSceneMeters(lon, lat, treeBaseEle);
-        const groundY = this.getTerrainElevationAt(pos.x, pos.z);
-        pos.y = Math.max(pos.y, groundY);
-
-        const height = Math.max(4.5, Number(tree.height_m || 8.0));
-        const canopyR = Math.max(1.8, Number(tree.canopy_radius_m || 3.2));
-        const trunkH = Math.max(1.2, Number(tree.trunk_height_m || (height * 0.35)));
-        const trunkR = Math.max(0.18, Number(tree.trunk_radius_m || 0.28));
-        const treeType = tree.tree_type || 'deciduous';
-
-        const treeGroup = new THREE.Group();
-
-        // Architectural Wood Trunk
-        const trunkGeo = new THREE.CylinderGeometry(trunkR * 0.75, trunkR * 1.15, trunkH, 7);
-        const trunkMat = new THREE.MeshStandardMaterial({
-          color: 0x452b19,
-          roughness: 0.92,
-          metalness: 0.05,
-        });
-        const trunkMesh = new THREE.Mesh(trunkGeo, trunkMat);
-        trunkMesh.position.y = trunkH / 2;
-        trunkMesh.castShadow = true;
-        trunkMesh.receiveShadow = true;
-        treeGroup.add(trunkMesh);
-
-        // Volumetric Lush Multi-Layer Canopy
-        if (treeType === 'conifer' || treeType === 'pine') {
-          const pineTiers = [
-            { r: canopyR, h: (height - trunkH) * 0.52, y: trunkH + (height - trunkH) * 0.26, color: 0x14532d },
-            { r: canopyR * 0.78, h: (height - trunkH) * 0.48, y: trunkH + (height - trunkH) * 0.52, color: 0x166534 },
-            { r: canopyR * 0.52, h: (height - trunkH) * 0.42, y: trunkH + (height - trunkH) * 0.78, color: 0x15803d },
-          ];
-          pineTiers.forEach((tier) => {
-            const cGeo = new THREE.ConeGeometry(tier.r, tier.h, 7);
-            const cMat = new THREE.MeshStandardMaterial({
-              color: tier.color,
-              roughness: 0.75,
-              metalness: 0.04,
-              flatShading: true,
-            });
-            const cMesh = new THREE.Mesh(cGeo, cMat);
-            cMesh.position.y = tier.y;
-            cMesh.castShadow = true;
-            cMesh.receiveShadow = true;
-            treeGroup.add(cMesh);
-          });
-        } else {
-          // Lush multi-tier broadleaf / deciduous canopy
-          const decTiers = [
-            { r: canopyR * 0.95, y: trunkH + canopyR * 0.72, scale: [1.1, 0.82, 1.05], color: 0x15803d },
-            { r: canopyR * 0.82, y: trunkH + canopyR * 1.18, scale: [0.96, 0.88, 0.96], color: 0x16a34a },
-            { r: canopyR * 0.58, y: trunkH + canopyR * 1.58, scale: [0.85, 0.95, 0.85], color: 0x22c55e },
-          ];
-          decTiers.forEach((tier) => {
-            const folGeo = new THREE.DodecahedronGeometry(tier.r, 1);
-            folGeo.scale(tier.scale[0], tier.scale[1], tier.scale[2]);
-            const folMat = new THREE.MeshStandardMaterial({
-              color: tier.color,
-              roughness: 0.78,
-              metalness: 0.04,
-              flatShading: true,
-            });
-            const folMesh = new THREE.Mesh(folGeo, folMat);
-            folMesh.position.y = tier.y;
-            folMesh.castShadow = true;
-            folMesh.receiveShadow = true;
-            treeGroup.add(folMesh);
-          });
-        }
-
-        treeGroup.position.copy(pos);
-        this.treesGroup.add(treeGroup);
-      });
-    }
     this.treesGroup.visible = this.showTrees;
+  }
+
+  // Buildings: one merged mesh per facade material (five draw calls in all)
+  // instead of one mesh per building. Each footprint sits on the lowest ground
+  // under its corners, so no building floats above a slope.
+  buildBuildings(buildings) {
+    const palette = [0xf8fafc, 0xe2e8f0, 0xcbd5e1, 0x94a3b8, 0x64748b];
+    const buckets = palette.map(() => []);
+    buildings.forEach((bld, idx) => {
+      const coords = bld.polygon || bld.coordinates || [];
+      if (coords.length < 3) return;
+      const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, this.baseElevation));
+      let groundY = Infinity;
+      scenePts.forEach((p) => {
+        groundY = Math.min(groundY, this.groundY(p.x, p.z));
+      });
+      if (!Number.isFinite(groundY)) {
+        const fallbackEle = bld.base_elevation_m !== undefined ? Number(bld.base_elevation_m) : this.baseElevation;
+        groundY = (fallbackEle - this.baseElevation) * this.elevationExaggeration;
+      }
+      const shape = new THREE.Shape();
+      shape.moveTo(scenePts[0].x, -scenePts[0].z);
+      for (let i = 1; i < scenePts.length; i++) shape.lineTo(scenePts[i].x, -scenePts[i].z);
+      shape.closePath();
+      const height = Math.max(6.0, Number(bld.height_m) || (bld.levels ? bld.levels * 3.2 : 12.0));
+      const geo = new THREE.ExtrudeGeometry(shape, {
+        depth: height, bevelEnabled: true, bevelSegments: 1, steps: 1, bevelSize: 0.2, bevelThickness: 0.2,
+      });
+      geo.rotateX(-Math.PI / 2);
+      geo.translate(0, groundY, 0);
+      buckets[idx % palette.length].push(geo);
+    });
+    buckets.forEach((geos, i) => {
+      if (!geos.length) return;
+      const merged = mergeGeometries(geos);
+      geos.forEach((g) => g.dispose());
+      const mat = new THREE.MeshStandardMaterial({ color: palette[i], roughness: 0.7, metalness: 0.08 });
+      const mesh = new THREE.Mesh(merged, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.buildingsGroup.add(mesh);
+    });
+  }
+
+  // Trees: one InstancedMesh per part and colour (seven draw calls for any
+  // number of trees) instead of four to five meshes, each with its own
+  // material, per tree.
+  buildTrees(trees) {
+    const parts = {
+      trunk: { geo: new THREE.CylinderGeometry(0.75, 1.15, 1, 7).translate(0, 0.5, 0), color: 0x452b19, flat: false, mats: [] },
+      leaf0: { geo: new THREE.DodecahedronGeometry(1, 1), color: 0x15803d, flat: true, mats: [] },
+      leaf1: { geo: new THREE.DodecahedronGeometry(1, 1), color: 0x16a34a, flat: true, mats: [] },
+      leaf2: { geo: new THREE.DodecahedronGeometry(1, 1), color: 0x22c55e, flat: true, mats: [] },
+      pine0: { geo: new THREE.ConeGeometry(1, 1, 7), color: 0x14532d, flat: true, mats: [] },
+      pine1: { geo: new THREE.ConeGeometry(1, 1, 7), color: 0x166534, flat: true, mats: [] },
+      pine2: { geo: new THREE.ConeGeometry(1, 1, 7), color: 0x15803d, flat: true, mats: [] },
+    };
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const place = (part, x, y, z, sx, sy, sz) => {
+      parts[part].mats.push(m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(sx, sy, sz)).clone());
+    };
+    trees.forEach((tree) => {
+      const coords = tree.coordinates || [];
+      if (coords.length < 2) return;
+      const pos = this.lonLatToSceneMeters(Number(coords[0]), Number(coords[1]), this.baseElevation);
+      const y0 = this.groundY(pos.x, pos.z);
+      const height = Math.max(4.5, Number(tree.height_m || 8.0));
+      const canopyR = Math.max(1.8, Number(tree.canopy_radius_m || 3.2));
+      const trunkH = Math.max(1.2, Number(tree.trunk_height_m || (height * 0.35)));
+      const trunkR = Math.max(0.18, Number(tree.trunk_radius_m || 0.28));
+      place('trunk', pos.x, y0, pos.z, trunkR, trunkH, trunkR);
+      if (tree.tree_type === 'conifer' || tree.tree_type === 'pine') {
+        const crown = height - trunkH;
+        place('pine0', pos.x, y0 + trunkH + crown * 0.26, pos.z, canopyR, crown * 0.52, canopyR);
+        place('pine1', pos.x, y0 + trunkH + crown * 0.52, pos.z, canopyR * 0.78, crown * 0.48, canopyR * 0.78);
+        place('pine2', pos.x, y0 + trunkH + crown * 0.78, pos.z, canopyR * 0.52, crown * 0.42, canopyR * 0.52);
+      } else {
+        place('leaf0', pos.x, y0 + trunkH + canopyR * 0.72, pos.z, canopyR * 0.95 * 1.1, canopyR * 0.95 * 0.82, canopyR * 0.95 * 1.05);
+        place('leaf1', pos.x, y0 + trunkH + canopyR * 1.18, pos.z, canopyR * 0.82 * 0.96, canopyR * 0.82 * 0.88, canopyR * 0.82 * 0.96);
+        place('leaf2', pos.x, y0 + trunkH + canopyR * 1.58, pos.z, canopyR * 0.58 * 0.85, canopyR * 0.58 * 0.95, canopyR * 0.58 * 0.85);
+      }
+    });
+    Object.values(parts).forEach((part) => {
+      if (!part.mats.length) {
+        part.geo.dispose();
+        return;
+      }
+      const mat = new THREE.MeshStandardMaterial({
+        color: part.color, roughness: part.flat ? 0.78 : 0.92, metalness: 0.04, flatShading: part.flat,
+      });
+      const mesh = new THREE.InstancedMesh(part.geo, mat, part.mats.length);
+      part.mats.forEach((matrix, i) => mesh.setMatrixAt(i, matrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.treesGroup.add(mesh);
+    });
   }
 
   togglePlay() {
     this.isPlaying = !this.isPlaying;
+    const btnPlay = document.getElementById('btnPlay');
+    if (btnPlay) {
+      btnPlay.setAttribute('aria-label', this.isPlaying ? 'Pause' : 'Play');
+      btnPlay.setAttribute('aria-pressed', String(this.isPlaying));
+    }
+    this.requestRender();
     if (this.elPlayIcon) {
       this.elPlayIcon.textContent = this.isPlaying ? '⏸' : '▶';
     }
   }
 
   updateAvatarPosition() {
-    if (!this.curve || this.scenePoints.length < 2) return;
+    if (!this.activePath || this.scenePoints.length < 2) return;
     const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
-    const pt = this.curve.getPointAt(safeProgress);
-    const tangent = this.curve.getTangentAt(safeProgress).normalize();
+    const { point: pt, tangent } = this.activePath.at(safeProgress);
+    this.requestRender();
 
     // Determine simulation elapsed time based on max duration among all active routes
     const maxDurationSec = Math.max(
@@ -1559,13 +1907,12 @@ class Studio3DApp {
     const frameDelta = Number.isFinite(this.lastFrameDelta) ? this.lastFrameDelta : 0.016;
     const animDelta = this.isPlaying ? frameDelta * Math.max(0.2, this.playbackSpeed) : 0.0;
     this.routeVisuals.forEach((visual) => {
-      if (!visual.rig || !visual.curve) return;
+      if (!visual.rig || !visual.path) return;
       const props = visual.feature?.properties || {};
       const visualDurationSec = Math.max(1.0, Number(props.duration_min || 5.0) * 60.0);
       const visualProgress = Math.max(0.0, Math.min(1.0, elapsedSimTimeSec / visualDurationSec));
 
-      const visualPt = visual.curve.getPointAt(visualProgress);
-      const visualTangent = visual.curve.getTangentAt(visualProgress).normalize();
+      const { point: visualPt, tangent: visualTangent } = visual.path.at(visualProgress);
       visual.rig.root.position.copy(visualPt);
       visual.rig.root.position.y += 0.2;
       const targetYaw = Math.atan2(visualTangent.x, visualTangent.z);
@@ -1578,10 +1925,9 @@ class Studio3DApp {
       visual.rig.updateKinematics(animDelta, spd, visualTangent, 0, false);
     });
 
-    if (this.pulseBeacon) {
-      const pulseProg = (safeProgress + (this.clock ? this.clock.getElapsedTime() * 0.1 : 0.0)) % 1.0;
-      const bPt = this.curve.getPointAt(pulseProg);
-      this.pulseBeacon.position.copy(bPt);
+    if (this.pulseBeacon && !this.isPlaying) {
+      // At rest the beacon marks the current position (it runs ahead only in playback).
+      this.pulseBeacon.position.copy(pt);
       this.pulseBeacon.position.y += 1.8;
     }
 
@@ -1591,6 +1937,9 @@ class Studio3DApp {
 
     if (this.elScrubber) {
       this.elScrubber.value = (safeProgress * 1000.0).toFixed(0);
+      const totalKm = Number(this.routeData?.properties?.distance_km || 0);
+      this.elScrubber.setAttribute('aria-valuetext',
+        `${(safeProgress * totalKm).toFixed(2)} of ${totalKm.toFixed(2)} km`);
     }
     if (this.activeMetrics && this.activeMetrics.length) {
       const leftPct = `${safeProgress * 100}%`;
@@ -1600,6 +1949,7 @@ class Studio3DApp {
     }
 
     this.updateMetricLiveReadout();
+    this.updateChartCursor();
 
     // Camera following modes
     if (this.cameraMode === 'chase') {
@@ -1630,7 +1980,11 @@ class Studio3DApp {
         m.elVal.textContent = '—';
         return;
       }
-      const idx = Math.min(n - 1, Math.max(0, Math.floor(safeProgress * (n - 1))));
+      // Value at the walker's distance along the route.
+      const total = m.distances[n - 1] || 1;
+      const target = safeProgress * total;
+      let idx = 0;
+      while (idx < n - 1 && m.distances[idx + 1] <= target) idx += 1;
       const val = m.values[idx];
       m.elVal.textContent = (val !== null && val !== undefined && !isNaN(val)) ? m.formatter(val) : 'no data';
     });
@@ -1664,10 +2018,9 @@ class Studio3DApp {
     });
     ctx.stroke();
 
-    if (this.scenePoints.length >= 2 && this.curve) {
+    if (this.scenePoints.length >= 2 && this.activePath) {
       const safeProgress = Math.max(0.0, Math.min(1.0, this.progress));
-      const pt = this.curve.getPointAt(safeProgress);
-      const av = toRadar(pt);
+      const av = toRadar(this.activePath.at(safeProgress).point);
       ctx.beginPath();
       ctx.fillStyle = '#ef4444';
       ctx.arc(av.x, av.y, 4.5, 0, Math.PI * 2);
@@ -1686,45 +2039,155 @@ class Studio3DApp {
     this.controls.update();
   }
 
-  takeSnapshot() {
-    this.renderer.render(this.scene, this.camera);
-    const dataUrl = this.renderer.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `02Route3D_${new Date().toISOString().slice(0, 19)}.png`;
-    a.click();
+  // Caption burnt into snapshots and videos: profile, totals, the walker's
+  // position, and the basemap credit the tile providers require.
+  drawCaptureHud(ctx, w, h, scale) {
+    const props = this.routeData?.properties || {};
+    const pad = 14 * scale;
+    const font = (size, weight = 600) => `${weight} ${size * scale}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const lines = [];
+    if (this.routeData) {
+      lines.push([font(15, 700), props.profile_name || props.profile_key || 'Route']);
+      lines.push([font(13), `${Number(props.distance_km || 0).toFixed(2)} km · ${Number(props.duration_min || 0).toFixed(1)} min · +${Number(props.elevation_gain_m || 0).toFixed(0)} m`]);
+      if (this.chart) lines.push([font(12, 500), this.chart.tip.textContent]);
+    }
+    if (lines.length) {
+      ctx.save();
+      let boxW = 0;
+      lines.forEach(([f, t]) => { ctx.font = f; boxW = Math.max(boxW, ctx.measureText(t).width); });
+      const lineH = 20 * scale;
+      const boxH = lines.length * lineH + pad;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+      ctx.fillRect(pad, h - boxH - pad, boxW + pad * 2, boxH);
+      ctx.fillStyle = SAFE_COLOR.test(String(props.profile_color || '')) ? props.profile_color : '#38bdf8';
+      ctx.fillRect(pad, h - boxH - pad, 4 * scale, boxH);
+      ctx.fillStyle = '#ffffff';
+      ctx.textBaseline = 'top';
+      lines.forEach(([f, t], i) => {
+        ctx.font = f;
+        ctx.fillText(t, pad * 2, h - boxH - pad + pad / 2 + i * lineH);
+      });
+      ctx.restore();
+    }
+    const credit = this.elBasemapCredit?.textContent || '';
+    if (credit && this.showBasemap) {
+      ctx.save();
+      ctx.font = font(11, 500);
+      const tw = ctx.measureText(credit).width;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillRect(w - tw - pad * 1.5, h - 22 * scale, tw + pad, 18 * scale);
+      ctx.fillStyle = '#334155';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(credit, w - tw - pad, h - 13 * scale);
+      ctx.restore();
+    }
   }
 
+  // Snapshot at twice the screen resolution (Shift-click: four times),
+  // capped by the GPU's maximum texture size, with the caption.
+  takeSnapshot(scale = 2) {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const oldRatio = this.renderer.getPixelRatio();
+    const maxTex = this.renderer.capabilities.maxTextureSize || 4096;
+    const ratio = Math.max(1, Math.min(scale, maxTex / Math.max(size.x, size.y, 1)));
+    this.renderer.setPixelRatio(ratio);
+    this.renderer.setSize(size.x, size.y, false);
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const out = document.createElement('canvas');
+    out.width = src.width;
+    out.height = src.height;
+    const ctx = out.getContext('2d');
+    ctx.drawImage(src, 0, 0);
+    this.drawCaptureHud(ctx, out.width, out.height, ratio);
+    this.renderer.setPixelRatio(oldRatio);
+    this.renderer.setSize(size.x, size.y, false);
+    this.requestRender();
+    out.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `02Route3D_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }, 'image/png');
+  }
+
+  pickVideoFormat() {
+    if (typeof MediaRecorder === 'undefined') return null;
+    // Safari records MP4/H.264 only; Chrome and Firefox record WebM.
+    const candidates = [
+      ['video/webm;codecs=vp9', 'webm'],
+      ['video/webm;codecs=vp8', 'webm'],
+      ['video/webm', 'webm'],
+      ['video/mp4;codecs=avc1', 'mp4'],
+      ['video/mp4', 'mp4'],
+    ];
+    const hit = candidates.find(([type]) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type));
+    return hit ? { mimeType: hit[0], ext: hit[1] } : null;
+  }
+
+  drawRecordingFrame() {
+    const rec = this.recording;
+    if (!rec) return;
+    const src = this.renderer.domElement;
+    if (rec.canvas.width !== src.width || rec.canvas.height !== src.height) {
+      rec.canvas.width = src.width;
+      rec.canvas.height = src.height;
+    }
+    rec.ctx.drawImage(src, 0, 0);
+    this.drawCaptureHud(rec.ctx, rec.canvas.width, rec.canvas.height, this.renderer.getPixelRatio());
+  }
+
+  // Video with the caption: frames are composited onto a 2D canvas right
+  // after each render (no preserveDrawingBuffer needed) and that canvas is
+  // recorded.
   toggleRecordVideo() {
     const btnRecord = document.getElementById('btnRecord');
     if (this.isRecording) {
-      if (this.mediaRecorder) {
-        this.mediaRecorder.stop();
-      }
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') this.mediaRecorder.stop();
       this.isRecording = false;
-      if (btnRecord) btnRecord.style.color = '';
-    } else {
-      this.recordedChunks = [];
-      try {
-        const stream = this.renderer.domElement.captureStream(60);
-        this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
-        this.mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
-        };
-        this.mediaRecorder.onstop = () => {
-          const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `02Route3D_${new Date().toISOString().slice(0, 19)}.webm`;
-          a.click();
-        };
-        this.mediaRecorder.start();
-        this.isRecording = true;
-        if (btnRecord) btnRecord.style.color = '#ef4444';
-      } catch (err) {
-        console.warn('Video recording error:', err);
+      if (btnRecord) {
+        btnRecord.classList.remove('recording');
+        btnRecord.setAttribute('aria-pressed', 'false');
       }
+      return;
+    }
+    const format = this.pickVideoFormat();
+    const canvas = document.createElement('canvas');
+    if (!format || typeof canvas.captureStream !== 'function') {
+      setLiveStatus('Video recording is not supported in this browser.', 'warning');
+      return;
+    }
+    this.recording = { canvas, ctx: canvas.getContext('2d'), format };
+    this.drawRecordingFrame();
+    this.recordedChunks = [];
+    try {
+      this.mediaRecorder = new MediaRecorder(canvas.captureStream(30), { mimeType: format.mimeType });
+    } catch (err) {
+      setLiveStatus(`Video recording failed to start: ${err.message}`, 'warning');
+      this.recording = null;
+      return;
+    }
+    this.mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+    };
+    this.mediaRecorder.onstop = () => {
+      const blob = new Blob(this.recordedChunks, { type: format.mimeType.split(';')[0] });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `02Route3D_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${format.ext}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      this.recording = null;
+    };
+    this.mediaRecorder.start(1000);
+    this.isRecording = true;
+    if (btnRecord) {
+      btnRecord.classList.add('recording');
+      btnRecord.setAttribute('aria-pressed', 'true');
     }
   }
 
@@ -1783,132 +2246,90 @@ class Studio3DApp {
     return d;
   }
 
-  renderProfileChart() {
-    if (!this.elMultiMetricRows) return;
-    this.elMultiMetricRows.innerHTML = '';
-    this.activeMetrics = [];
-
-    if (!this.routeData) return;
+  // Per-point profile of the active route: distance (m), elevation, slope,
+  // speed and the optional raster values. QGIS sends it densified (~6 m); the
+  // old code read it by route-vertex index, so the values came from the
+  // wrong places along the route.
+  profileSeries() {
+    const profList = (this.routeData?.properties?.elevation_profile || []).filter(
+      (p) => p && Number.isFinite(Number(p.distance_m)) && Number.isFinite(Number(p.elevation_m)),
+    );
+    if (profList.length >= 2) {
+      return profList.map((p) => ({
+        d: Number(p.distance_m),
+        z: Number(p.elevation_m),
+        slope: Number(p.slope_pct) || 0,
+        speed: Number(p.speed_kmh),
+        lst: p.lst_normalized,
+        green: p.ndvi_normalized,
+      }));
+    }
+    // No profile sent (older payloads): fall back to the vertices.
     const coords = this.routeData?.geometry?.coordinates || [];
-    const profList = this.routeData?.properties?.elevation_profile || [];
-    if (coords.length < 2) return;
+    const cumulative = this.activePath ? this.activePath.cumulative : coords.map((_, i) => i);
+    return coords.map((c, i) => ({ d: cumulative[i] || 0, z: Number(c[2]) || 0, slope: 0, speed: NaN }));
+  }
+
+  renderProfileChart() {
+    if (this.elMultiMetricRows) this.elMultiMetricRows.innerHTML = '';
+    this.activeMetrics = [];
+    this.renderElevationChart();
+    if (!this.routeData || !this.elMultiMetricRows) return;
+    const series = this.profileSeries();
+    if (series.length < 2) return;
 
     const trackWidth = Math.max(100, (this.elMultiMetricRows.clientWidth || 600) - 190);
     const trackHeight = 22;
-
-    const metricsDef = [];
-
-    // 1. Elevation (always available)
-    const rawColor = this.routeData?.properties?.profile_color;
-    const elevColor = (typeof rawColor === 'string' && SAFE_COLOR.test(rawColor)) ? rawColor : '#0284c7';
-    const elevVals = coords.map((c, i) => (
-      profList[i]?.elevation_m !== undefined ? profList[i].elevation_m : (c[2] !== undefined ? c[2] : 0.0)
-    ));
-    metricsDef.push({
-      id: 'elevation',
-      name: 'Elevation',
-      icon: '📈',
-      color: elevColor,
-      values: elevVals,
-      formatter: (v) => `${v.toFixed(1)} m`,
-    });
-
-    // 2. Slope (always available)
-    const slopeVals = coords.map((_, i) => (
-      profList[i]?.slope_pct !== undefined ? profList[i].slope_pct : 0.0
-    ));
-    metricsDef.push({
-      id: 'slope',
-      name: 'Slope',
-      icon: '📐',
-      color: '#f59e0b',
-      values: slopeVals,
-      formatter: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`,
-    });
-
-    // 3. Speed (always available)
-    const speedVals = coords.map((_, i) => (
-      profList[i]?.speed_kmh !== undefined ? profList[i].speed_kmh : 5.0
-    ));
-    metricsDef.push({
-      id: 'speed',
-      name: 'Speed',
-      icon: '⚡',
-      color: '#6366f1',
-      values: speedVals,
-      formatter: (v) => `${v.toFixed(1)} km/h`,
-    });
-
-    // 4. Heat / LST (optional -- only when real raster was supplied)
-    const hasLst = profList.some((p) => p && p.lst_normalized !== undefined && p.lst_normalized !== null);
-    if (hasLst) {
-      const lstVals = coords.map((_, i) => (
-        profList[i]?.lst_normalized !== undefined ? profList[i].lst_normalized * 100.0 : null
-      ));
-      metricsDef.push({
-        id: 'lst',
-        name: 'Heat (LST)',
-        icon: '🌡️',
-        color: '#ef4444',
-        values: lstVals,
-        formatter: (v) => `${v.toFixed(0)}%`,
-      });
+    const metricsDef = [
+      { id: 'slope', name: 'Slope', icon: '📐', color: '#f59e0b', key: 'slope',
+        formatter: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%` },
+      { id: 'speed', name: 'Speed', icon: '⚡', color: '#6366f1', key: 'speed',
+        formatter: (v) => `${v.toFixed(1)} km/h` },
+    ];
+    // Heat and greenery appear only when a real raster was supplied.
+    if (series.some((p) => p.lst !== undefined && p.lst !== null)) {
+      metricsDef.push({ id: 'lst', name: 'Heat (LST)', icon: '🌡️', color: '#ef4444', key: 'lst', scale: 100,
+        formatter: (v) => `${v.toFixed(0)}%` });
     }
-
-    // 5. Greenery (optional -- only when real raster was supplied)
-    const hasGreen = profList.some((p) => p && p.ndvi_normalized !== undefined && p.ndvi_normalized !== null);
-    if (hasGreen) {
-      const greenVals = coords.map((_, i) => (
-        profList[i]?.ndvi_normalized !== undefined ? profList[i].ndvi_normalized * 100.0 : null
-      ));
-      metricsDef.push({
-        id: 'greenery',
-        name: 'Greenery',
-        icon: '🌳',
-        color: '#10b981',
-        values: greenVals,
-        formatter: (v) => `${v.toFixed(0)}%`,
-      });
+    if (series.some((p) => p.green !== undefined && p.green !== null)) {
+      metricsDef.push({ id: 'greenery', name: 'Greenery', icon: '🌳', color: '#10b981', key: 'green', scale: 100,
+        formatter: (v) => `${v.toFixed(0)}%` });
     }
 
     metricsDef.forEach((metric) => {
-      const pathD = this.buildWormPath(metric.values, trackWidth, trackHeight);
+      const values = series.map((p) => {
+        const v = p[metric.key];
+        return v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v) * (metric.scale || 1);
+      });
+      const pathD = this.buildWormPath(values, trackWidth, trackHeight);
       if (!pathD) return;
-
-      const safeColor = (typeof metric.color === 'string' && SAFE_COLOR.test(metric.color)) ? metric.color : '#0284c7';
+      const safeColor = SAFE_COLOR.test(metric.color) ? metric.color : '#0284c7';
 
       const row = document.createElement('div');
       row.className = 'metric-worm-row';
       row.dataset.metric = metric.id;
-
       const info = document.createElement('div');
       info.className = 'metric-row-info';
-
       const iconSpan = document.createElement('span');
       iconSpan.className = 'metric-row-icon';
+      iconSpan.setAttribute('aria-hidden', 'true');
       iconSpan.textContent = metric.icon;
-
       const nameSpan = document.createElement('span');
       nameSpan.className = 'metric-row-name';
       nameSpan.textContent = metric.name;
-
       const valSpan = document.createElement('span');
       valSpan.className = 'metric-row-val';
       valSpan.id = `readout_${metric.id}`;
       valSpan.textContent = '—';
-
-      info.appendChild(iconSpan);
-      info.appendChild(nameSpan);
-      info.appendChild(valSpan);
+      info.append(iconSpan, nameSpan, valSpan);
 
       const track = document.createElement('div');
       track.className = 'metric-ribbon-track';
-
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'metric-ribbon-svg');
       svg.setAttribute('preserveAspectRatio', 'none');
       svg.setAttribute('viewBox', `0 0 ${trackWidth} ${trackHeight}`);
-
+      svg.setAttribute('aria-hidden', 'true');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', pathD);
       path.setAttribute('fill', safeColor);
@@ -1916,38 +2337,160 @@ class Studio3DApp {
       path.setAttribute('stroke', safeColor);
       path.setAttribute('stroke-width', '1.0');
       svg.appendChild(path);
-
-      const dot = document.createElement('div');
-      dot.className = 'metric-end-dot';
-      dot.style.backgroundColor = safeColor;
-
       const needle = document.createElement('div');
       needle.className = 'metric-needle';
-      needle.id = `needle_${metric.id}`;
-
-      track.appendChild(svg);
-      track.appendChild(dot);
-      track.appendChild(needle);
-
+      track.append(svg, needle);
       track.addEventListener('click', (e) => {
         const rect = track.getBoundingClientRect();
-        this.progress = Math.max(0.0, Math.min(1.0, (e.clientX - rect.left) / Math.max(1, rect.width)));
-        this.updateAvatarPosition();
+        this.setProgress((e.clientX - rect.left) / Math.max(1, rect.width));
       });
-
-      row.appendChild(info);
-      row.appendChild(track);
+      row.append(info, track);
       this.elMultiMetricRows.appendChild(row);
+      this.activeMetrics.push({ ...metric, values, distances: series.map((p) => p.d), elVal: valSpan, elNeedle: needle });
+    });
+    this.updateMetricLiveReadout();
+  }
 
-      this.activeMetrics.push({
-        ...metric,
-        safeColor,
-        elVal: valSpan,
-        elNeedle: needle,
-      });
+  setProgress(fraction) {
+    this.progress = Math.max(0.0, Math.min(1.0, Number(fraction) || 0));
+    this.updateAvatarPosition();
+  }
+
+  // Elevation profile with real axes: distance (km) across, elevation (m) up,
+  // the area coloured by slope class. Hovering or arrow keys move the walker
+  // in 3D; playback moves the chart cursor.
+  renderElevationChart() {
+    const host = document.getElementById('elevationChart');
+    if (!host) return;
+    host.innerHTML = '';
+    this.chart = null;
+    if (!this.routeData) return;
+    const series = this.profileSeries();
+    if (series.length < 2) return;
+    const totalD = series[series.length - 1].d || 1;
+    const step = Math.max(1, Math.floor(series.length / 600));
+    const pts = series.filter((_, i) => i % step === 0 || i === series.length - 1);
+
+    // The host is hidden while empty, so measure the panel it sits in.
+    const W = Math.max(240, host.clientWidth || (host.parentElement?.clientWidth || 632) - 32);
+    const H = 96;
+    const m = { l: 46, r: 12, t: 8, b: 20 };
+    const pw = W - m.l - m.r;
+    const ph = H - m.t - m.b;
+    let zMin = Infinity;
+    let zMax = -Infinity;
+    pts.forEach((p) => { zMin = Math.min(zMin, p.z); zMax = Math.max(zMax, p.z); });
+    const yTicks = niceTicks(zMin, zMax, 3);
+    const yLo = Math.min(zMin, yTicks[0]);
+    const yHi = Math.max(zMax, yTicks[yTicks.length - 1], yLo + 1);
+    const x = (d) => m.l + (d / totalD) * pw;
+    const y = (z) => m.t + (1 - (z - yLo) / (yHi - yLo)) * ph;
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', String(W));
+    svg.setAttribute('height', String(H));
+    svg.setAttribute('class', 'elevation-svg');
+    const el = (name, attrs, text) => {
+      const node = document.createElementNS(NS, name);
+      Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, String(v)));
+      if (text !== undefined) node.textContent = text;
+      svg.appendChild(node);
+      return node;
+    };
+
+    yTicks.forEach((t) => {
+      el('line', { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), class: 'grid' });
+      el('text', { x: m.l - 6, y: y(t) + 3, class: 'tick', 'text-anchor': 'end' }, `${Math.round(t)} m`);
+    });
+    niceTicks(0, totalD / 1000, 5).forEach((t) => {
+      if (t * 1000 > totalD + 1e-6) return;
+      el('text', { x: x(t * 1000), y: H - 5, class: 'tick', 'text-anchor': 'middle' }, `${t} km`);
     });
 
-    this.updateMetricLiveReadout();
+    // Area under the line, one polygon per run of the same slope class.
+    const slopeClass = (s) => {
+      const a = Math.abs(s);
+      return a < 3 ? 0 : a < 6 ? 1 : a < 10 ? 2 : 3;
+    };
+    const colors = ['#10b981', '#eab308', '#f97316', '#ef4444'];
+    let runStart = 0;
+    for (let i = 1; i <= pts.length; i++) {
+      const cls = slopeClass(pts[Math.min(i, pts.length - 1)].slope);
+      const runCls = slopeClass(pts[runStart].slope);
+      if (i === pts.length || cls !== runCls) {
+        const seg = pts.slice(runStart, Math.min(i + 1, pts.length));
+        if (seg.length >= 2) {
+          const d = `M${x(seg[0].d)},${y(yLo)} ${seg.map((p) => `L${x(p.d).toFixed(1)},${y(p.z).toFixed(1)}`).join(' ')} L${x(seg[seg.length - 1].d)},${y(yLo)} Z`;
+          el('path', { d, fill: colors[runCls], 'fill-opacity': 0.55 });
+        }
+        runStart = i;
+      }
+    }
+    el('path', {
+      d: pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.d).toFixed(1)},${y(p.z).toFixed(1)}`).join(' '),
+      class: 'profile-line',
+    });
+    const cursor = el('line', { x1: m.l, x2: m.l, y1: m.t, y2: m.t + ph, class: 'cursor' });
+    const dot = el('circle', { cx: m.l, cy: y(pts[0].z), r: 4, class: 'cursor-dot' });
+
+    const climb = Number(this.routeData.properties?.elevation_gain_m || 0);
+    host.setAttribute('role', 'slider');
+    host.setAttribute('tabindex', '0');
+    host.setAttribute('aria-label',
+      `Elevation profile, ${(totalD / 1000).toFixed(2)} km, from ${Math.round(zMin)} to ${Math.round(zMax)} m, climb ${Math.round(climb)} m. Arrow keys move along the route.`);
+    host.setAttribute('aria-valuemin', '0');
+    host.setAttribute('aria-valuemax', '100');
+    host.appendChild(svg);
+    const tip = document.createElement('div');
+    tip.className = 'chart-tip';
+    host.appendChild(tip);
+
+    const fromEvent = (e) => {
+      const rect = svg.getBoundingClientRect();
+      const px = ((e.clientX - rect.left) / Math.max(1, rect.width)) * W;
+      return Math.max(0, Math.min(1, (px - m.l) / pw));
+    };
+    svg.addEventListener('pointermove', (e) => this.setProgress(fromEvent(e)));
+    svg.addEventListener('pointerdown', (e) => this.setProgress(fromEvent(e)));
+    host.addEventListener('keydown', (e) => {
+      const stepFrac = e.shiftKey ? 0.05 : 0.01;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.setProgress(this.progress + (e.key === 'ArrowRight' ? stepFrac : -stepFrac));
+      }
+    });
+    this.chart = { series, totalD, x, y, cursor, dot, tip, host, W };
+    this.updateChartCursor();
+  }
+
+  updateChartCursor() {
+    const c = this.chart;
+    if (!c) return;
+    const d = Math.max(0, Math.min(1, this.progress)) * c.totalD;
+    const s = c.series;
+    let lo = 0;
+    let hi = s.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (s[mid].d <= d) lo = mid;
+      else hi = mid;
+    }
+    const span = s[hi].d - s[lo].d;
+    const f = span > 0 ? (d - s[lo].d) / span : 0;
+    const z = s[lo].z + (s[hi].z - s[lo].z) * f;
+    const px = c.x(d);
+    c.cursor.setAttribute('x1', px);
+    c.cursor.setAttribute('x2', px);
+    c.dot.setAttribute('cx', px);
+    c.dot.setAttribute('cy', c.y(z));
+    const text = `${(d / 1000).toFixed(2)} km · ${z.toFixed(1)} m · ${s[lo].slope >= 0 ? '+' : ''}${s[lo].slope.toFixed(1)}%`;
+    c.tip.textContent = text;
+    c.tip.style.left = `${Math.min(c.W - 170, Math.max(50, px + 8))}px`;
+    c.host.setAttribute('aria-valuenow', String(Math.round(this.progress * 100)));
+    c.host.setAttribute('aria-valuetext', text);
   }
 
   animate() {
@@ -1956,24 +2499,36 @@ class Studio3DApp {
     // Clamped so a backgrounded tab does not resume with one huge jump.
     this.lastFrameDelta = Math.min(0.1, delta);
 
-    if (this.isPlaying && this.curve && this.scenePoints.length >= 2) {
-      this.progress += delta * 0.04 * this.playbackSpeed;
+    const hasRoute = Boolean(this.curve && this.scenePoints.length >= 2);
+    if (this.isPlaying && hasRoute) {
+      this.progress += this.lastFrameDelta * 0.04 * this.playbackSpeed;
       if (this.progress > 1.0) {
         this.progress = 0.0;
       }
       this.updateAvatarPosition();
+      this.needsRender = true;
     }
 
-    if (this.pulseBeacon && this.curve && this.scenePoints.length >= 2) {
-      const beaconProg = ((this.clock ? this.clock.getElapsedTime() * 0.15 : 0.0)) % 1.0;
-      const bPt = this.curve.getPointAt(beaconProg);
-      this.pulseBeacon.position.copy(bPt);
-      this.pulseBeacon.position.y += 1.8;
+    // The pulse beacon runs ahead of the walker only during playback, so an
+    // idle view does not have to redraw every frame.
+    if (this.pulseBeacon && hasRoute && this.isPlaying && !this.reducedMotion) {
+      const beaconProg = (this.clock.getElapsedTime() * 0.15) % 1.0;
+      const sample = this.activePath ? this.activePath.at(beaconProg) : null;
+      if (sample) {
+        this.pulseBeacon.position.copy(sample.point);
+        this.pulseBeacon.position.y += 1.8;
+      }
     }
 
     if (this.cameraMode === 'orbit' && this.controls.enabled) {
-      this.controls.update();
+      // update() reports whether damping is still moving the camera.
+      if (this.controls.update()) this.needsRender = true;
+    } else if (hasRoute) {
+      this.needsRender = true;
     }
+
+    if (!this.needsRender && !this.isRecording) return;
+    this.needsRender = false;
 
     if (this.compassRose && this.controls) {
       const angle = this.controls.getAzimuthalAngle();
@@ -1981,6 +2536,8 @@ class Studio3DApp {
     }
 
     this.renderer.render(this.scene, this.camera);
+    this.framesRendered += 1;
+    if (this.isRecording) this.drawRecordingFrame();
   }
 }
 
@@ -1994,37 +2551,98 @@ window.setRouteData = function (geojsonData) {
 
 let lastLoadedPayload = null;
 let routePollTimer = null;
+let routeEvents = null;
 
-async function fetchCurrentRoute() {
-  try {
-    const res = await fetch(`data/current_route.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (res.ok) {
-      const data = await res.json();
-      const dataStr = JSON.stringify(data);
-      if (data && dataStr !== lastLoadedPayload && window.app3d) {
-        lastLoadedPayload = dataStr;
-        window.app3d.loadRoute(data);
-        return true;
-      }
-      return Boolean(data);
-    }
-  } catch (_) {}
-  return false;
+function setLiveStatus(message, level = 'info') {
+  const el = document.getElementById('liveStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.dataset.level = level;
+  el.hidden = !message;
 }
 
-// Initial load. There is deliberately no built-in demo route: when QGIS has not
-// computed one yet the studio shows its empty state rather than a fabricated route
-// whose distance, climb and calorie figures would be indistinguishable from real ones.
-(async () => {
-  await fetchCurrentRoute();
+async function fetchCurrentRoute() {
+  let res;
+  try {
+    res = await fetch(`data/current_route.json?t=${Date.now()}`, { cache: 'no-store' });
+  } catch (err) {
+    setLiveStatus('Cannot reach QGIS: the 02Route 3D server is not running. Reopen the 3D studio from QGIS.', 'error');
+    return false;
+  }
+  if (res.status === 404) {
+    // No route computed yet: the empty state explains what to do.
+    setLiveStatus('');
+    return false;
+  }
+  if (!res.ok) {
+    setLiveStatus(`Could not load the route from QGIS (HTTP ${res.status}).`, 'error');
+    return false;
+  }
+  let text;
+  let data;
+  try {
+    text = await res.text();
+    data = JSON.parse(text);
+  } catch (err) {
+    setLiveStatus(`The route file from QGIS is not valid JSON: ${err.message}`, 'error');
+    return false;
+  }
+  setLiveStatus('');
+  if (data && text !== lastLoadedPayload && window.app3d) {
+    lastLoadedPayload = text;
+    try {
+      window.app3d.loadRoute(data);
+    } catch (err) {
+      setLiveStatus(`The route could not be shown: ${err.message}`, 'error');
+      console.error(err);
+    }
+  }
+  return Boolean(data);
+}
 
-  // Dynamic live sync: picks up newly computed routes from QGIS automatically.
-  routePollTimer = setInterval(fetchCurrentRoute, 1500);
-})();
+function startPolling() {
+  if (routePollTimer === null) routePollTimer = setInterval(fetchCurrentRoute, 1500);
+}
+
+// Live link to QGIS: the local server pushes an event when QGIS writes a new
+// route, so the viewer no longer downloads the whole route every 1.5 s. If the
+// event stream is unavailable it falls back to polling.
+function startLiveSync() {
+  if (!/^https?:$/.test(window.location.protocol)) return; // standalone HTML report
+  if (!window.EventSource) {
+    fetchCurrentRoute();
+    startPolling();
+    return;
+  }
+  let opened = false;
+  routeEvents = new EventSource('events');
+  routeEvents.addEventListener('open', () => {
+    opened = true;
+    setLiveStatus('');
+  });
+  routeEvents.addEventListener('route', () => fetchCurrentRoute());
+  routeEvents.addEventListener('error', () => {
+    if (!opened) {
+      // Older server without /events: poll instead.
+      routeEvents.close();
+      routeEvents = null;
+      fetchCurrentRoute();
+      startPolling();
+      return;
+    }
+    setLiveStatus('Live link to QGIS lost - reconnecting...', 'warning');
+  });
+}
+
+// There is deliberately no built-in demo route: until QGIS computes one the
+// studio shows its empty state rather than a fabricated route whose numbers
+// would be indistinguishable from real ones.
+startLiveSync();
 
 window.addEventListener('beforeunload', () => {
   if (routePollTimer !== null) {
     clearInterval(routePollTimer);
     routePollTimer = null;
   }
+  if (routeEvents) routeEvents.close();
 });

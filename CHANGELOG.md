@@ -5,6 +5,57 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-10
+
+Roadmap phase 4: the 3D viewer (see docs/ROADMAP.md).
+
+### Added
+- Real terrain. QGIS samples the selected DEM on a grid (about 10 m, at most
+  160 x 160) around the routes, in the background route task, and sends it
+  with the routes (`core/terrain_grid.py`). The viewer builds its terrain
+  from it; buildings and trees stand on the ground under them. Without a DEM
+  the viewer keeps its route-fitted surface and labels it approximate.
+- Elevation chart with distance (km) and elevation (m) axes, the area
+  coloured by slope class. Hovering, clicking or arrow keys move the walker
+  in 3D; playback moves the chart cursor.
+- Comparison table of all computed profiles (distance, time, climb, max
+  slope, with differences to the selected one); other profiles are drawn as
+  2.4 m coloured ribbons instead of one-pixel lines.
+- Live link by server-sent events (`/events` on the local server): the
+  viewer fetches the route only when QGIS writes a new one. Unreadable route
+  files, HTTP errors and a lost link are shown in a status banner.
+- Keyboard control (Space, arrows, Shift+arrows, Home/End, R), visible focus
+  rings, `prefers-reduced-motion`, labels for the canvas, play button,
+  slider and chart.
+- Snapshots at 2x (Shift-click 4x) and videos with a caption (profile,
+  totals, position) and the basemap credit. Video uses the first supported
+  of VP9, VP8, WebM, H.264 MP4 (Safari).
+
+### Changed
+- On-demand rendering: frames are drawn only on camera moves, playback,
+  loaded tiles and UI changes (idle GPU about zero; the old loop drew every
+  frame). Trees are InstancedMeshes and buildings are merged per material:
+  91 draw calls instead of 169 in the test scene.
+- Playback and the chart work by distance along the route, so the walker
+  moves at a steady speed regardless of vertical exaggeration.
+- Basemap tiles are drawn in latitude strips (Web Mercator rows are not
+  evenly spaced), uploaded in batches instead of re-uploading a 4096 px
+  texture per tile, with a DEM hillshade when no tile loads.
+- Corridor buildings and trees are sent once per payload instead of once per
+  profile.
+
+### Fixed
+- Route ribbons were tubes squashed with `scale(1, 0.12, 1)`, which also
+  squashed the route's heights: on hills the route sank under the terrain.
+- Route ends took 0 m when no DEM covered them, so with 3D network heights
+  the link to the first node read as slopes of several hundred percent.
+- Profile values (`elevation_profile`, one per ~6 m) were read by route
+  vertex index, so the chart and readouts showed values from the wrong places.
+- Changing the vertical exaggeration rebuilt the meshes but not the route
+  points.
+- The capture buttons were hidden behind the bottom panel on screens under
+  about 950 px tall; side panels now stop above it.
+
 ## [0.7.0] - 2026-10-10
 
 Roadmap phase 3: speed (see docs/ROADMAP.md). Measured with

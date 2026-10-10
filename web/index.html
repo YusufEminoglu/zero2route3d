@@ -8,7 +8,11 @@
 </head>
 <body>
   <!-- 3D WebGL Canvas Container -->
-  <div id="canvasContainer"></div>
+  <div id="canvasContainer" tabindex="0" role="application"
+       aria-label="3D route view. Drag to orbit. Space plays or pauses, arrow keys move along the route, Home and End jump to its ends, R resets the view."></div>
+
+  <!-- Live link status and errors (hidden when all is well) -->
+  <div id="liveStatus" class="live-status" role="status" aria-live="polite" hidden></div>
 
   <!-- Empty Overlay Placeholder -->
   <div id="emptyOverlay">
@@ -66,7 +70,7 @@
   <!-- Left Mini-Radar Overview Map -->
   <div class="hud-panel minimap-radar">
     <canvas id="radarCanvas" width="130" height="130"></canvas>
-    <div class="compass-indicator" id="compassRose" title="Snap to North">N</div>
+    <button type="button" class="compass-indicator" id="compassRose" title="Snap to North" aria-label="Snap view to north">N</button>
   </div>
 
   <!-- QGIS-synchronised profile/layer legend -->
@@ -78,6 +82,11 @@
     <div class="layer-panel-help">Select a profile to show its QGIS-matching values. Toggle the eye to animate it.</div>
     <div class="layer-list" id="layerList">
       <div class="layer-empty">Waiting for QGIS routes…</div>
+    </div>
+    <div id="compareTable" class="compare-host"></div>
+    <div class="scene-notes">
+      <span id="terrainNote" class="terrain-note"></span>
+      <span id="basemapNote" role="status"></span>
     </div>
   </div>
 
@@ -126,10 +135,10 @@
     </button>
 
     <div class="tool-group-title">Capture & Tools</div>
-    <button class="tool-btn" id="btnSnapshot" title="High-Res Canvas Snapshot">
+    <button class="tool-btn" id="btnSnapshot" title="Snapshot at 2x resolution with caption (Shift-click: 4x)">
       <span>📸</span> Snapshot
     </button>
-    <button class="tool-btn" id="btnRecord" title="Record 60 FPS WebM Video">
+    <button class="tool-btn" id="btnRecord" title="Record a video with caption (WebM, or MP4 in Safari)" aria-pressed="false">
       <span>🎥</span> Record
     </button>
     <button class="tool-btn" id="btnResetView" title="Reset Camera to Extent">
@@ -139,6 +148,7 @@
 
   <!-- Bottom Player & Multi-Metric Longitudinal Profile Cockpit -->
   <div class="hud-panel bottom-controls">
+    <div id="elevationChart" class="elevation-chart"></div>
     <div class="multi-metric-panel" id="multiMetricPanel">
       <div class="multi-metric-rows" id="multiMetricRows">
         <!-- Rendered dynamically per available metric (Elevation, Slope, Speed, and optional Heat, Greenery) -->
@@ -146,12 +156,13 @@
     </div>
 
     <div class="player-scrubber-row">
-      <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
-        <span id="playIcon">▶</span>
+      <button class="btn-play" id="btnPlay" title="Play/Pause (Space)" aria-label="Play" aria-pressed="false">
+        <span id="playIcon" aria-hidden="true">▶</span>
       </button>
 
       <div class="scrubber-container">
-        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
+        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0"
+               aria-label="Position along the route">
       </div>
 
       <div class="speed-selector">
@@ -165,7 +176,6 @@
   <!-- Required by the tile providers' terms of use. -->
   <div id="basemapAttribution" class="basemap-attribution">
     <span id="basemapCredit">&copy; OpenStreetMap contributors</span>
-    <span id="basemapNote"></span>
   </div>
 
   <script type="module" src="js/app3d.js"></script>
