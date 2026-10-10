@@ -1909,8 +1909,10 @@ class Route3DStudioDock(QDockWidget):
             existing = self.cmb_dem_layer.currentLayer()
             lines = [
                 f"This downloads {plan['points']:,} elevation samples "
-                f"({plan['requests']} requests to Open-Elevation) at about "
-                f"{plan['res_m']:.0f} m resolution."
+                f"({plan['requests']} requests to Open-Elevation), spaced about "
+                f"{plan['res_m']:.0f} m apart. The free service is SRTM-based and "
+                "coarser than that, so fine relief is interpolated; a local DEM "
+                "layer gives better terrain."
             ]
             if plan["coarsened"]:
                 lines.append("The extent is large, so the cells are coarser than 30 m.")
@@ -1925,7 +1927,7 @@ class Route3DStudioDock(QDockWidget):
 
         self._notify(
             "info",
-            f"Downloading elevation ({plan['points']:,} samples, ~{plan['res_m']:.0f} m) in the background. "
+            f"Downloading elevation ({plan['points']:,} samples, ~{plan['res_m']:.0f} m apart) in the background. "
             "Cancel it from the QGIS task bar.",
         )
 

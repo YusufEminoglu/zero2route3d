@@ -5,6 +5,50 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-10
+
+Roadmap phase 6: engineering and honesty (see docs/ROADMAP.md).
+
+### Added
+- CI matrix on the official QGIS images: 3.28 (the minimum version), 3.44 LTR
+  and 4.2 (Qt6), besides Ubuntu's 3.34. Each runs the plugin smoke suite, the
+  Processing algorithm suite and `tests/check_qgis_api.py`, which resolves
+  every QGIS / Qt class member the plugin names against the running QGIS.
+- Tests for download failures (Overpass HTTP 429, invalid or non-object JSON,
+  falling back to the second mirror; Open-Elevation HTTP errors, incomplete
+  or non-finite answers, a later batch failing after good ones), cancelling
+  an OD matrix, routing on a Web Mercator network with Mercator points, and
+  the MCDA friction surface on a real GeoTIFF.
+- Sun and shadows in the 3D viewer: date and solar-time controls (and a
+  `?sun=day,hour` link parameter) place the sun for the route's latitude with
+  the same formula as the shade analysis; building and tree shadows follow
+  it, the shadow map covers the route corridor, and below the horizon the
+  sun light switches off and the sky darkens.
+- Viewer tooling: `package.json` with ESLint, a JSDoc type check, node:test
+  unit tests (sun position checked against the Python analysis, tile and
+  terrain-grid math, chart ticks, route ribbons), headless-Chromium smoke
+  checks and pixel-baseline visual regression; all run in CI.
+- A test that fails when the documentation repeats a retracted claim.
+
+### Changed
+- The viewer is split into modules (`geo.js`, `solar.js`,
+  `scene_geometry.js`, `chart_math.js`, `live_sync.js`). The offline HTML
+  export now follows `app3d.js`'s imports to bundle them, and refuses two
+  modules declaring the same top-level name.
+- Documentation: the elevation download is the free Open-Elevation API
+  (SRTM-based, sampled about 30 m apart; never Copernicus); the viewer opens
+  in the browser (not embedded in QGIS) and has no custom GLSL shaders; the
+  Pareto heat objective needs a land surface temperature raster; the shade
+  analysis description matches the building-shadow method; the script
+  example in the manual uses real parameter values.
+
+### Fixed
+- The MCDA friction surface crashed on QGIS 3.28 to 3.38: it used
+  `Qgis.RasterBandStatistic`, which arrived in QGIS 3.40.
+- The approximate terrain (no DEM) fitted its regional slope plane around
+  the bounding-box centre while solving it as if centred on the point mean,
+  which tilted it.
+
 ## [0.9.0] - 2026-10-10
 
 Roadmap phase 5: analysis depth (see docs/ROADMAP.md).

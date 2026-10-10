@@ -108,3 +108,105 @@ jobs:
 
       - name: Processing algorithm suite
         run: /usr/bin/python3 zero2route3d/tests/test_algorithms_qgis.py
+
+      - name: QGIS / Qt API references resolve
+        run: /usr/bin/python3 zero2route3d/tests/check_qgis_api.py
+
+  # The web viewer: lint, type check, unit tests (node:test), then headless
+  # Chromium (SwiftShader WebGL): functional smoke checks and pixel baselines.
+  viewer-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zero2route3d
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: zero2route3d/package-lock.json
+
+      - name: Install dev tools
+        working-directory: zero2route3d
+        run: npm ci
+
+      - name: ESLint
+        working-directory: zero2route3d
+        run: npm run lint
+
+      - name: Type check (JSDoc)
+        working-directory: zero2route3d
+        run: npm run typecheck
+
+      - name: Unit tests
+        working-directory: zero2route3d
+        run: npm test
+
+      - name: Install Chromium for Playwright
+        working-directory: zero2route3d
+        run: npx playwright install --with-deps chromium
+
+      - name: Viewer smoke checks (live viewer, sun and shadows, offline export)
+        working-directory: zero2route3d
+        run: npm run smoke
+
+      - name: Visual regression
+        working-directory: zero2route3d
+        run: npm run visual
+
+      - name: Upload visual diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: zero2route3d/tests/visual/output/
+          if-no-files-found: ignore
+
+  # The same suites in the official QGIS images: the oldest supported release
+  # (metadata qgisMinimumVersion), the current LTR, and QGIS 4 on Qt6.
+  qgis-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - qgis/qgis:release-3_28
+          - qgis/qgis:3.44
+          - qgis/qgis:4.2
+    container:
+      image: ${{ matrix.image }}
+      env:
+        QT_QPA_PLATFORM: offscreen
+        PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zero2route3d
+
+      - name: QGIS and Qt versions
+        run: |
+          export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
+          python3 -c "from qgis.core import Qgis; from qgis.PyQt.QtCore import QT_VERSION_STR as q; print(Qgis.version(), 'Qt', q)"
+
+      - name: QGIS / Qt API references resolve
+        run: |
+          export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
+          python3 zero2route3d/tests/check_qgis_api.py
+
+      - name: Plugin smoke suite
+        working-directory: zero2route3d
+        run: |
+          export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
+          python3 tests/smoke_plugin.py
+
+      - name: Processing algorithm suite
+        run: |
+          export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
+          python3 zero2route3d/tests/test_algorithms_qgis.py

@@ -23,7 +23,9 @@ class GlobalDemFetcher:
     """Acquires and caches real elevation samples from the Open-Elevation API.
 
     The service (https://open-elevation.com) is the only elevation source used
-    here. No Copernicus or SRTM product is queried directly.
+    here. No Copernicus or SRTM product is queried directly. The free API is
+    SRTM-based and publishes no resolution (third parties report about 250 m),
+    so a dense sample grid interpolates rather than adds detail.
     """
 
     # Reason the last request batch failed ("" when every batch succeeded).

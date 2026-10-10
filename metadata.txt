@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=0.9.0
+version=1.0.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -45,6 +45,13 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    1.0.0 - Engineering and honesty:
+        - Tested on QGIS 3.28, 3.34, 3.44 LTR and QGIS 4.2 (Qt6) in CI, including a check that every QGIS and Qt name the plugin uses exists in each version.
+        - Fix: the MCDA Friction Surface crashed on QGIS 3.28 to 3.38 (it used a QGIS 3.40 enum).
+        - The 3D viewer places the sun for a chosen date and solar time (same formula as the shade analysis): building and tree shadows follow it; at night the sun light switches off.
+        - Download failures (Overpass, Open-Elevation), cancelling and projected CRSs are covered by tests; the viewer has unit, smoke and pixel-baseline tests.
+        - Documentation no longer claims what the plugin does not do: the elevation download is Open-Elevation (SRTM-based, not Copernicus 30 m), the viewer opens in the browser, the Pareto heat objective needs a temperature raster.
+
     0.9.0 - Deeper analysis:
         - New algorithm Transit + Walk Route (GTFS): earliest-arrival journeys by public transport (RAPTOR) with walking legs routed on the street network; wheelchair users only get accessible stops and trips.
         - Turn costs at junctions for cars, vans, trucks, bikes, scooters, wheelchairs and strollers (left turns across traffic, sharp turns, U-turns; trucks cannot take hairpins); drive-on-left option.
@@ -148,6 +155,6 @@ changelog=
         - Interactive card-based QGIS Dock with adaptive dark/light styling.
         - 15 mobility profiles across pedestrian, micromobility and vehicle categories.
         - Multi-criteria raster cost surfaces (DEM, Slope, LST, Tree Canopy, Road Hierarchy).
-        - Hardware-accelerated embedded 3D WebGL studio with chase and drone cam, and elevation HUD.
+        - Hardware-accelerated 3D WebGL studio (in the browser) with chase and drone cam, and elevation HUD.
         - 3D LineStringZ vector layer creation and GPX/GeoJSON export.
         - Native QGIS Processing provider with 14 headless algorithms.

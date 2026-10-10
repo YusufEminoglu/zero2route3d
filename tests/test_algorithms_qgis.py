@@ -8,11 +8,14 @@ values, renderers and field aliases.
 from __future__ import annotations
 
 import os
+import struct
 import sys
 import traceback
 
 from qgis.core import (
     QgsApplication,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
@@ -20,7 +23,9 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingFeedback,
     QgsProject,
+    QgsRasterLayer,
     QgsVectorLayer,
+    QgsVertexId,
 )
 
 RESULTS = []
@@ -75,6 +80,24 @@ def make_network(crs="EPSG:4326"):
     provider.addFeatures(feats)
     layer.updateExtents()
     return layer
+
+
+def reproject_layer(layer, authid):
+    """A memory copy of a line layer in another CRS."""
+    target = QgsCoordinateReferenceSystem(authid)
+    out = QgsVectorLayer(f"LineString?crs={authid}&field=highway:string", "net_" + authid, "memory")
+    transform = QgsCoordinateTransform(layer.crs(), target, QgsProject.instance())
+    feats = []
+    for feature in layer.getFeatures():
+        geometry = QgsGeometry(feature.geometry())
+        geometry.transform(transform)
+        copy = QgsFeature(out.fields())
+        copy.setGeometry(geometry)
+        copy.setAttributes(feature.attributes())
+        feats.append(copy)
+    out.dataProvider().addFeatures(feats)
+    out.updateExtents()
+    return out
 
 
 def make_route_layer_z():
@@ -346,6 +369,122 @@ def run():
           and extracted[0].foot == "designated"
           and 32.0 < extracted[0].maxspeed_kmh < 32.3,
           repr(extracted[0] if extracted else None))
+
+    # ---- 11. CRS round trip: the same streets in Web Mercator, with the
+    # points given in Mercator too, give the same route as in WGS84, and the
+    # output comes back in WGS84 on the right spot.
+    if route_alg is not None:
+        def route_on(network, start, end):
+            errs = ErrorFeedback()
+            res, ok = route_alg.run({
+                "START_POINT": start, "END_POINT": end, "PROFILE": 0,
+                "NETWORK_LAYER": network, "OUTPUT": "memory:",
+            }, ctx, errs)
+            if not ok:
+                return None, errs.errors
+            out = res.get("OUTPUT")
+            layer = ctx.getMapLayer(out) if isinstance(out, str) else out
+            return layer, errs.errors
+
+        wgs = make_network()
+        merc = reproject_layer(wgs, "EPSG:3857")
+        to_merc = QgsCoordinateTransform(
+            QgsCoordinateReferenceSystem("EPSG:4326"), QgsCoordinateReferenceSystem("EPSG:3857"),
+            QgsProject.instance(),
+        )
+        a = to_merc.transform(QgsPointXY(27.140, 38.420))
+        b = to_merc.transform(QgsPointXY(27.150, 38.425))
+        base, _ = route_on(wgs, "27.140,38.420 [EPSG:4326]", "27.150,38.425 [EPSG:4326]")
+        moved, errors = route_on(
+            merc, f"{a.x()},{a.y()} [EPSG:3857]", f"{b.x()},{b.y()} [EPSG:3857]"
+        )
+        if check("route on a Web Mercator network with Mercator points succeeds",
+                 base is not None and moved is not None, str(errors[:2])):
+            f0, f1 = next(base.getFeatures()), next(moved.getFeatures())
+            d0, d1 = float(f0["dist_km"]), float(f1["dist_km"])
+            check("Mercator and WGS84 inputs give the same route length",
+                  abs(d0 - d1) <= 0.005 * d0, f"{d0:.4f} vs {d1:.4f} km")
+            first = f1.geometry().constGet().vertexAt(QgsVertexId(0, 0, 0))
+            check("route output is in WGS84 at the start point",
+                  moved.crs().authid() == "EPSG:4326"
+                  and abs(first.x() - 27.140) < 1e-4 and abs(first.y() - 38.420) < 1e-4,
+                  f"{moved.crs().authid()} ({first.x():.5f}, {first.y():.5f})")
+
+    # ---- 12. Cancelling an OD matrix stops it: nothing after the cancel is
+    # written, and the run does not fail.
+    od_alg = algs.get("od_matrix_3d")
+    if od_alg is not None:
+        class CancelAfter(ErrorFeedback):
+            def __init__(self, polls):
+                super().__init__()
+                self.polls = polls
+
+            def isCanceled(self):
+                self.polls -= 1
+                return self.polls < 0
+
+        def points(coords):
+            layer = QgsVectorLayer("Point?crs=EPSG:4326", "pts", "memory")
+            feats = []
+            for x, y in coords:
+                f = QgsFeature(layer.fields())
+                f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+                feats.append(f)
+            layer.dataProvider().addFeatures(feats)
+            return layer
+
+        net = make_network()
+        origins = points([(27.140, 38.420), (27.145, 38.420), (27.150, 38.420)])
+        dests = points([(27.150, 38.425), (27.145, 38.425)])
+        counts = {}
+        for label, feedback in (("full", ErrorFeedback()), ("cancelled", CancelAfter(3))):
+            od_alg.initAlgorithm({})
+            res, ok = od_alg.run({
+                "INPUT_ORIGINS": origins, "INPUT_DESTS": dests, "INPUT_NETWORK": net,
+                "PARAM_PROFILE": 0, "OUTPUT": "memory:",
+            }, ctx, feedback)
+            out = res.get("OUTPUT") if ok else None
+            layer = ctx.getMapLayer(out) if isinstance(out, str) else out
+            counts[label] = layer.featureCount() if layer is not None else None
+        check("cancelled OD matrix stops early without failing",
+              counts.get("full") == 6 and counts.get("cancelled") is not None
+              and counts["cancelled"] < 6, str(counts))
+
+    # ---- 13. The cost surface runs on a real GeoTIFF (it used an enum that
+    # only exists from QGIS 3.40 on, so it crashed on 3.28-3.38).
+    cost_alg = algs.get("mcda_cost_surface")
+    if cost_alg is not None:
+        import tempfile
+
+        from osgeo import gdal, osr
+
+        gdal.UseExceptions()
+        folder = tempfile.mkdtemp(prefix="r3d_cost_")
+        dem_path = os.path.join(folder, "dem.tif")
+        driver = gdal.GetDriverByName("GTiff")
+        ds = driver.Create(dem_path, 20, 20, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((27.14, 0.0005, 0, 38.43, 0, -0.0005))
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(4326)
+        ds.SetProjection(srs.ExportToWkt())
+        band = ds.GetRasterBand(1)
+        band.WriteRaster(0, 0, 20, 20, struct.pack("400f", *[float(10 + (i % 20) * 3 + (i // 20)) for i in range(400)]))
+        band.FlushCache()
+        ds = None
+        out_path = os.path.join(folder, "friction.tif")
+        cost_alg.initAlgorithm({})
+        errs = ErrorFeedback()
+        _res, ok = cost_alg.run({
+            "INPUT_DEM": QgsRasterLayer(dem_path, "dem"), "OUTPUT": out_path,
+        }, ctx, errs)
+        values = []
+        if ok and os.path.exists(out_path):
+            out = gdal.Open(out_path)
+            values = list(struct.unpack("400f", out.GetRasterBand(1).ReadRaster(0, 0, 20, 20, buf_type=gdal.GDT_Float32)))
+            out = None
+        check("cost surface writes a 0..1 friction raster",
+              ok and values and all(0.0 <= v <= 1.0 for v in values) and max(values) > min(values),
+              f"ok={ok} range=({min(values) if values else None}, {max(values) if values else None}) {errs.errors[:1]}")
 
     print()
     failed = [r for r in RESULTS if not r[1]]

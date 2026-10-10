@@ -13,11 +13,19 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterDestination,
     QgsProcessingParameterRasterLayer,
+    QgsRasterBandStats,
     QgsRasterBlock,
     QgsRasterFileWriter,
 )
 
 from ..core.ahp_engine import AHPEngine
+
+# Qgis.RasterBandStatistic arrived in QGIS 3.40; older releases only have the
+# QgsRasterBandStats flags.
+if hasattr(Qgis, "RasterBandStatistic"):
+    _MIN_MAX_STATS = Qgis.RasterBandStatistic.Min | Qgis.RasterBandStatistic.Max
+else:
+    _MIN_MAX_STATS = QgsRasterBandStats.Min | QgsRasterBandStats.Max
 
 
 class MultiCriteriaCostSurfaceAlgorithm(QgsProcessingAlgorithm):
@@ -167,9 +175,7 @@ class MultiCriteriaCostSurfaceAlgorithm(QgsProcessingAlgorithm):
         # made a Kelvin or scaled-integer raster clamp to 1.0 everywhere before.
         ranges: Dict[str, Any] = {}
         for name, layer, _w in criteria:
-            stats = layer.dataProvider().bandStatistics(
-                1, Qgis.RasterBandStatistic.Min | Qgis.RasterBandStatistic.Max
-            )
+            stats = layer.dataProvider().bandStatistics(1, _MIN_MAX_STATS)
             lo, hi = float(stats.minimumValue), float(stats.maximumValue)
             if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
                 raise QgsProcessingException(

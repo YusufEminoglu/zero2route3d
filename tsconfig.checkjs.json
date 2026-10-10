@@ -1,0 +1,26 @@
+{
+  "//": "Type check (JSDoc + inference) of the viewer modules that do not import the vendored three.js build (its inferred types are not usable). Run: npm run typecheck",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true
+  },
+  "files": [
+    "types/globals.d.ts",
+    "web/js/geo.js",
+    "web/js/solar.js",
+    "web/js/chart_math.js",
+    "web/js/live_sync.js",
+    "web/js/VoiceCueSystem.js"
+  ]
+}
