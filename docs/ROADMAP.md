@@ -166,6 +166,19 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 
 ## Faz 5 — Analiz derinliği
 
+> **Durum (Ekim 2026): v0.9.0, 1–6 yapıldı.** Dönüş maliyetleri (araç,
+> kamyon, bisiklet, scooter, sandalye, bebek arabası; kavşakta sola dönüş,
+> keskin dönüş, U dönüşü; kamyon için firkete yasak; (düğüm, önceki düğüm)
+> durum araması, süreye eklenir), kalkış saati (gece aydınlatma ve kaldırım
+> tercihi, güneşe göre ısı ağırlığı), bina katmanından gerçek gölge (güneş
+> ışını testi, yılın günü), sokak koridoru izokronları (kısmi kenarlar dahil,
+> QGIS tamponu), GTFS + RAPTOR toplu taşıma algoritması (yürüme ayakları 3D
+> ağdan, tekerlekli sandalye için erişilebilir durak/sefer süzgeci) ve
+> NAMOA* vektör sınırlarıyla budama (kesilme uyarısı zaten vardı). Sınırlar:
+> aktarma yürüyüşleri GTFS'ten veya düz çizgi × 1,3 (ağdan değil), sefer
+> geometrisi duraktan durağa (shapes.txt kullanılmıyor), gölgede arazi
+> hesaba katılmıyor, dönüş gecikmeleri tipik değerler (trafik modeli değil).
+
 1. Dönüş maliyetleri (kenar tabanlı grafik): kamyon, bisiklet, sandalye.
 2. Gece / sıcak saat maliyeti (`lit`, `sidewalk` zaten okunuyor).
 3. Gerçek gölge: güneş analizi bugün sokak yönünden sezgisel

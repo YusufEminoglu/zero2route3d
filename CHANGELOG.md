@@ -5,6 +5,43 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-10
+
+Roadmap phase 5: analysis depth (see docs/ROADMAP.md).
+
+### Added
+- `zero2route3d:transit_route_gtfs`, a sixteenth Processing algorithm:
+  earliest-arrival public transport + walking journeys from a GTFS feed
+  (`core/transit_raptor.py`: GTFS reader with calendar/calendar_dates,
+  wheelchair filters and transfers, and the RAPTOR algorithm). Walking legs
+  are routed on the 3D street network with the chosen walking profile.
+- Turn costs (`core/turn_costs.py`): junction delays per profile (left turns
+  across traffic, sharp turns, U-turns; trucks cannot take hairpins; bends of
+  a road between junctions cost nothing). The search runs over (node,
+  previous node) states for these profiles; the delay is added to the travel
+  time and reported (`turn_delay_s`, `turn_s`). Drive-on-left option.
+- Time of day (`departure_hour`, `day_of_year`): after dark, walkers and
+  cyclists avoid unlit streets and walkers main roads without sidewalks;
+  the heat (LST) weight follows the sun's strength.
+- Building shadows (`core/building_shadow.py`): sun-ray tests against
+  footprints and heights every 5 m along a route. The solar exposure
+  algorithm takes a building layer, a height field and the day of the year,
+  and reports which method it used.
+
+### Changed
+- Isochrones are the land within a corridor (default 50 m, a new parameter)
+  of every street reachable in time, including the reachable part of
+  streets the cutoff cuts, built with QGIS buffers in a local metric
+  projection, with an `area_ha` field. The old convex hull of the reached
+  nodes covered blocks, rivers and rail lines.
+- Pareto routes prune labels with a lower bound for every objective (time,
+  climb, energy), not only the cost so far (NAMOA*). Frontiers are unchanged.
+
+### Fixed
+- Two points beside the same long street segment snapped to the same node
+  and the route failed; the trip between them is now the direct link (this
+  broke short walks to nearby bus stops).
+
 ## [0.8.0] - 2026-10-10
 
 Roadmap phase 4: the 3D viewer (see docs/ROADMAP.md).

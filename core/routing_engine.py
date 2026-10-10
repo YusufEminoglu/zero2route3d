@@ -1027,12 +1027,18 @@ class RoutingEngine3D:
                     "end_snap_m": end_snap_m,
                 }
                 return [(start_pt[0], start_pt[1], z1)], True
+            # Both points are nearer to the same node than to any other (two
+            # points beside one long street segment): the trip between them
+            # does not use the network, so it is the direct link. Reporting
+            # "no route" here made short walks, e.g. to a nearby bus stop, fail.
             self.last_segment_diagnostics = {
                 "status": "same_network_node",
                 "start_snap_m": start_snap_m,
                 "end_snap_m": end_snap_m,
             }
-            return [], False
+            self.last_segment_nodes = [start_node]
+            z2 = self._endpoint_elevation(end_pt, end_node)
+            return [(start_pt[0], start_pt[1], z1), (end_pt[0], end_pt[1], z2)], True
 
         tree = search_trees.get(start_node) if search_trees else None
         if tree is None or end_node not in tree.settled or avoid_edges or penalize_edges:

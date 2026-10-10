@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>02Route 3D — Technical Reference Manual</title>
-    <meta name="description" content="Complete user and technical reference manual for the 02Route 3D QGIS plugin. Documentation for 15 mobility profiles, 15 Processing algorithms, profile-aware access, kinematics, and WebGL studio." />
+    <meta name="description" content="Complete user and technical reference manual for the 02Route 3D QGIS plugin. Documentation for 15 mobility profiles, 16 Processing algorithms, profile-aware access, kinematics, and WebGL studio." />
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -372,7 +372,7 @@
             <a href="index.html" class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.8.0</span>
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.9.0</span>
             </a>
             <ul class="nav-links">
                 <li><a href="index.html">← Landing &amp; Interactive Labs</a></li>
@@ -391,7 +391,7 @@
             <ul class="toc-list" id="toc-list">
                 <li><a href="#overview">1. System Overview</a></li>
                 <li><a href="#profiles">2. Mobility Profiles (15)</a></li>
-                <li><a href="#algorithms">3. Processing Algorithms (15)</a></li>
+                <li><a href="#algorithms">3. Processing Algorithms (16)</a></li>
                 <li><a href="#kinematics">4. Kinematics &amp; Math</a></li>
                 <li><a href="#mcda">5. MCDA &amp; AHP Surface</a></li>
                 <li><a href="#pareto">6. NAMOA* Pareto Routing</a></li>
@@ -418,7 +418,7 @@
                 <div class="glass-panel">
                     <ul style="list-style:none; display:flex; flex-direction:column; gap:1rem;">
                         <li><strong>1. Core Graph Engine:</strong> Builds 3D topological graphs draped with continuous elevation values from digital elevation models (DEMs). Features bicubic Catmull-Rom spline sampling, A* search, and Dijkstra wavefront propagation.</li>
-                    <li><strong>2. Processing Provider:</strong> Exposes 15 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
+                    <li><strong>2. Processing Provider:</strong> Exposes 16 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
                         <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation. Route calculation, the OD matrix and the OSM/DEM downloads run as QGIS background tasks: watch the progress and cancel them from the task bar at the bottom of the QGIS window. The dock remembers profiles, weights and playback settings; layer choices are saved with the project. <em>Save Scenario</em> writes points, profiles, weights and the route results to a <code>*.route3d.json</code> file; <em>Load Scenario</em> restores them and compares the saved run with the current (or next) routes.</li>
                         <li><strong>4. WebGL 3D Studio:</strong> A Three.js viewer that opens in your web browser from a local server started by the plugin (127.0.0.1 only). It shows the routes on real terrain sampled from the DEM you select in QGIS (or an approximate surface, labelled as such, without one), an elevation chart linked to the 3D walker, and a comparison of all computed profiles. New routes appear automatically. Keyboard: Space plays or pauses, the arrow keys move along the route, Home/End jump to its ends, R resets the view. Snapshot saves a captioned PNG at twice the screen resolution (Shift-click: four times); Record saves a captioned video. The standalone HTML export contains the same viewer and works offline.</li>
                     </ul>
@@ -464,7 +464,7 @@
                 </div>
             </section>
 
-            <!-- Section 3: 15 Processing Algorithms -->
+            <!-- Section 3: 16 Processing Algorithms -->
             <section id="algorithms" class="doc-section">
                 <h2>3. Processing Algorithms Catalog</h2>
                 <p>All algorithms are available in the QGIS Processing Toolbox under the <strong>02Route 3D</strong> provider:</p>
@@ -514,6 +514,12 @@
 
                     <h3>15. <code>zero2route3d:audit_routing_network</code> (Routing Network Readiness Audit)</h3>
                     <p>Annotates every network segment with profile-specific access, surface quality, one-way status, weak-component membership, and overall connectivity diagnostics.</p>
+
+                    <h3>16. <code>zero2route3d:transit_route_gtfs</code> (Transit + Walk Route, GTFS)</h3>
+                    <p>Earliest-arrival journey by public transport and walking from a GTFS feed (zip), for a date and departure time, using the RAPTOR algorithm. Walking to the first stop, from the last stop, and walking all the way are routed on the street network with the chosen walking profile (slopes, stairs and access rules apply; the wheelchair profile uses only stops and trips the feed marks as accessible). Transfers use <code>transfers.txt</code>, or stops within 300 m. Output: one line per leg with route, stops, departure and arrival times. When walking is faster, the result is a single walk leg.</p>
+
+                    <h3>Also new in 0.9.0</h3>
+                    <p><strong>Turn costs:</strong> vehicles, bikes, scooters, wheelchairs and strollers lose time at junction turns (left turns across traffic, sharp turns, U-turns; trucks cannot take hairpins). The delay is part of the travel time and reported as <code>turn_s</code>. Use the drive-on-left option where traffic keeps left. <strong>Departure time:</strong> with a departure hour, walkers and cyclists avoid unlit streets after dark and the heat weight follows the sun. <strong>Isochrones</strong> are the land within a corridor (default 50 m) of every reachable street, so blocks, rivers and rail lines stay outside. <strong>Solar exposure</strong> with a building layer computes real building shadows for the chosen day of the year.</p>
                 </div>
             </section>
 

@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=0.8.0
+version=0.9.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -13,9 +13,9 @@ about=
     MOBILITY PROFILES (15)
     Standard Adult, Senior, Child / Safe Walk, Stroller, Wheelchair / Barrier-Free, Runner, City Bicycle, Mountain / Gravel Bike, E-Scooter, Passenger Car, Delivery Van, Heavy Goods Truck, Emergency Responder, Scenic Walk and Safe Night Walk. Each profile has its own speed, slope, stair, surface and road-class limits, and every tool applies the same limits: a wheelchair route never crosses stairs, whichever tool computed it.
     
-    PROCESSING ALGORITHMS (15)
-    - Routing: Compute 3D Route; Multi-Objective Pareto Routes (NAMOA*); Batch Route Planner; Origin-Destination Cost Matrix; Emergency Evacuation & Hazard Avoidance.
-    - Accessibility: 3D Isochrone (travel-time service area); Accessibility & Equity Scorecard (E2SFCA, Gini); Walkability & Barrier-Free Audit; Solar & Shade Exposure.
+    PROCESSING ALGORITHMS (16)
+    - Routing: Compute 3D Route (turn costs, time of day); Transit + Walk Route (GTFS, RAPTOR); Multi-Objective Pareto Routes (NAMOA*); Batch Route Planner; Origin-Destination Cost Matrix; Emergency Evacuation & Hazard Avoidance.
+    - Accessibility: 3D Isochrone (street-corridor service area); Accessibility & Equity Scorecard (E2SFCA, Gini); Walkability & Barrier-Free Audit; Solar & Shade Exposure (building shadows).
     - Network and data: Routing Network Readiness Audit; MCDA Friction Surface; GPS Track Map Matching (HMM / Viterbi).
     - Reports and export: Route Scorecard (HTML); Standalone 3D WebGL Report; AutoCAD DXF (3D polyline + profile).
     
@@ -35,7 +35,7 @@ repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://geophilo.com/zero2route3d/
 
 category=Analysis
-tags=network, shortest path, network audit, topology, modal access, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, pedestrian, wheelchair, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, e2sfca, spatial equity, evacuation, solar exposure, map matching, gps, gpx, dxf, cad, urban analytics, zero2
+tags=network, shortest path, gtfs, public transport, transit, raptor, turn costs, shadow, network audit, topology, modal access, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, pedestrian, wheelchair, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, e2sfca, spatial equity, evacuation, solar exposure, map matching, gps, gpx, dxf, cad, urban analytics, zero2
 
 icon=icons/icon.png
 
@@ -45,6 +45,15 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.9.0 - Deeper analysis:
+        - New algorithm Transit + Walk Route (GTFS): earliest-arrival journeys by public transport (RAPTOR) with walking legs routed on the street network; wheelchair users only get accessible stops and trips.
+        - Turn costs at junctions for cars, vans, trucks, bikes, scooters, wheelchairs and strollers (left turns across traffic, sharp turns, U-turns; trucks cannot take hairpins); drive-on-left option.
+        - Departure time: after dark walkers and cyclists avoid unlit streets and main roads without sidewalks; the heat weight follows the sun.
+        - Isochrones follow the streets (land within a corridor of reachable streets) instead of a hull that covered blocks, rivers and rail lines.
+        - Solar exposure computes real building shadows from a footprint layer with heights, for any day of the year.
+        - Pareto routes prune with a lower bound for every objective (NAMOA*).
+        - Fix: two points beside the same long street segment no longer fail to route.
+
     0.8.0 - A truthful 3D viewer:
         - Real terrain: heights sampled from the selected DEM around the routes (sampled in the background task); without a DEM the viewer says its surface is approximate.
         - Elevation chart with distance and height axes, coloured by slope; hovering it moves the walker in 3D and playback moves its cursor.

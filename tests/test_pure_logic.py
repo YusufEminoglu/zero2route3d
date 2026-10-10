@@ -1618,6 +1618,17 @@ class RoutingPerformanceTests(unittest.TestCase):
         self.assertEqual(result.coordinates_3d[-1][2], 40.0)
         self.assertLess(result.statistics.max_slope_pct, 1.0)
 
+    def test_points_beside_one_long_edge_get_a_direct_link(self) -> None:
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+
+        engine = RoutingEngine3D()
+        engine.build_graph([RoadSegment(p1=(26.999, 38.4, 5.0), p2=(27.010, 38.4, 5.0), length_m=955.0)])
+        route = engine.calculate_route([Waypoint(27.0003, 38.4001), Waypoint(27.0000, 38.4000)], compute_alternatives=False)
+        self.assertTrue(route.is_network_matched)
+        self.assertAlmostEqual(route.statistics.total_distance_m, 28.4, delta=1.0)
+        self.assertEqual(route.routing_diagnostics["segments"][0]["status"], "same_network_node")
+
     def test_densify_records_the_true_source_segment(self) -> None:
         from zero2route3d.core.profile_stats import densify_3d_linestring_indexed
 
@@ -1762,6 +1773,82 @@ class BuildingShadowTests(unittest.TestCase):
         self.assertEqual(geometric.method, "building shadows")
         self.assertEqual(estimate.method, "street orientation estimate")
         self.assertAlmostEqual(geometric.shaded_pct, 60.0, delta=8.0)
+
+
+class TransitRaptorTests(unittest.TestCase):
+    """GTFS + RAPTOR on a small synthetic feed."""
+
+    def _feed(self, root: Path) -> None:
+        files = {
+            "stops.txt": "stop_id,stop_name,stop_lat,stop_lon,wheelchair_boarding\n"
+                         "A,Alpha,38.400,27.000,1\nB,Bravo,38.400,27.010,1\nC,Charlie,38.400,27.020,1\n"
+                         "E,Echo,38.4009,27.020,1\nD,Delta,38.410,27.020,2\n",
+            "routes.txt": "route_id,route_short_name,route_type\nR1,1,3\nR2,2,3\nR3,3X,3\n",
+            "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+                            "WK,1,1,1,1,1,0,0,20260101,20261231\n",
+            "calendar_dates.txt": "service_id,date,exception_type\nWK,20261012,2\n",
+            "trips.txt": "route_id,service_id,trip_id,wheelchair_accessible\n"
+                         "R1,WK,r1a,1\nR1,WK,r1b,1\nR2,WK,r2a,1\nR2,WK,r2b,2\nR3,WK,r3a,1\n",
+            "stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+                              "r1a,08:10:00,08:10:00,A,1\nr1a,08:15:00,08:15:00,B,2\nr1a,08:20:00,08:20:00,C,3\n"
+                              "r1b,08:20:00,08:20:00,A,1\nr1b,08:25:00,08:25:00,B,2\nr1b,08:30:00,08:30:00,C,3\n"
+                              "r2b,08:22:00,08:22:00,E,1\nr2b,08:31:00,08:31:00,D,2\n"
+                              "r2a,08:25:00,08:25:00,E,1\nr2a,08:35:00,08:35:00,D,2\n"
+                              "r3a,09:30:00,09:30:00,A,1\nr3a,10:00:00,10:00:00,D,2\n",
+        }
+        for name, text in files.items():
+            (root / name).write_text(text, encoding="utf-8")
+
+    def test_two_ride_journey_with_a_walking_transfer(self) -> None:
+        import datetime
+        from zero2route3d.core.transit_raptor import format_time, load_gtfs, raptor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._feed(root)
+            net = load_gtfs(root, datetime.date(2026, 10, 14))  # a Wednesday
+            ids = {s.stop_id: i for i, s in enumerate(net.stops)}
+            journey = raptor(net, 8 * 3600 + 5 * 60, {ids["A"]: 120.0}, {ids["D"]: 60.0})
+        self.assertIsNotNone(journey)
+        kinds = [leg.kind for leg in journey.legs]
+        self.assertEqual(kinds, ["walk", "ride", "walk", "ride", "walk"])
+        self.assertEqual(journey.rides, 2)
+        rides = [leg for leg in journey.legs if leg.kind == "ride"]
+        self.assertEqual([r.route_name for r in rides], ["1", "2"])
+        # Walk C->E ends 08:21:48, +60 s change: r2b (08:22) is missed, r2a (08:25) caught.
+        self.assertEqual(format_time(rides[1].depart_s), "08:25")
+        self.assertEqual(format_time(journey.arrive_s), "08:36")
+
+    def test_calendar_and_wheelchair_filters(self) -> None:
+        import datetime
+        from zero2route3d.core.transit_raptor import GtfsError, load_gtfs, raptor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._feed(root)
+            saturday = load_gtfs(root, datetime.date(2026, 10, 17))
+            holiday = load_gtfs(root, datetime.date(2026, 10, 12))  # Monday, removed by calendar_dates
+            access = load_gtfs(root, datetime.date(2026, 10, 14), wheelchair_only=True)
+            (root / "stops.txt").unlink()
+            with self.assertRaises(GtfsError):
+                load_gtfs(root, datetime.date(2026, 10, 14))
+        self.assertEqual(saturday.patterns, [])
+        self.assertEqual(holiday.patterns, [])
+        # Stop D refuses wheelchairs and trip r2b is not accessible.
+        self.assertNotIn("D", [s.stop_id for s in access.stops])
+        self.assertNotIn("r2b", [t for p in access.patterns for t in p.trips])
+
+    def test_walking_wins_when_it_is_faster(self) -> None:
+        import datetime
+        from zero2route3d.core.transit_raptor import load_gtfs, raptor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._feed(root)
+            net = load_gtfs(root, datetime.date(2026, 10, 14))
+            ids = {s.stop_id: i for i, s in enumerate(net.stops)}
+            journey = raptor(net, 8 * 3600, {ids["A"]: 120.0}, {ids["D"]: 60.0}, direct_walk_s=600.0)
+        self.assertIsNone(journey)
 
 
 class IsochroneCorridorTests(unittest.TestCase):

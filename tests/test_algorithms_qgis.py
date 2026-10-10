@@ -178,6 +178,52 @@ def run():
               feat is not None and feat["method"] == "building shadows" and 50.0 < float(feat["shaded_pct"]) < 70.0,
               f"{feat and (feat['method'], feat['shaded_pct'])} {errs.errors[:1]}")
 
+    # ---- 4d. Transit + walk journey from a GTFS feed.
+    transit = algs.get("transit_route_gtfs")
+    if transit is not None:
+        import tempfile as _tempfile
+        import zipfile as _zipfile
+        feed = {
+            "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\nA,Alpha,38.400,27.000\nB,Bravo,38.400,27.010\n"
+                         "C,Charlie,38.400,27.020\nE,Echo,38.4009,27.020\nD,Delta,38.410,27.020\n",
+            "routes.txt": "route_id,route_short_name,route_type\nR1,1,3\nR2,2,3\n",
+            "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+                            "WK,1,1,1,1,1,0,0,20260101,20261231\n",
+            "trips.txt": "route_id,service_id,trip_id\nR1,WK,r1a\nR2,WK,r2a\n",
+            "stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+                              "r1a,08:10:00,08:10:00,A,1\nr1a,08:15:00,08:15:00,B,2\nr1a,08:20:00,08:20:00,C,3\n"
+                              "r2a,08:25:00,08:25:00,E,1\nr2a,08:35:00,08:35:00,D,2\n",
+        }
+        gtfs_path = os.path.join(_tempfile.mkdtemp(prefix="zero2route3d-gtfs-"), "feed.zip")
+        with _zipfile.ZipFile(gtfs_path, "w") as zf:
+            for name, text in feed.items():
+                zf.writestr(name, text)
+        streets = QgsVectorLayer("LineString?crs=EPSG:4326&field=highway:string", "streets", "memory")
+        lines = [[(26.999, 38.400), (27.010, 38.400)], [(27.010, 38.400), (27.020, 38.400)],
+                 [(27.020, 38.400), (27.020, 38.405)], [(27.020, 38.405), (27.020, 38.411)]]
+        sfeats = []
+        for line in lines:
+            f = QgsFeature(streets.fields())
+            f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(*p) for p in line]))
+            f.setAttributes(["residential"])
+            sfeats.append(f)
+        streets.dataProvider().addFeatures(sfeats)
+        transit.initAlgorithm({})
+        errs = ErrorFeedback()
+        res, ok = transit.run({
+            "GTFS": gtfs_path, "START_POINT": "27.0003,38.4001 [EPSG:4326]",
+            "END_POINT": "27.0201,38.4099 [EPSG:4326]", "DATE": "2026-10-14", "TIME": "08:05",
+            "WALK_PROFILE": 0, "MAX_WALK_M": 800.0, "MAX_RIDES": 4, "NETWORK_LAYER": streets, "OUTPUT": "memory:",
+        }, ctx, errs)
+        out = ctx.getMapLayer(res.get("OUTPUT")) if ok else None
+        legs = [(f["mode"], f["route"], f["depart"], f["arrive"]) for f in out.getFeatures()] if out else []
+        check("transit journey rides bus 1 then bus 2 with walks between",
+              [leg[0] for leg in legs] == ["walk", "ride", "walk", "ride", "walk"]
+              and [leg[1] for leg in legs if leg[0] == "ride"] == ["1", "2"],
+              f"{legs} {errs.errors[:1]}")
+        check("transit journey arrives with the 08:35 bus",
+              bool(legs) and legs[-2][3] == "08:35", str(legs[-2:] if legs else legs))
+
     # ---- 5. Walkability must refuse to certify without a DEM.
     walk = algs.get("walkability_3d_audit")
     if walk is not None:
