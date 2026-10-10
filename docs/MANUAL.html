@@ -372,7 +372,7 @@
             <a href="index.html" class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.9.0</span>
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v1.0.0</span>
             </a>
             <ul class="nav-links">
                 <li><a href="index.html">← Landing &amp; Interactive Labs</a></li>
@@ -495,7 +495,7 @@
                     <p>Shortest egress routing from an origin to the nearest muster points across the real network.</p>
 
                     <h3>9. <code>zero2route3d:solar_shade_exposure</code> (Sun / Shade Analysis)</h3>
-                    <p>Calculates solar geometry along the route from solar azimuth and altitude. No building massing is used.</p>
+                    <p>Sun position for the chosen day of year and solar time along the route. With a building layer (footprints and a height field, or <code>building:levels</code> &times; 3 m) every 5 m of the route is tested for shadow by a ray toward the sun; without one, shade is estimated from the street orientation, and the <code>method</code> field says which was used. Terrain shadows are not computed. The 3D studio places its sun with the same formula (date and solar-time controls), so its building shadows match.</p>
 
                     <h3>10. <code>zero2route3d:batch_3d_routes</code> (Batch Point-Pair Routing)</h3>
                     <p>Calculates least-cost 3D paths for many origin-destination point pairs, paired in feature order.</p>
@@ -510,7 +510,7 @@
                     <p>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawings directly to DXF format.</p>
 
                     <h3>14. <code>zero2route3d:export_3d_html_report</code> (Standalone 3D HTML)</h3>
-                    <p>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D WebGL viewer.</p>
+                    <p>Bundles the route data, Three.js and the viewer into a self-contained offline 3D WebGL viewer.</p>
 
                     <h3>15. <code>zero2route3d:audit_routing_network</code> (Routing Network Readiness Audit)</h3>
                     <p>Annotates every network segment with profile-specific access, surface quality, one-way status, weak-component membership, and overall connectivity diagnostics.</p>
@@ -597,7 +597,7 @@
             <!-- Section 7: WebGL Studio -->
             <section id="webgl-studio" class="doc-section">
                 <h2>7. WebGL Studio</h2>
-                <p>Every computed route can be opened in an embedded, hardware-accelerated Three.js 3D viewer &mdash; the "WebGL Studio" &mdash; for visual inspection beyond what the QGIS 2D canvas shows.</p>
+                <p>Every computed route can be opened in a GPU-rendered Three.js 3D viewer in your web browser &mdash; the "WebGL Studio" &mdash; for visual inspection beyond what the QGIS 2D canvas shows.</p>
                 <div class="glass-panel">
                     <h3>Camera modes</h3>
                     <div class="table-wrap">
@@ -617,6 +617,7 @@
                         <li><strong>Subsurface terrain slicer</strong> (<code>TerrainSlicerSystem.js</code>): a clip-plane tool to slice through the 3D terrain mesh and inspect the elevation profile beneath the route.</li>
                         <li><strong>Voice cue system</strong> (<code>VoiceCueSystem.js</code>): Web Speech API turn-by-turn spoken navigation with gradient warnings, entirely offline/on-device.</li>
                         <li><strong>Media capture:</strong> PNG screenshot export and WebM video recording directly from the 3D canvas.</li>
+                        <li><strong>Sun &amp; shadows</strong> (<code>solar.js</code>): a date and a solar-time control place the sun for the route's latitude with the same formula as the Solar &amp; Shade Exposure algorithm, so building and tree shadows in 3D match the computed shade. Below the horizon the sun light switches off. A link can fix the sun with <code>?sun=172,15</code> (day of year, solar hour).</li>
                     </ul>
                 </div>
             </section>
@@ -652,10 +653,10 @@
 # 1. Compute 3D Least Cost Route
 result = processing.run("zero2route3d:compute_3d_route", {
     'NETWORK_LAYER': 'streets_network',
-    'DEM_LAYER': 'copernicus_dem_30m',
+    'DEM_LAYER': 'dem',  # any elevation raster loaded in QGIS
     'START_POINT': '27.1428,38.4237',
     'END_POINT': '27.1550,38.4350',
-    'PROFILE': 'wheelchair',
+    'PROFILE': 4,  # index in the profile list: 4 = Wheelchair
     'OUTPUT': 'memory:wheelchair_route'
 })
 
@@ -673,7 +674,7 @@ print("Route generated with length:", route_layer.featureCount())
                     <p><strong>No.</strong> 02Route 3D is designed strictly using core QGIS (PyQt, <code>qgis.core</code>, <code>qgis.gui</code>, the Python standard library) and has zero pip dependencies.</p>
 
                     <h3>Q: How does the plugin handle areas without a local DEM?</h3>
-                    <p>You can use the built-in <strong>"Fetch Real Copernicus 30m Topography"</strong> button in the Dock panel. It queries real elevation for the canvas extent from the Open-Elevation API and clips it to the route corridor.</p>
+                    <p>Use the <strong>"⛰️ Fetch Full Map Extent Elevation DEM"</strong> button in the dock. It samples elevation for the map extent from the free Open-Elevation API on a grid of about 30 m (coarser on large extents, which the dock reports before downloading). The service is SRTM-based and its own resolution is coarser than the grid, so small relief is interpolated; it is not a Copernicus product. For street-level work load a local DEM as a QGIS layer instead.</p>
 
                     <h3>Q: Are the 3D exports compatible with CAD software?</h3>
                     <p><strong>Yes.</strong> The DXF exporter produces AC1009 standard 3D Polylines that open natively in AutoCAD, Civil 3D, Rhino, and SketchUp with real elevations.</p>

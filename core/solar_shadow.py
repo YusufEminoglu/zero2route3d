@@ -1,4 +1,10 @@
-"""Solar position, dynamic shadow casting, and shade exposure along 3D route."""
+"""Sun position and shade exposure along a 3D route.
+
+Shade comes from building footprints and heights when a building layer is
+given (core/building_shadow.py, a ray toward the sun every few metres), and
+from the street orientation otherwise. Terrain shadows are not computed. The
+3D viewer places its sun with the same formula (web/js/solar.js).
+"""
 from __future__ import annotations
 
 import math

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
- A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 16 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and an embedded Three.js WebGL 3D cockpit.
+ A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 16 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and a browser-based Three.js WebGL 3D cockpit.
 </p>
 
 <p align="center">
@@ -48,9 +48,9 @@ Traditional GIS shortest-path engines treat cities as flat Euclidean planes, com
 1. **Topological 3D Graph Construction:** Drapes 2D vector centerlines over discrete DEM rasters using Keys' 16-point bicubic convolution spline with analytical $\mathcal{C}^1$ slope and aspect derivatives.
 2. **Multi-Criteria Environmental Impedance:** Fuses DEM slope, Land Surface Temperature (LST), NDVI vegetation canopy, and road hierarchy into a normalized AHP friction surface ($CR \le 0.10$).
 3. **Biomechanical Human Kinematics:** Dynamically computes travel velocity using Tobler's hiking function and metabolic energy cost using Minetti's 5th-order polynomial equations.
-4. **Multi-Objective Pareto Optimization:** Solves NAMOA* 4D non-dominated trade-offs across travel time, cumulative climb, thermal heat dose, and calories.
+4. **Multi-Objective Pareto Optimization:** NAMOA* search for the non-dominated trade-offs across travel time, cumulative climb, heat dose and calories (four objectives; the heat dose needs a land surface temperature raster, without one the frontier has three).
 5. **Universal Accessibility Auditing:** Enforces strict ADA barrier-free thresholds (5% maximum grade, stair blocking, surface smoothness).
-6. **Embedded WebGL 3D Studio:** Inspect routes with chase/orbit/driver cameras, environmental metric ribbons, terrain slicing, and longitudinal profile HUDs.
+6. **WebGL 3D Studio:** Opened from QGIS in your web browser (a local server keeps it in sync with QGIS). Inspect routes with chase/orbit/driver cameras, environmental metric ribbons, sun and building shadows for any date and solar time, terrain slicing, and longitudinal profile HUDs.
 7. **Profile-Aware Network Safety:** Honors OSM and QGIS-layer access, foot, bicycle, motor-vehicle, one-way, surface, lighting, and road-class attributes before an edge enters a route.
 
 ---
@@ -67,11 +67,11 @@ Restart QGIS, enable **02Route 3D** in **Plugins > Installed**, then open the st
 
 ### Use it inside QGIS
 
-1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"⛰️ Fetch Full Map Extent Elevation DEM"** to query real 30m topography for the active map extent from the Open-Elevation API.
+1. **Select Network & DEM:** In Tab 1 (Network & Elevation), select your street vector layer and DEM raster, or click **"⛰️ Fetch Full Map Extent Elevation DEM"** to sample elevation for the active map extent from the free Open-Elevation API. The samples are about 30 m apart (coarser on large extents), but the service itself is SRTM-based and coarser than that, so fine relief is interpolated. For street-level terrain, load a local DEM (e.g. a 1–5 m LiDAR DEM or the Copernicus GLO-30 tiles) as a QGIS layer and select it.
 2. **Select Origin & Destination:** Use the map canvas picker tools to select Point A (Origin) and Point B (Destination).
 3. **Pick Mobility Profile:** Choose from 15 profiles (e.g. *Wheelchair ADA*, *Senior*, *Commuter Bike*, *Emergency EMS*).
 4. **Tune AHP Weights (Optional):** In Tab 2 (MCDA & AHP), adjust the relative weights for Slope, Heat Island, Greenery, and Road Hierarchy.
-5. **Compute & Inspect:** Click **"Compute 3D Least-Cost Route"** to generate the 3D `LineStringZ` layer and launch the embedded WebGL 3D Studio.
+5. **Compute & Inspect:** Click **"Compute 3D Least-Cost Route"** to generate the 3D `LineStringZ` layer and open the WebGL 3D Studio in your browser.
 
 ---
 
@@ -83,7 +83,7 @@ Restart QGIS, enable **02Route 3D** in **Plugins > Installed**, then open the st
 | **Physical Exhaustion Modeling** | Calculates exact metabolic kilocalorie expenditure using Minetti's 5th-order polynomial equation per kilogram per meter traveled. |
 | **ADA & Barrier-Free Planning** | Enforces strict 5% grade limits, stair blocking penalties ($\times 1000$), and smooth pavement requirements for wheelchair and stroller accessibility. |
 | **Urban Heat Island Protection** | Routes pedestrian and vulnerable populations through shaded green canopy corridors, actively penalizing extreme LST surface temperatures. |
-| **Multi-Objective Trade-offs** | Uses NAMOA* 4D Pareto optimization so planners can choose between Fastest, Flattest, Coolest, and Lowest-Energy routes. |
+| **Multi-Objective Trade-offs** | NAMOA* Pareto search (time, climb, heat, energy) so planners can choose between Fastest, Flattest, Coolest (with an LST raster) and Lowest-Energy routes. |
 | **Spatial Justice Analysis** | Calculates E2SFCA healthcare and amenity accessibility with Gini coefficients, Lorenz curves, and Palma spatial equity ratios. |
 | **CAD / GIS Interoperability** | Exports native 3D `LineStringZ` GeoPackages, GPX 1.1 with elevation, GeoJSON 3D, and AutoCAD DXF (AC1009) 3D Polylines with longitudinal profile drawings. |
 
@@ -168,12 +168,12 @@ $$f(d) = \frac{\exp\left(-\frac{1}{2}(d/d_0)^2\right) - \exp(-0.5)}{1 - \exp(-0.
 
 ## Viewer Experience
 
-The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering directly inside QGIS:
+The Three.js WebGL 3D Studio opens in the browser from QGIS (a local server pushes each new route to it) and renders with the GPU:
 
 | Feature | Description |
 | :--- | :--- |
 | **4 Camera Modes** | Seamlessly switch between **Orbit** (free inspect), **Chase / Drone** (follows avatar with damping), **POV / Driver** (first-person perspective), and **Tour** (cinematic flight). |
-| **GLSL Heat Stress Ribbon** | Route path is rendered as a volumetric 3D ribbon whose vertex colors dynamically reflect slope gradient or thermal comfort index. |
+| **Heat Stress Ribbon** | Route path is rendered as a 3D ribbon whose colours reflect slope gradient or thermal comfort index. |
 | **Kinematic Avatar Rigs** | Procedural 3D avatar meshes for walkers, wheelchairs, strollers, cyclists, scooters, cars, delivery vans, and ambulances. |
 | **Routing Diagnostics** | Route exports and KPI tooltips expose snap distances, expanded graph nodes, and access-blocked edges. |
 | **Subsurface Geological Slicer** | Clip plane tool to slice through 3D terrain and inspect subterranean elevation profiles. |
@@ -205,14 +205,14 @@ The embedded Three.js WebGL 3D Studio delivers hardware-accelerated rendering di
 | `core/environmental_raster.py` | Multi-criteria raster impedance sampler and AHP consistency engine. |
 | `core/network_policy.py` | Profile-aware modal access rules and surface-quality interpretation. |
 | `core/network_audit.py` | Connectivity and access readiness diagnostics for routing networks. |
-| `core/pareto_router.py` | NAMOA* 4D multi-objective Pareto frontier solver. |
+| `core/pareto_router.py` | NAMOA* multi-objective Pareto frontier search (time, climb, heat dose, energy). |
 | `core/isochrone_engine.py` | Anisotropic Dijkstra wavefront isochrone propagation. |
 | `core/map_matching_3d.py` | Hidden Markov Model 3D GPS map matching with Viterbi decoding. |
 | `core/profile_dxf.py` | AutoCAD DXF AC1009 3D Polyline and longitudinal profile exporter. |
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
-| `web/` | Embedded Three.js WebGL studio (HTML, CSS, JS, GLSL shaders). |
+| `web/` | Three.js WebGL studio: `app3d.js` plus modules (`geo.js`, `solar.js`, `scene_geometry.js`, `chart_math.js`, `live_sync.js`). Tested with ESLint, a JSDoc type check, node:test unit tests and headless-Chromium smoke and pixel-baseline tests (`npm test`, `npm run smoke`, `npm run visual`). |
 | `docs/` | Web Documentation landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
-| `tests/` | Pure logic unit tests and QGIS headless smoke tests. |
+| `tests/` | Pure-logic unit tests, a routing benchmark gate, the QGIS plugin smoke suite and Processing algorithm suite (run in CI on QGIS 3.28, 3.34, 3.44 LTR and 4.2 / Qt6), `check_qgis_api.py` (every QGIS / Qt name used exists in the running QGIS), and the viewer's JS and browser tests. |
 
 ---
 

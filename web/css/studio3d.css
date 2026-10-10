@@ -870,3 +870,42 @@ input:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* Sun & shadows: date and solar time drive the light direction. */
+.sun-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.sun-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.sun-row input[type="date"] {
+  font: inherit;
+  font-weight: 500;
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+#sunHour {
+  width: 100%;
+  accent-color: #f59e0b;
+}
+
+.sun-note {
+  font-size: 11px;
+  color: #64748b;
+  min-height: 14px;
+}

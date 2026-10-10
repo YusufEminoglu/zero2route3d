@@ -23,6 +23,14 @@ _IMPORT_STAR = re.compile(
 _EXPORT_DECL = re.compile(r"^export\s+(class|function|const|let|var)\s", re.M)
 
 
+_RELATIVE_IMPORT = re.compile(r"^import\s[^;]*?from\s*['\"](\./[^'\"]+)['\"]", re.M | re.S)
+
+
+_TOP_LEVEL_NAME = re.compile(
+    r"^(?:export\s+)?(?:const|let|var|class|function|async\s+function)\s+([A-Za-z_$][\w$]*)", re.M
+)
+
+
 class JsBundleError(RuntimeError):
     """Raised when a viewer module cannot be rewritten for the offline export."""
 
@@ -81,3 +89,46 @@ def module_to_classic(source: str, preamble: str = "") -> str:
     body = _EXPORT_DECL.sub(r"\1 ", body)
     body = _EXPORT_BLOCK.sub("", body)
     return preamble + body
+
+
+def module_load_order(js_dir, entry: str, external=("three.module.js", "OrbitControls.js")) -> list:
+    """First-party modules reachable from ``entry``, dependencies first.
+
+    Classic scripts share one global scope and run in order, so a module must
+    come after everything it imports. ``external`` files are bundled
+    separately (as namespaces) and are left out. A cycle or a missing file is
+    an error: the export would otherwise reference an undefined binding.
+    """
+    from pathlib import Path
+
+    root = Path(js_dir)
+    order: list = []
+    visiting: set = set()
+
+    def visit(name: str) -> None:
+        if name in order or name in external:
+            return
+        if name in visiting:
+            raise JsBundleError(f"import cycle through '{name}'")
+        path = root / name
+        if not path.exists():
+            raise JsBundleError(f"missing bundled asset: {path}")
+        visiting.add(name)
+        for target in _RELATIVE_IMPORT.findall(path.read_text(encoding="utf-8")):
+            visit(target[2:])
+        visiting.discard(name)
+        order.append(name)
+
+    visit(entry)
+    # Classic scripts share one global scope: two modules declaring the same
+    # top-level name would make the export throw a redeclaration error.
+    owners: dict = {}
+    for name in order:
+        for binding in _TOP_LEVEL_NAME.findall((root / name).read_text(encoding="utf-8")):
+            if binding in owners and owners[binding] != name:
+                raise JsBundleError(
+                    f"'{binding}' is declared in both {owners[binding]} and {name}; "
+                    "rename one so the offline export can share one scope"
+                )
+            owners[binding] = name
+    return order

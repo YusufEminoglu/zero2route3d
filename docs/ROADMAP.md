@@ -191,6 +191,30 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 
 ## Faz 6 — Mühendislik ve dürüstlük
 
+> **Durum (Ekim 2026): v1.0.0, 1–4 yapıldı.** CI'da QGIS 3.28 (en düşük
+> desteklenen), 3.34 (Ubuntu), 3.44 LTR ve 4.2 (Qt6) üzerinde duman ve
+> algoritma testleri; ayrıca eklentinin kullandığı her QGIS/Qt adının o
+> sürümde var olduğunu denetleyen statik kontrol (`tests/check_qgis_api.py`).
+> Bu kontrol gerçek bir hata buldu: MCDA sürtünme yüzeyi QGIS 3.40'ta gelen
+> bir enum kullanıyordu, 3.28–3.38'de çöküyordu. Ağ hata yolları (Overpass
+> 429/bozuk JSON/ikinci sunucu, Open-Elevation HTTP hatası/eksik yanıt/kısmi
+> başarı), OD matrisinde iptal, Web Mercator ağ ve noktalarla CRS
+> gidiş-dönüşü ve maliyet yüzeyi GeoTIFF üzerinde test ediliyor. İddialar:
+> "Copernicus 30 m" düğmesi yoktu (veri Open-Elevation; SRTM tabanlı, kendi
+> çözünürlüğü örnek ızgarasından kaba) — metinler düzeldi; "dinamik gölge"
+> gerçekleştirildi (görüntüleyicide tarih + güneş saati, analizle aynı
+> formül, gölgeler güneşle dönüyor, gece ışık sönüyor); "QGIS içine gömülü"
+> ve "GLSL" iddiaları kaldırıldı (görüntüleyici tarayıcıda açılıyor, özel
+> gölgelendirici yok); NAMOA* 4 amaçlı ama ısı LST katmanı ister. Bir test
+> bu ifadelerin geri gelmesini engelliyor. Görüntüleyici modüllere bölündü
+> (`geo.js`, `solar.js`, `scene_geometry.js`, `chart_math.js`,
+> `live_sync.js`; çevrimdışı dışa aktarma modülleri içe aktarma sırasıyla
+> buluyor) ve CI'da ESLint, JSDoc tip denetimi, node:test birim testleri,
+> başsız Chromium duman testleri (güneş/gölge, boşta kare çizilmemesi,
+> çevrimdışı HTML) ve piksel referanslı görsel regresyon koşuyor. Kalan:
+> `app3d.js` hâlâ ~2.400 satır (sınıf yöntemleri bölünmedi); three.js'e
+> bağlı modüller tip denetimine girmiyor; QGIS içi gömülü görünüm yok.
+
 1. CI'da QGIS (Docker `qgis/qgis`) işi: duman testi ve algoritma testleri
    (bugün hiç koşmuyor); QGIS 3.x ve 4.x matrisi.
 2. Ağ hata yolları, iptal ve CRS gidiş-dönüş testleri.

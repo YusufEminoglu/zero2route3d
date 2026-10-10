@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>02Route 3D — Multi-Criteria 3D Mobility Studio for QGIS</title>
-    <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded  Three.js WebGL animation." />
+    <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and a browser-based Three.js WebGL animation." />
     <meta property="og:title" content="02Route 3D QGIS Plugin" />
     <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 16 Processing algorithms, profile-aware access, Tobler/Minetti kinematics, and WebGL route inspection." />
     <meta property="og:type" content="website" />
@@ -1037,7 +1037,7 @@
             <div class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span class="version-badge">v0.9.0</span>
+                <span class="version-badge">v1.0.0</span>
             </div>
             <ul class="nav-links">
                 <li><a href="#about">About</a></li>
@@ -1065,7 +1065,7 @@
                 <span class="gradient-text">terrain, body & climate</span>
             </h1>
             <p class="subtitle">
-                Multi-profile 3D route planning with biomechanical kinematics, raster resistance surfaces, Pareto optimization, and embedded WebGL animation. From wheelchair-accessible paths to emergency evacuation — every route respects slope, heat, energy, and human limits.
+                Multi-profile 3D route planning with biomechanical kinematics, raster resistance surfaces, Pareto optimization, and WebGL 3D animation in the browser. From wheelchair-accessible paths to emergency evacuation — every route respects slope, heat, energy, and human limits.
             </p>
             <div class="hero-actions">
                 <a href="https://github.com/YusufEminoglu/zero2route3d/releases" class="btn btn-primary pulse-btn" target="_blank">
@@ -1119,7 +1119,7 @@
                 <span class="eyebrow">About</span>
                 <h2>3D mobility intelligence for every traveler</h2>
                 <p><strong>02Route 3D</strong> bridges topological network analysis with physical terrain realities and urban microclimates. Traditional GIS shortest-path engines treat cities as flat planes, overlooking the punishing physiological impact of steep grades, extreme urban heat, and barrier-rich environments.</p>
-                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a embedded Three.js WebGL studio for an interactive 3D cockpit view, gait animation, and instant scorecards.</p>
+                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a browser-based Three.js WebGL studio for an interactive 3D cockpit view, gait animation, and instant scorecards.</p>
                 <div class="author-buttons">
                     <a href="https://github.com/YusufEminoglu" class="btn btn-secondary" target="_blank">👤 Yusuf Eminoğlu</a>
                     <a href="mailto:yusuf.eminoglu@deu.edu.tr" class="btn btn-secondary">✉ yusuf.eminoglu@deu.edu.tr</a>
@@ -1165,7 +1165,7 @@
                     <span class="tag emerald">bicycle</span>
                     <span class="tag emerald">e-scooter</span>
                     <span class="tag">od matrix</span>
-                    <span class="tag">copernicus dem</span>
+                    <span class="tag">open-elevation dem</span>
                     <span class="tag">urban analytics</span>
                     <span class="tag cyan">zero2</span>
                 </div>
@@ -1207,7 +1207,7 @@
             <div class="glass-card feature-card fade-up">
                 <span class="feature-icon">🎯</span>
                 <h3>Pareto Frontier Routing</h3>
-                <p>Utilizes NAMOA* multi-objective optimization to explore trade-offs across 4 dimensions simultaneously: travel time, cumulative climb, heat exposure, and metabolic energy expenditure.</p>
+                <p>Utilizes NAMOA* multi-objective optimization to explore trade-offs across 4 objectives simultaneously: travel time, cumulative climb, heat exposure (with a land surface temperature raster), and metabolic energy expenditure.</p>
             </div>
             <div class="glass-card feature-card fade-up">
                 <span class="feature-icon">♿</span>
@@ -1217,7 +1217,7 @@
             <div class="glass-card feature-card fade-up">
                 <span class="feature-icon">🌐</span>
                 <h3>WebGL Studio</h3>
-                <p>An embedded Three.js cockpit directly within QGIS. Features chase/orbit cameras, procedural avatars, GLSL heat ribbons, solar simulation, and sub-surface terrain slicing.</p>
+                <p>A Three.js cockpit opened from QGIS in the browser and kept in sync by a local server. Features chase/orbit cameras, procedural avatars, heat ribbons, sun and building shadows for any date and solar time, and sub-surface terrain slicing.</p>
             </div>
             <div class="glass-card feature-card fade-up">
                 <span class="feature-icon">📍</span>
@@ -1304,7 +1304,7 @@
                 <div class="eq-formula">
                     $$\cos(\theta_{\text{inc}}) = \sin(\alpha_{\text{sun}})\cos(\beta) + \cos(\alpha_{\text{sun}})\sin(\beta)\cos(\gamma_{\text{sun}} - \gamma_{\text{aspect}})$$
                 </div>
-                <p>Calculates exact microclimate exposure on the street network by considering DEM aspect, slope, and solar azimuth/altitude at a specific time of day.</p>
+                <p>Computes the sun position for a day of year and solar time, then tests every 5 m of the route for building shadow with a ray toward the sun (footprints and heights from a building layer). Without buildings it falls back to a street-orientation estimate; terrain shadows are not computed.</p>
             </div>
             
             <div class="glass-card equation-card fade-up">
@@ -1774,7 +1774,7 @@
                     <tr>
                         <td>Sun / Shade Solar Exposure</td>
                         <td class="td-code">zero2route3d:solar_shade_exposure</td>
-                        <td>Calculates solar position and route exposure from latitude, time, and the algorithm's explicit density factor.</td>
+                        <td>Sun position for a date and solar time; shadow along the route from a building layer (ray test every 5 m), or a street-orientation estimate without one.</td>
                         <td><span class="tag">Climate</span> <span class="tag purple">Solar</span></td>
                     </tr>
                     <tr>
@@ -1804,7 +1804,7 @@
                     <tr>
                         <td>Export Standalone 3D HTML</td>
                         <td class="td-code">zero2route3d:export_3d_html_report</td>
-                        <td>Bundles data, Three.js, and GLSL shaders into a self-contained offline 3D viewer.</td>
+                        <td>Bundles the route data, Three.js and the viewer into a self-contained offline 3D viewer.</td>
                         <td><span class="tag">Export</span> <span class="tag emerald">WebGL</span></td>
                     </tr>
                     <tr>
@@ -1833,7 +1833,7 @@
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">🌡️</span>
-                <h4>GLSL Heat Stress Ribbon</h4>
+                <h4>Heat Stress Ribbon</h4>
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">🚶</span>
@@ -1853,7 +1853,7 @@
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">📸</span>
-                <h4>Media Capture (PNG, WebM 60fps)</h4>
+                <h4>Media Capture (PNG, WebM / MP4 30 fps)</h4>
             </div>
             <div class="glass-card webgl-card fade-up">
                 <span class="icon">📈</span>
@@ -2069,11 +2069,11 @@
             <!-- v0.2.0 -->
             <div>
                 <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:0.75rem; margin-bottom:1rem;">
-                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.0</span> Ground-Truth Copernicus DEM &amp; OpenStreetMap Data</h3>
+                    <h3 style="margin:0"><span class="badge badge-cyan" style="font-size:1.05rem; padding:0.25rem 0.65rem">v0.2.0</span> Real Elevation (Open-Elevation) &amp; OpenStreetMap Data</h3>
                     <span style="color:var(--text-muted); font-family:var(--font-mono)">2026-08-24</span>
                 </div>
                 <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
-                    <li>⛰️ <strong>Authentic Topography:</strong> Grounded all elevations in real Copernicus DEM and Open-Elevation data with strict NoData handling.</li>
+                    <li>⛰️ <strong>Authentic Topography:</strong> Grounded all elevations in Open-Elevation (SRTM-based) samples or a local DEM, with strict NoData handling. (This entry used to name Copernicus DEM, which the plugin never downloaded.)</li>
                 </ul>
             </div>
 
@@ -2086,7 +2086,7 @@
                 <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
                     <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
                     <li>✨ Integrated 15 headless QGIS Processing algorithms with modeler support</li>
-                    <li>✨ Launched embedded Three.js WebGL studio with chase/POV/orbit cameras</li>
+                    <li>✨ Launched the browser-based Three.js WebGL studio with chase/POV/orbit cameras</li>
                     <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
                     <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>
                     <li>✨ Implemented NAMOA* 4D Pareto frontier multi-objective optimization</li>

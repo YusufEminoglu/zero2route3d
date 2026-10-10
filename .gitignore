@@ -9,3 +9,5 @@ __pycache__/
 zero2route3d_cache/
 *_eo_cache/
 .secrets.report.json
+node_modules/
+tests/visual/output/

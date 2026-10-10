@@ -134,6 +134,15 @@
       <span>🔊</span> Voice: <b id="lblVoice">OFF</b>
     </button>
 
+    <div class="tool-group-title">Sun &amp; Shadows</div>
+    <div class="sun-controls">
+      <label class="sun-row" for="sunDate">Date <input type="date" id="sunDate" value="2026-06-21"></label>
+      <label class="sun-row" for="sunHour">Solar time <b id="lblSunTime">15:00</b></label>
+      <input type="range" id="sunHour" min="4" max="21" step="0.25" value="15"
+             aria-label="Solar time of day for the sun and the shadows">
+      <span id="sunNote" class="sun-note" role="status"></span>
+    </div>
+
     <div class="tool-group-title">Capture & Tools</div>
     <button class="tool-btn" id="btnSnapshot" title="Snapshot at 2x resolution with caption (Shift-click: 4x)">
       <span>📸</span> Snapshot

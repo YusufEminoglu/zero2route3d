@@ -3,156 +3,18 @@ import { OrbitControls } from './OrbitControls.js';
 import { KinematicAvatarRig } from './KinematicAvatarRig.js';
 import { TerrainSlicerSystem } from './TerrainSlicerSystem.js';
 import { VoiceCueSystem } from './VoiceCueSystem.js';
+import { disposeHierarchy, mergeGeometries, ribbonGeometry, RoutePath } from './scene_geometry.js';
+import { niceTicks, wormPath } from './chart_math.js';
+import {
+  basemapTileRange, isValidTerrainGrid, localToLonLat, METRES_PER_DEG_LAT, METRES_PER_DEG_LON_EQUATOR, lonLatToLocal, sampleTerrainGrid, tile2lat, tile2lon,
+} from './geo.js';
+import { setLiveStatus, startLiveSync, stopLiveSync } from './live_sync.js';
+import {
+  compassPoint, dayOfYearFromIso, DEFAULT_SUN, formatSolarHour, isoFromDayOfYear, parseSunParam, sunDirection, sunPosition,
+} from './solar.js';
 
 // Accepts #rgb, #rrggbb, and the CSS colour keywords the profiles actually use.
 const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/;
-
-// Every texture slot a material can hold. Disposing only `.map` leaked the rest.
-const TEXTURE_SLOTS = [
-  'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap',
-  'bumpMap', 'displacementMap', 'alphaMap', 'envMap', 'lightMap', 'specularMap',
-];
-
-function disposeMaterial(material, seen) {
-  if (!material || seen.has(material)) return;
-  // Materials are shared between meshes (the building palette, for one), so
-  // disposing per-mesh double-disposed them.
-  seen.add(material);
-  TEXTURE_SLOTS.forEach((slot) => {
-    const tex = material[slot];
-    if (tex && typeof tex.dispose === 'function') tex.dispose();
-  });
-  material.dispose();
-}
-
-function disposeHierarchy(obj) {
-  if (!obj) return;
-  const seenMaterials = new Set();
-  const seenGeometries = new Set();
-  obj.traverse((child) => {
-    if (child.geometry && !seenGeometries.has(child.geometry)) {
-      seenGeometries.add(child.geometry);
-      child.geometry.dispose();
-    }
-    if (child.material) {
-      if (Array.isArray(child.material)) {
-        child.material.forEach((m) => disposeMaterial(m, seenMaterials));
-      } else {
-        disposeMaterial(child.material, seenMaterials);
-      }
-    }
-  });
-}
-
-// Concatenate non-indexed copies of geometries that share one material.
-// (three.module.js ships without BufferGeometryUtils.)
-function mergeGeometries(geometries) {
-  const parts = geometries.map((g) => (g.index ? g.toNonIndexed() : g));
-  const names = ['position', 'normal', 'uv'].filter((name) => parts.every((g) => g.attributes[name]));
-  const merged = new THREE.BufferGeometry();
-  names.forEach((name) => {
-    const itemSize = parts[0].attributes[name].itemSize;
-    const total = parts.reduce((n, g) => n + g.attributes[name].array.length, 0);
-    const array = new Float32Array(total);
-    let offset = 0;
-    parts.forEach((g) => {
-      array.set(g.attributes[name].array, offset);
-      offset += g.attributes[name].array.length;
-    });
-    merged.setAttribute(name, new THREE.BufferAttribute(array, itemSize));
-  });
-  parts.forEach((g, i) => {
-    if (g !== geometries[i]) g.dispose();
-  });
-  merged.computeBoundingSphere();
-  return merged;
-}
-
-// "Nice" axis ticks (1, 2, 5 x 10^n steps) covering [lo, hi].
-function niceTicks(lo, hi, target) {
-  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0];
-  if (hi - lo < 1e-9) return [lo];
-  const raw = (hi - lo) / Math.max(1, target);
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const step = [1, 2, 5, 10].map((k) => k * mag).find((v) => v >= raw) || raw;
-  const ticks = [];
-  for (let t = Math.floor(lo / step) * step; t <= hi + step * 0.5; t += step) {
-    ticks.push(Number(t.toFixed(10)));
-  }
-  return ticks;
-}
-
-// A flat ribbon of the given width that follows a route path at its true
-// heights. (The old ribbons were tubes squashed with geometry.scale(1, 0.12, 1),
-// which also squashed the route's heights to 12 %: on hills the ribbon sank
-// under the terrain.)
-function ribbonGeometry(path, width, yOffset = 0) {
-  const samples = Math.max(64, Math.min(4000, Math.round(path.total / 3)));
-  const half = width / 2;
-  const positions = new Float32Array((samples + 1) * 6);
-  const normals = new Float32Array((samples + 1) * 6);
-  const indices = [];
-  for (let i = 0; i <= samples; i++) {
-    const { point, tangent } = path.at(i / samples);
-    let sx = -tangent.z;
-    let sz = tangent.x;
-    const len = Math.hypot(sx, sz) || 1;
-    sx /= len;
-    sz /= len;
-    positions.set([point.x + sx * half, point.y + yOffset, point.z + sz * half,
-      point.x - sx * half, point.y + yOffset, point.z - sz * half], i * 6);
-    normals.set([0, 1, 0, 0, 1, 0], i * 6);
-    if (i < samples) {
-      const a = i * 2;
-      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-    }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  geo.setIndex(indices);
-  geo.computeBoundingSphere();
-  return geo;
-}
-
-// A route in scene space, parameterised by horizontal distance travelled.
-// CatmullRomCurve3.getPointAt() walks by 3D arc length, which the elevation
-// exaggeration distorts; walking by real distance keeps playback at a steady
-// speed and lets the elevation chart and the 3D marker agree exactly.
-class RoutePath {
-  constructor(points) {
-    this.points = points;
-    this.curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.15);
-    this.cumulative = [0];
-    let total = 0;
-    for (let i = 1; i < points.length; i++) {
-      total += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-      this.cumulative.push(total);
-    }
-    this.total = total;
-  }
-
-  paramAt(fraction) {
-    const n = this.points.length;
-    if (n < 2 || this.total <= 0) return 0;
-    const d = Math.max(0, Math.min(1, fraction)) * this.total;
-    let lo = 0;
-    let hi = n - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (this.cumulative[mid] <= d) lo = mid;
-      else hi = mid;
-    }
-    const span = this.cumulative[hi] - this.cumulative[lo];
-    const f = span > 0 ? (d - this.cumulative[lo]) / span : 0;
-    return Math.min(1, (lo + f) / (n - 1));
-  }
-
-  at(fraction) {
-    const t = this.paramAt(fraction);
-    return { point: this.curve.getPoint(t), tangent: this.curve.getTangent(t).normalize() };
-  }
-}
 
 class Studio3DApp {
   constructor() {
@@ -263,6 +125,7 @@ class Studio3DApp {
 
     this.initHudElements();
     this.bindEvents();
+    this.applySun();
     this.watchBottomPanel();
 
     this.clock = new THREE.Clock();
@@ -296,8 +159,9 @@ class Studio3DApp {
     this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.35);
     this.sunLight.position.set(400, 800, 300);
     this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
+    const shadowSize = Math.min(4096, this.renderer.capabilities.maxTextureSize || 2048);
+    this.sunLight.shadow.mapSize.width = shadowSize;
+    this.sunLight.shadow.mapSize.height = shadowSize;
     this.sunLight.shadow.camera.near = 10;
     this.sunLight.shadow.camera.far = 10000;
     const d = 1400;
@@ -307,6 +171,87 @@ class Studio3DApp {
     this.sunLight.shadow.camera.bottom = -d;
     this.sunLight.shadow.bias = -0.0003;
     this.scene.add(this.sunLight);
+    this.scene.add(this.sunLight.target);
+    let fromUrl = null;
+    try {
+      fromUrl = parseSunParam(new URLSearchParams(window.location.search).get('sun'));
+    } catch (err) {
+      fromUrl = null;
+    }
+    this.sun = { ...(fromUrl || DEFAULT_SUN) };
+  }
+
+  // Place the sun for the route's latitude, date and solar time: the light
+  // direction (and so every building and tree shadow) follows the same
+  // formula as the QGIS shade analysis. Below the horizon the sun light is
+  // off and the sky light dims.
+  applySun() {
+    const lat = this.originLonLat ? this.originLonLat.lat : 45;
+    const { azimuthDeg, elevationDeg } = sunPosition(lat, this.sun.dayOfYear, this.sun.solarHour);
+    const up = elevationDeg > 0;
+    const dir = sunDirection(azimuthDeg, Math.max(elevationDeg, 2));
+    const pts = this.scenePoints || [];
+    let cx = 0;
+    let cz = 0;
+    let half = 300;
+    if (pts.length) {
+      const xs = pts.map((p) => p.x);
+      const zs = pts.map((p) => p.z);
+      cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      half = Math.max(150, (Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))) / 2 + 120);
+    }
+    // The shadow map covers the route corridor only (not a fixed 2.8 km
+    // square), so building shadows stay sharp.
+    const cam = this.sunLight.shadow.camera;
+    if (cam.right !== half) {
+      cam.left = -half;
+      cam.right = half;
+      cam.top = half;
+      cam.bottom = -half;
+      cam.far = half * 4 + 4000;
+      cam.updateProjectionMatrix();
+    }
+    const distance = half * 2 + 1000;
+    this.sunLight.target.position.set(cx, 0, cz);
+    this.sunLight.position.set(cx + dir.x * distance, dir.y * distance, cz + dir.z * distance);
+    this.sunLight.target.updateMatrixWorld();
+    // Low sun is weaker and warmer; at night only a dim sky light remains.
+    // Sky and ambient light stay well below the sun so shadows read clearly.
+    const strength = up ? Math.min(1, 0.35 + Math.sin((elevationDeg * Math.PI) / 180) * 1.3) : 0;
+    this.sunLight.intensity = 1.7 * strength;
+    this.sunLight.castShadow = up;
+    this.sunLight.color.setHSL(0.11, up ? 0.9 - 0.6 * strength : 0.5, 0.96 - 0.08 * (1 - strength));
+    this.hemiLight.intensity = up ? 0.45 + 0.25 * strength : 0.3;
+    this.ambientLight.intensity = up ? 0.18 + 0.1 * strength : 0.15;
+    // Sky colour: day blue, a warmer haze near the horizon, deep blue at night.
+    const sky = up ? (strength > 0.6 ? 0xe0f2fe : 0xfde7c7) : 0x0f1e3a;
+    this.scene.background.setHex(sky);
+    this.scene.fog.color.setHex(up ? (strength > 0.6 ? 0xf0f9ff : 0xfdf0dc) : 0x0f1e3a);
+    this.sunState = { azimuthDeg, elevationDeg, up };
+    this.updateSunControls();
+    this.requestRender();
+  }
+
+  updateSunControls() {
+    const date = document.getElementById('sunDate');
+    const hour = document.getElementById('sunHour');
+    const label = document.getElementById('lblSunTime');
+    const note = document.getElementById('sunNote');
+    if (date) date.value = isoFromDayOfYear(this.sun.dayOfYear);
+    if (hour) hour.value = String(this.sun.solarHour);
+    if (label) label.textContent = formatSolarHour(this.sun.solarHour);
+    if (note && this.sunState) {
+      const { azimuthDeg, elevationDeg, up } = this.sunState;
+      note.textContent = up
+        ? `Sun ${elevationDeg.toFixed(0)}\u00b0 up, from the ${compassPoint(azimuthDeg)} (${azimuthDeg.toFixed(0)}\u00b0)`
+        : 'Sun below the horizon';
+    }
+  }
+
+  setSun(changes) {
+    this.sun = { ...this.sun, ...changes };
+    this.applySun();
   }
 
   initHudElements() {
@@ -328,6 +273,15 @@ class Studio3DApp {
   }
 
   bindEvents() {
+    const sunHour = document.getElementById('sunHour');
+    if (sunHour) sunHour.addEventListener('input', () => this.setSun({ solarHour: Number(sunHour.value) }));
+    const sunDate = document.getElementById('sunDate');
+    if (sunDate) {
+      sunDate.addEventListener('change', () => {
+        const day = dayOfYearFromIso(sunDate.value);
+        if (day !== null) this.setSun({ dayOfYear: day });
+      });
+    }
     window.addEventListener('resize', () => {
       this.width = window.innerWidth;
       this.height = window.innerHeight;
@@ -518,9 +472,7 @@ class Studio3DApp {
 
   lonLatToSceneMeters(lon, lat, eleMeters) {
     if (!this.originLonLat) return new THREE.Vector3(0, 0, 0);
-    const meanLat = (this.originLonLat.lat * Math.PI) / 180.0;
-    const dx = (lon - this.originLonLat.lon) * 111320.0 * Math.cos(meanLat);
-    const dz = -(lat - this.originLonLat.lat) * 110574.0;
+    const { x: dx, z: dz } = lonLatToLocal(this.originLonLat, lon, lat);
     const baseEle = this.baseElevation !== undefined ? this.baseElevation : 0.0;
     const dy = ((eleMeters || 0.0) - baseEle) * this.elevationExaggeration;
     return new THREE.Vector3(dx, dy, dz);
@@ -915,23 +867,16 @@ class Studio3DApp {
     this.slicerSystem.attachToTerrain(this.terrainMesh, this.buildingsGroup, this.treesGroup, this.skirtMesh);
 
     this.progress = 0.0;
+    this.applySun();
     this.updateAvatarPosition();
   }
 
   setTerrainGrid(grid) {
-    const valid = grid && Array.isArray(grid.bbox) && grid.bbox.length === 4
-      && Number.isInteger(grid.cols) && Number.isInteger(grid.rows) && grid.cols >= 2 && grid.rows >= 2
-      && Array.isArray(grid.heights) && grid.heights.length === grid.cols * grid.rows
-      && grid.bbox.every(Number.isFinite) && grid.heights.every(Number.isFinite);
-    this.terrainGrid = valid ? grid : null;
+    this.terrainGrid = isValidTerrainGrid(grid) ? grid : null;
   }
 
   sceneToLonLat(x, z) {
-    const meanLat = (this.originLonLat.lat * Math.PI) / 180.0;
-    return {
-      lon: this.originLonLat.lon + x / (111320.0 * Math.cos(meanLat)),
-      lat: this.originLonLat.lat - z / 110574.0,
-    };
+    return localToLonLat(this.originLonLat, x, z);
   }
 
   // Ground height (scene y) under a scene point: the DEM grid when QGIS sent
@@ -940,19 +885,7 @@ class Studio3DApp {
     const g = this.terrainGrid;
     if (!g || !this.originLonLat) return this.getTerrainElevationAt(x, z);
     const { lon, lat } = this.sceneToLonLat(x, z);
-    const [west, south, east, north] = g.bbox;
-    const fx = Math.max(0, Math.min(g.cols - 1, ((lon - west) / (east - west)) * (g.cols - 1)));
-    const fy = Math.max(0, Math.min(g.rows - 1, ((north - lat) / (north - south)) * (g.rows - 1)));
-    const c0 = Math.floor(fx);
-    const r0 = Math.floor(fy);
-    const c1 = Math.min(g.cols - 1, c0 + 1);
-    const r1 = Math.min(g.rows - 1, r0 + 1);
-    const tx = fx - c0;
-    const ty = fy - r0;
-    const h = (r, c) => g.heights[r * g.cols + c];
-    const top = h(r0, c0) * (1 - tx) + h(r0, c1) * tx;
-    const bottom = h(r1, c0) * (1 - tx) + h(r1, c1) * tx;
-    const elevation = top * (1 - ty) + bottom * ty;
+    const elevation = sampleTerrainGrid(g, lon, lat);
     return (elevation - this.baseElevation) * this.elevationExaggeration;
   }
 
@@ -1165,20 +1098,24 @@ class Studio3DApp {
       routeSamples.push(this.curve.getPointAt(s / sampleSteps));
     }
 
-    // Least-squares plane through the route for the regional slope.
-    let sumX = 0, sumZ = 0, sumY = 0, sumXX = 0, sumZZ = 0, sumXZ = 0, sumXY = 0, sumZY = 0;
-    const n = this.scenePoints.length;
+    // Least-squares plane through the route for the regional slope. The
+    // normal equations below hold for coordinates centred on the point mean;
+    // centring on the bounding-box middle (as before) tilted the plane.
+    const n = Math.max(1, this.scenePoints.length);
+    const meanX = this.scenePoints.reduce((a, p) => a + p.x, 0) / n;
+    const meanZ = this.scenePoints.reduce((a, p) => a + p.z, 0) / n;
+    const meanY = this.scenePoints.reduce((a, p) => a + p.y, 0) / n;
+    let sumXX = 0, sumZZ = 0, sumXZ = 0, sumXY = 0, sumZY = 0;
     for (const p of this.scenePoints) {
-      const x = p.x - center.x;
-      const z = p.z - center.z;
-      sumX += x; sumZ += z; sumY += p.y;
+      const x = p.x - meanX;
+      const z = p.z - meanZ;
+      const y = p.y - meanY;
       sumXX += x * x; sumZZ += z * z; sumXZ += x * z;
-      sumXY += x * p.y; sumZY += z * p.y;
+      sumXY += x * y; sumZY += z * y;
     }
     const denom = (sumXX * sumZZ - sumXZ * sumXZ);
     const gradX = Math.abs(denom) > 1e-4 ? (sumXY * sumZZ - sumZY * sumXZ) / denom : 0;
     const gradZ = Math.abs(denom) > 1e-4 ? (sumZY * sumXX - sumXY * sumXZ) / denom : 0;
-    const meanY = sumY / Math.max(1, n);
 
     for (let i = 0; i < posAttr.count; i++) {
       const vx = posAttr.getX(i);
@@ -1194,7 +1131,7 @@ class Studio3DApp {
         totalWeight += w;
       }
       const localRouteEle = totalWeight > 0 ? (weightedY / totalWeight) : meanY;
-      const regionalEle = meanY + gradX * (vx - center.x) + gradZ * (vz - center.z);
+      const regionalEle = meanY + gradX * (vx - meanX) + gradZ * (vz - meanZ);
       const blend = Math.max(0.0, Math.min(1.0, (minDist - 20.0) / 60.0));
       posAttr.setY(i, (1.0 - blend) * localRouteEle + blend * regionalEle - 0.35);
     }
@@ -1262,54 +1199,14 @@ class Studio3DApp {
 
     if (!this.originLonLat) return tex;
 
-    const latRad = (this.originLonLat.lat * Math.PI) / 180.0;
-    const mPerDegLon = Math.max(1.0, 111320.0 * Math.cos(latRad));
-    const mPerDegLat = 110574.0;
+    const { lon: minLon, lat: minLat } = localToLonLat(this.originLonLat, center.x - width / 2, center.z + depth / 2);
+    const { lon: maxLon, lat: maxLat } = localToLonLat(this.originLonLat, center.x + width / 2, center.z - depth / 2);
 
-    const minLon = this.originLonLat.lon + (center.x - width / 2) / mPerDegLon;
-    const maxLon = this.originLonLat.lon + (center.x + width / 2) / mPerDegLon;
-    const minLat = this.originLonLat.lat - (center.z + depth / 2) / mPerDegLat;
-    const maxLat = this.originLonLat.lat - (center.z - depth / 2) / mPerDegLat;
-
-    const lon2tile = (lon, z) => {
-      const numTiles = Math.pow(2, z);
-      return Math.max(0, Math.min(numTiles - 1, Math.floor(((lon + 180) / 360) * numTiles)));
-    };
-    const lat2tile = (lat, z) => {
-      const numTiles = Math.pow(2, z);
-      const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
-      const rad = (clampedLat * Math.PI) / 180.0;
-      const val = (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2;
-      return Math.max(0, Math.min(numTiles - 1, Math.floor(val * numTiles)));
-    };
-    const tile2lon = (x, z) => (x / Math.pow(2, z)) * 360 - 180;
-    const tile2lat = (y, z) => {
-      const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
-      return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-    };
-
-    // Calculate optimal zoom level dynamically:
-    // Highest zoom level where the entire model area is covered by <= 8 tiles along each axis
-    // to guarantee crisp detail and zero gaps across 100% of the terrain surface.
-    const MAX_TILES_AXIS = 8;
-    let zoom = 19;
-    while (zoom > 10) {
-      const minX = lon2tile(minLon, zoom);
-      const maxX = lon2tile(maxLon, zoom);
-      const minY = lat2tile(maxLat, zoom);
-      const maxY = lat2tile(minLat, zoom);
-      const countX = maxX - minX + 1;
-      const countY = maxY - minY + 1;
-      if (countX <= MAX_TILES_AXIS && countY <= MAX_TILES_AXIS) {
-        break;
-      }
-      zoom--;
-    }
-
-    const minTileX = lon2tile(minLon, zoom);
-    const maxTileX = lon2tile(maxLon, zoom);
-    const minTileY = lat2tile(maxLat, zoom);
-    const maxTileY = lat2tile(minLat, zoom);
+    // Highest zoom where the whole model area fits in <= 8 tiles per axis:
+    // crisp detail and no gaps across the terrain surface.
+    const { zoom, minX: minTileX, maxX: maxTileX, minY: minTileY, maxY: maxTileY } = basemapTileRange(
+      minLon, minLat, maxLon, maxLat, 8,
+    );
 
     const getTileUrl = (x, y, z) => {
       if (this.basemapProvider === 'satellite') {
@@ -1418,8 +1315,8 @@ class Studio3DApp {
     if (!g) return;
     const [west, south, east, north] = g.bbox;
     const midLat = ((south + north) / 2) * Math.PI / 180;
-    const dx = ((east - west) / (g.cols - 1)) * 111320 * Math.cos(midLat);
-    const dy = ((north - south) / (g.rows - 1)) * 110574;
+    const dx = ((east - west) / (g.cols - 1)) * METRES_PER_DEG_LON_EQUATOR * Math.cos(midLat);
+    const dy = ((north - south) / (g.rows - 1)) * METRES_PER_DEG_LAT;
     const img = ctx.createImageData(g.cols, g.rows);
     const h = (r, c) => g.heights[Math.max(0, Math.min(g.rows - 1, r)) * g.cols + Math.max(0, Math.min(g.cols - 1, c))];
     // Light from the north-west, 45 degrees up (the cartographic convention).
@@ -2208,44 +2105,6 @@ class Studio3DApp {
     }
   }
 
-  buildWormPath(values, width, height) {
-    const n = values.length;
-    if (n < 2) return '';
-    const known = values.filter((v) => v !== null && v !== undefined && !isNaN(v));
-    if (!known.length) return '';
-    const minVal = Math.min(...known);
-    const maxVal = Math.max(...known);
-    const valRange = Math.max(0.001, maxVal - minVal);
-    const yMid = height / 2.0;
-    const maxHalfT = Math.max(2.0, Math.min(8.0, (height - 6.0) / 2.0));
-    const minHalfT = 1.4;
-
-    const topPoints = [];
-    const bottomPoints = [];
-
-    for (let i = 0; i < n; i++) {
-      const v = values[i];
-      const s = i / Math.max(1, n - 1);
-      const x = s * width;
-      const cleanV = (v !== null && v !== undefined && !isNaN(v)) ? v : minVal;
-      const u = Math.max(0.0, Math.min(1.0, (cleanV - minVal) / valRange));
-      const env = Math.pow(Math.sin(Math.PI * s), 0.65);
-      const halfT = (minHalfT + u * (maxHalfT - minHalfT)) * env;
-      topPoints.push(`${x.toFixed(1)},${(yMid - halfT).toFixed(1)}`);
-      bottomPoints.push(`${x.toFixed(1)},${(yMid + halfT).toFixed(1)}`);
-    }
-
-    let d = `M ${topPoints[0]} `;
-    for (let i = 1; i < topPoints.length; i++) {
-      d += `L ${topPoints[i]} `;
-    }
-    for (let i = bottomPoints.length - 1; i >= 0; i--) {
-      d += `L ${bottomPoints[i]} `;
-    }
-    d += 'Z';
-    return d;
-  }
-
   // Per-point profile of the active route: distance (m), elevation, slope,
   // speed and the optional raster values. QGIS sends it densified (~6 m); the
   // old code read it by route-vertex index, so the values came from the
@@ -2301,7 +2160,7 @@ class Studio3DApp {
         const v = p[metric.key];
         return v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v) * (metric.scale || 1);
       });
-      const pathD = this.buildWormPath(values, trackWidth, trackHeight);
+      const pathD = wormPath(values, trackWidth, trackHeight);
       if (!pathD) return;
       const safeColor = SAFE_COLOR.test(metric.color) ? metric.color : '#0284c7';
 
@@ -2549,100 +2408,9 @@ window.setRouteData = function (geojsonData) {
   }
 };
 
-let lastLoadedPayload = null;
-let routePollTimer = null;
-let routeEvents = null;
-
-function setLiveStatus(message, level = 'info') {
-  const el = document.getElementById('liveStatus');
-  if (!el) return;
-  el.textContent = message || '';
-  el.dataset.level = level;
-  el.hidden = !message;
-}
-
-async function fetchCurrentRoute() {
-  let res;
-  try {
-    res = await fetch(`data/current_route.json?t=${Date.now()}`, { cache: 'no-store' });
-  } catch (err) {
-    setLiveStatus('Cannot reach QGIS: the 02Route 3D server is not running. Reopen the 3D studio from QGIS.', 'error');
-    return false;
-  }
-  if (res.status === 404) {
-    // No route computed yet: the empty state explains what to do.
-    setLiveStatus('');
-    return false;
-  }
-  if (!res.ok) {
-    setLiveStatus(`Could not load the route from QGIS (HTTP ${res.status}).`, 'error');
-    return false;
-  }
-  let text;
-  let data;
-  try {
-    text = await res.text();
-    data = JSON.parse(text);
-  } catch (err) {
-    setLiveStatus(`The route file from QGIS is not valid JSON: ${err.message}`, 'error');
-    return false;
-  }
-  setLiveStatus('');
-  if (data && text !== lastLoadedPayload && window.app3d) {
-    lastLoadedPayload = text;
-    try {
-      window.app3d.loadRoute(data);
-    } catch (err) {
-      setLiveStatus(`The route could not be shown: ${err.message}`, 'error');
-      console.error(err);
-    }
-  }
-  return Boolean(data);
-}
-
-function startPolling() {
-  if (routePollTimer === null) routePollTimer = setInterval(fetchCurrentRoute, 1500);
-}
-
-// Live link to QGIS: the local server pushes an event when QGIS writes a new
-// route, so the viewer no longer downloads the whole route every 1.5 s. If the
-// event stream is unavailable it falls back to polling.
-function startLiveSync() {
-  if (!/^https?:$/.test(window.location.protocol)) return; // standalone HTML report
-  if (!window.EventSource) {
-    fetchCurrentRoute();
-    startPolling();
-    return;
-  }
-  let opened = false;
-  routeEvents = new EventSource('events');
-  routeEvents.addEventListener('open', () => {
-    opened = true;
-    setLiveStatus('');
-  });
-  routeEvents.addEventListener('route', () => fetchCurrentRoute());
-  routeEvents.addEventListener('error', () => {
-    if (!opened) {
-      // Older server without /events: poll instead.
-      routeEvents.close();
-      routeEvents = null;
-      fetchCurrentRoute();
-      startPolling();
-      return;
-    }
-    setLiveStatus('Live link to QGIS lost - reconnecting...', 'warning');
-  });
-}
-
 // There is deliberately no built-in demo route: until QGIS computes one the
 // studio shows its empty state rather than a fabricated route whose numbers
 // would be indistinguishable from real ones.
 startLiveSync();
 
-window.addEventListener('beforeunload', () => {
-  if (routePollTimer !== null) {
-    clearInterval(routePollTimer);
-    routePollTimer = null;
-  }
-  if (routeEvents) routeEvents.close();
-});
+window.addEventListener('beforeunload', stopLiveSync);

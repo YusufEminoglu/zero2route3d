@@ -1,0 +1,10 @@
+# Development tooling stays out of `git archive` (the plugin zip).
+package.json export-ignore
+package-lock.json export-ignore
+eslint.config.mjs export-ignore
+tsconfig.checkjs.json export-ignore
+types/ export-ignore
+tests/js/ export-ignore
+tests/visual/ export-ignore
+.github/ export-ignore
+tests/viewer/ export-ignore

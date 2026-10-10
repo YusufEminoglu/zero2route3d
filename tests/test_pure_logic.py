@@ -1961,6 +1961,47 @@ class MetadataTests(unittest.TestCase):
             parser.get("general", key)  # raises InterpolationSyntaxError on a stray '%'
 
 
+class ClaimTests(unittest.TestCase):
+    """User-facing text must not promise what the plugin does not do.
+
+    Each phrase below once appeared in the README, the manual, the website or
+    metadata.txt and was false: the elevation download is Open-Elevation (not
+    Copernicus), the viewer opens in the browser (it is not embedded in QGIS)
+    and uses three.js materials (no custom GLSL), and the shade analysis used
+    neither DEM aspect nor dynamic shadows before building shadows existed.
+    """
+
+    BANNED = (
+        "copernicus 30m",
+        "copernicus dem",
+        "30m topography",
+        "glsl",
+        "embedded webgl",
+        "embedded three.js webgl",
+        "directly within qgis",
+        "dynamic shadow casting",
+        "dem aspect",
+        "webm 60fps",
+        "no building massing is used",
+    )
+
+    def test_docs_do_not_repeat_retracted_claims(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        files = [root / "README.md", root / "metadata.txt", root / "docs" / "MANUAL.html",
+                 root / "docs" / "index.html", root / "core" / "solar_shadow.py"]
+        found = []
+        for path in files:
+            text = path.read_text(encoding="utf-8").lower()
+            for phrase in self.BANNED:
+                if phrase in text:
+                    for line in text.splitlines():
+                        # A sentence that explains the old claim is allowed.
+                        if phrase in line and "used to" not in line and "never downloaded" not in line:
+                            found.append(f"{path.name}: {phrase}")
+                            break
+        self.assertEqual(found, [])
+
+
 class CancellationTests(unittest.TestCase):
     """Background tasks and Processing feedback can stop downloads."""
 
@@ -2000,6 +2041,150 @@ class CancellationTests(unittest.TestCase):
             values = GlobalDemFetcher.fetch_elevations_for_coords(coords, is_canceled=lambda: True)
         conn.assert_not_called()
         self.assertEqual(values, [None] * len(coords))
+
+
+class _FakeResponse:
+    def __init__(self, status: int, body: bytes, reason: str = "") -> None:
+        self.status = status
+        self.reason = reason
+        self._body = body
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            body, self._body = self._body, b""
+            return body
+        chunk, self._body = self._body[:size], self._body[size:]
+        return chunk
+
+
+class _FakeConnections:
+    """Stands in for http.client.HTTPSConnection: one scripted reply per call."""
+
+    def __init__(self, replies) -> None:
+        self.replies = list(replies)
+        self.hosts = []
+
+    def __call__(self, host, timeout=None):
+        self.hosts.append(host)
+        reply = self.replies.pop(0)
+        outer = self
+
+        class Connection:
+            def request(self, *_args, **_kwargs) -> None:
+                if isinstance(reply, Exception):
+                    raise reply
+
+            def getresponse(self):
+                return reply
+
+            def close(self) -> None:
+                outer.closed = getattr(outer, "closed", 0) + 1
+
+        return Connection()
+
+
+class NetworkErrorPathTests(unittest.TestCase):
+    """Every way a download can fail ends in a clear message, never invented data."""
+
+    BBOX = (-140.1234, -40.1234, -140.1224, -40.1224)  # open ocean: never cached
+
+    def setUp(self) -> None:
+        from unittest import mock
+
+        self._tmp = tempfile.TemporaryDirectory()
+        patcher = mock.patch.object(NetworkSourceManager, "CACHE_DIR", Path(self._tmp.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _fetch(self, replies):
+        from unittest import mock
+
+        fake = _FakeConnections(replies)
+        with mock.patch("http.client.HTTPSConnection", fake):
+            try:
+                return fake, NetworkSourceManager().fetch_osm_network_bbox(self.BBOX), None
+            except NetworkSourceError as exc:
+                return fake, None, exc
+
+    def test_both_overpass_mirrors_failing_lists_both_reasons(self) -> None:
+        fake, segments, exc = self._fetch([
+            _FakeResponse(429, b"", "Too Many Requests"),
+            _FakeResponse(200, b"<html>not json</html>"),
+        ])
+        self.assertIsNone(segments)
+        message = str(exc)
+        self.assertIn("HTTP 429 Too Many Requests", message)
+        self.assertIn("JSONDecodeError", message)
+        self.assertEqual(fake.hosts, ["overpass-api.de", "maps.mail.ru"])
+        self.assertEqual(fake.closed, 2)  # no leaked connections
+
+    def test_second_mirror_is_used_when_the_first_fails(self) -> None:
+        import json
+
+        data = {"elements": [
+            {"type": "node", "id": 1, "lon": -140.1230, "lat": -40.1230},
+            {"type": "node", "id": 2, "lon": -140.1226, "lat": -40.1230},
+            {"type": "way", "id": 9, "nodes": [1, 2], "tags": {"highway": "residential"}},
+        ]}
+        _fake, segments, exc = self._fetch([
+            OSError("connection reset"),
+            _FakeResponse(200, json.dumps(data).encode("utf-8")),
+        ])
+        self.assertIsNone(exc)
+        self.assertEqual(len(segments), 1)
+
+    def test_non_object_json_is_an_error(self) -> None:
+        _fake, _segments, exc = self._fetch([
+            _FakeResponse(200, b"[1, 2, 3]"),
+            _FakeResponse(504, b"", "Gateway Timeout"),
+        ])
+        self.assertIn("unexpected response", str(exc))
+        self.assertIn("HTTP 504", str(exc))
+
+    def test_empty_extract_is_not_a_network(self) -> None:
+        _fake, _segments, exc = self._fetch([_FakeResponse(200, b'{"elements": []}')])
+        self.assertIn("no usable road segments", str(exc))
+
+    def _elevations(self, coords, replies):
+        from unittest import mock
+        from zero2route3d.core.dem_fetcher import GlobalDemFetcher
+
+        fake = _FakeConnections(replies)
+        with mock.patch("http.client.HTTPSConnection", fake), \
+                mock.patch.object(GlobalDemFetcher, "_MEMORY_CACHE", {}), \
+                mock.patch.object(GlobalDemFetcher, "_load_disk_cache"), \
+                mock.patch.object(GlobalDemFetcher, "_save_disk_cache"):
+            values = GlobalDemFetcher.fetch_elevations_for_coords(coords)
+            return values, GlobalDemFetcher.last_error
+
+    def test_open_elevation_http_error_leaves_points_missing(self) -> None:
+        values, error = self._elevations([(10.0, 50.0), (10.1, 50.0)],
+                                         [_FakeResponse(503, b"", "Service Unavailable")])
+        self.assertEqual(values, [None, None])  # never 0.0
+        self.assertIn("HTTP 503", error)
+
+    def test_open_elevation_bad_values_reject_the_whole_batch(self) -> None:
+        import json
+
+        for results in (
+            [{"elevation": 100.0}],  # one answer for two points
+            [{"elevation": 100.0}, {"elevation": "NaN"}],
+            [{"elevation": 100.0}, {"height": 3.0}],
+        ):
+            body = json.dumps({"results": results}).encode("utf-8")
+            values, _error = self._elevations([(10.0, 50.0), (10.1, 50.0)], [_FakeResponse(200, body)])
+            self.assertEqual(values, [None, None], results)
+
+    def test_open_elevation_keeps_good_batches_when_a_later_one_fails(self) -> None:
+        import json
+
+        coords = [(10.0 + i * 1e-3, 50.0) for i in range(160)]  # 150 + 10
+        first = json.dumps({"results": [{"elevation": float(i)} for i in range(150)]}).encode("utf-8")
+        values, error = self._elevations(coords, [_FakeResponse(200, first), TimeoutError("timed out")])
+        self.assertEqual(values[:150], [float(i) for i in range(150)])
+        self.assertEqual(values[150:], [None] * 10)
+        self.assertIn("timed out", error)
 
 
 class DemBudgetTests(unittest.TestCase):

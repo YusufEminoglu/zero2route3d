@@ -7,7 +7,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-from .js_bundle import JsBundleError, module_to_classic, module_to_namespace
+from .js_bundle import JsBundleError, module_load_order, module_to_classic, module_to_namespace
 from .routing_engine import RouteResult3D
 
 
@@ -97,19 +97,12 @@ class StandaloneHtmlBundler:
             ),
         )
 
-        # First-party viewer modules: same treatment, one shared helper instead of
-        # per-file string surgery that silently no-ops when a name changes.
-        def _classic(filename: str) -> str:
-            path = self.web_dir / "js" / filename
-            if not path.exists():
-                raise JsBundleError(f"missing bundled asset: {path}")
-            return module_to_classic(path.read_text(encoding="utf-8"))
-
-        rig_js = _classic("KinematicAvatarRig.js")
-        slicer_js = _classic("TerrainSlicerSystem.js")
-        voice_js = _classic("VoiceCueSystem.js")
-
-        app_js_clean = _classic("app3d.js")
+        # First-party viewer modules: same treatment, in import order (each
+        # after the modules it imports), found by following app3d.js.
+        viewer_js = "\n".join(
+            module_to_classic((self.web_dir / "js" / name).read_text(encoding="utf-8"))
+            for name in module_load_order(self.web_dir / "js", "app3d.js")
+        )
 
         html_template = f"""<!DOCTYPE html>
 <html lang="en">
@@ -162,16 +155,7 @@ class StandaloneHtmlBundler:
 {controls_js}
   </script>
   <script type="text/javascript">
-{rig_js}
-  </script>
-  <script type="text/javascript">
-{slicer_js}
-  </script>
-  <script type="text/javascript">
-{voice_js}
-  </script>
-  <script type="text/javascript">
-{app_js_clean}
+{viewer_js}
 
   // Auto-load route data on startup
   window.addEventListener('DOMContentLoaded', () => {{
