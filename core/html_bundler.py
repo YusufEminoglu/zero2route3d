@@ -122,7 +122,8 @@ class StandaloneHtmlBundler:
   </style>
 </head>
 <body>
-  <div id="canvasContainer"></div>
+  <div id="canvasContainer" tabindex="0" role="application"
+       aria-label="3D route view. Drag to orbit. Space plays or pauses, arrow keys move along the route."></div>
 
   <div class="hud-panel top-hud">
     <div class="brand-section">
@@ -138,15 +139,17 @@ class StandaloneHtmlBundler:
   </div>
 
   <div class="hud-panel bottom-controls">
+    <div id="elevationChart" class="elevation-chart"></div>
     <div class="multi-metric-panel" id="multiMetricPanel">
       <div class="multi-metric-rows" id="multiMetricRows"></div>
     </div>
     <div class="player-scrubber-row">
-      <button class="btn-play" id="btnPlay" title="Play/Pause 3D Centerline Simulation">
-        <span id="playIcon">▶</span>
+      <button class="btn-play" id="btnPlay" title="Play/Pause (Space)" aria-label="Play" aria-pressed="false">
+        <span id="playIcon" aria-hidden="true">▶</span>
       </button>
       <div class="scrubber-container">
-        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0">
+        <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0"
+               aria-label="Position along the route">
       </div>
     </div>
   </div>

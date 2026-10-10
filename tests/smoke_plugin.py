@@ -589,6 +589,57 @@ def test_dock_settings_and_scenarios(iface):
     )
 
 
+def test_dock_payload_carries_dem_terrain(iface):
+    """With a DEM selected, the 3D payload holds a real terrain grid sampled from it."""
+    from osgeo import gdal, osr
+
+    from qgis.core import QgsProject, QgsRasterLayer
+    from zero2route3d.core.network_source import RoadSegment
+    from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+
+    tmp = tempfile.mkdtemp(prefix="zero2route3d-dem-")
+    path = os.path.join(tmp, "dem.tif")
+    cols, rows = 60, 60
+    ds = gdal.GetDriverByName("GTiff").Create(path, cols, rows, 1, gdal.GDT_Float32)
+    ds.SetGeoTransform((27.140, 0.0001, 0, 38.426, 0, -0.0001))
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    ds.SetProjection(srs.ExportToWkt())
+    band = ds.GetRasterBand(1)
+    # Height rises 1 m per row towards the south: 100 m at the north edge.
+    band.WriteArray(__import__("numpy").array([[100.0 + r for _ in range(cols)] for r in range(rows)], dtype="float32"))
+    band.SetNoDataValue(-9999)
+    ds = None
+    dem = QgsRasterLayer(path, "smoke dem")
+    QgsProject.instance().addMapLayer(dem)
+
+    dock = Route3DStudioDock(iface=iface)
+    dock.cmb_dem_layer.setLayer(dem)
+    pts = [(27.1420 + i * 0.0004, 38.4230, 0.0) for i in range(6)]
+    engine = RoutingEngine3D(sampler=dock._create_surface_sampler())
+    engine.build_graph([RoadSegment(p1=a, p2=b, length_m=35.0) for a, b in zip(pts, pts[1:])])
+    result = engine.calculate_route([Waypoint(27.1421, 38.4231), Waypoint(27.1439, 38.4231)], compute_alternatives=False)
+    dock.multi_route_results = {"adult": result}
+    dock.current_route_result = result
+    payload = dock._build_web_route_payload(result)
+    terrain = payload["properties"].get("terrain")
+    ok = bool(terrain) and len(terrain["heights"]) == terrain["cols"] * terrain["rows"]
+    north_first = ok and terrain["heights"][0] < terrain["heights"][-1]
+    in_range = ok and 100.0 <= min(terrain["heights"]) and max(terrain["heights"]) <= 160.0
+    single_copy = all("corridor_buildings" not in f["properties"] for f in payload["features"])
+    dock.teardown()
+    dock.deleteLater()
+    QgsApplication.processEvents()
+    QgsProject.instance().removeMapLayer(dem.id())
+    return _ok(
+        "3D payload carries a DEM terrain grid",
+        ok and north_first and in_range and single_copy,
+        f"grid={terrain and (terrain['cols'], terrain['rows'], terrain['cell_m'])} north_first={north_first} "
+        f"in_range={in_range} single_copy={single_copy}",
+    )
+
+
 def run_all(iface):
     print("=" * 60)
     print(" zero2route3d - lifecycle & GUI component audit tests")
@@ -608,6 +659,7 @@ def run_all(iface):
         test_dock_point_ab_layers(iface),
         test_dock_route_runs_in_background(iface),
         test_dock_settings_and_scenarios(iface),
+        test_dock_payload_carries_dem_terrain(iface),
         test_cartographic_themes_in_qgis(iface),
         test_standalone_html_bundler_qgis(iface),
         test_processing_algorithms_load(),
