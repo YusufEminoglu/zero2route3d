@@ -63,6 +63,7 @@ from ..core.copernicus_eo_suite import (
     CorridorElevationSuite,
     apply_environmental_raster_symbology,
 )
+from ..core.dem_fetcher import GlobalDemFetcher
 from ..core.environmental_raster import EnvironmentalSurfaceSampler, MCDAWeights
 from ..core.mobility_profiles import (
     PROFILES,
@@ -1829,7 +1830,12 @@ class Route3DStudioDock(QDockWidget):
 
         if not roads and not buildings and not trees:
             if self.iface:
-                self.iface.messageBar().pushWarning("02Route 3D", "No OSM elements found in current bounding box.")
+                reason = OsmDataFetcher.last_error
+                message = (
+                    f"OpenStreetMap download failed: {reason}" if reason
+                    else "No OSM elements found in current bounding box."
+                )
+                self.iface.messageBar().pushWarning("02Route 3D", message)
             return
 
         self._load_osm_layers_into_qgis(roads, buildings, trees, parks)
@@ -1867,7 +1873,10 @@ class Route3DStudioDock(QDockWidget):
             return
 
         if not results:
-            message = "No elevation layer could be generated for the active extent."
+            reason = GlobalDemFetcher.last_error
+            message = "No elevation layer could be generated for the active extent" + (
+                f" (Open-Elevation: {reason})." if reason else "."
+            )
             if self.iface:
                 self.iface.messageBar().pushWarning("02Route 3D", message)
             else:

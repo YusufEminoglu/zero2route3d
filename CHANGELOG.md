@@ -5,6 +5,43 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-09
+
+Roadmap phase 1: routes are correct for every profile (see docs/ROADMAP.md).
+
+### Fixed
+- One-way streets were one-way for everyone: the reverse edge was never built,
+  so pedestrians could not walk against traffic and `oneway:bicycle=no`
+  contra-flow lanes were ignored. Direction is now a per-mode access decision
+  (`oneway`, `oneway:bicycle`, `oneway:foot`).
+- Wheelchair and stroller slope limits were only a penalty; slopes above the
+  8.33 % (1:12) ramp maximum, or 10 % for strollers, are now impassable.
+  Custom profile JSON keeps its road-class weights (the keys came back as
+  strings and were ignored).
+- Pareto routes: the time bound assumed 1.5x base speed, slower than real top
+  speeds (bikes downhill, cars on motorways), so the fastest route could be
+  wrong; it now comes from each profile's speed model. Epsilon dominance was
+  inverted; heap entries carry their label instead of matching it by time;
+  a truncated search is reported.
+- Nodes without elevation were set to 0 m, creating cliffs at the edge of DEM
+  coverage; they now take the mean height of their neighbours. Slopes from
+  DEM heights are measured over at least 10 m, so DEM noise on short
+  segments no longer reads as 30-50 % grades.
+- Vehicles ignored posted speed limits: `maxspeed` now raises cost and
+  travel time where it is below the road class speed.
+- Map matching projected on raw degrees, kept the first ten candidates rather
+  than the nearest, and compared straight-line rather than network distance;
+  it now uses an edge grid index too.
+- Alternative routes forbade every primary edge and failed where the route
+  crossed the only bridge; primary edges are now penalised (x4).
+- Overpass and Open-Elevation errors were swallowed and reported as "no OSM
+  elements found"; the real cause is now shown.
+- The local viewer server sent `Access-Control-Allow-Origin: *`, letting any
+  web page read the current route from localhost.
+- `QAction` import for QGIS 4 / Qt6.
+- Solar exposure field aliases pointed at non-existent fields; the viewer's
+  "shade & greenery" scenario showed the senior route regardless.
+
 ## [0.4.1] - 2026-10-09
 
 ### Changed

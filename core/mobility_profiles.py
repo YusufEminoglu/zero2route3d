@@ -30,6 +30,11 @@ class MobilityProfile:
     hierarchy_weights: Dict[int, float] = field(default_factory=dict)  # Hierarchy rank (1-5) multipliers
     description: str = ""
     icon_name: str = "adult"
+    # Absolute slope limit (percent). Above max_slope_pct a pedestrian edge is
+    # only penalised; above this limit it is impassable. Set for the
+    # accessibility profiles, where a too-steep ramp is a barrier, not a detour
+    # preference (ADA / ISO 21542 maximum ramp gradient 1:12 = 8.33 %).
+    hard_slope_limit_pct: Optional[float] = None
 
     def min_cost_per_metre(self) -> float:
         """Smallest impedance this profile can charge for one metre of edge.
@@ -63,8 +68,15 @@ class MobilityProfile:
         lst_normalized: Optional[float] = None,
         green_normalized: Optional[float] = None,
         custom_weights: Optional[Dict[str, float]] = None,
+        maxspeed_kmh: Optional[float] = None,
     ) -> float:
-        """Calculate generalized impedance (cost) for traversing a segment under this profile."""
+        """Calculate generalized impedance (cost) for traversing a segment under this profile.
+
+        For vehicles, a posted speed limit below the road class's modelled
+        free-flow speed raises the cost in proportion (a 30 km/h residential
+        street costs more than the class default). The factor is never below
+        1, so the A* heuristic (min_cost_per_metre) stays admissible.
+        """
         len_m = float(length_m) if math.isfinite(length_m) and length_m > 0 else 0.01
         s_pct = float(slope_pct) if math.isfinite(slope_pct) else 0.0
         sq = max(0.0, min(1.0, float(surface_quality))) if math.isfinite(surface_quality) else 0.8
@@ -94,6 +106,9 @@ class MobilityProfile:
         # 1. Slope Penalty
         abs_slope = abs(s_pct)
         max_s = max(1.0, self.max_slope_pct) if math.isfinite(self.max_slope_pct) else 25.0
+        hard = self.hard_slope_limit_pct
+        if hard is not None and math.isfinite(hard) and abs_slope > max(max_s, float(hard)):
+            return float("inf")
         if abs_slope > max_s:
             if self.category != "pedestrian":
                 return float("inf")
@@ -132,7 +147,18 @@ class MobilityProfile:
         if not math.isfinite(hier_mult) or hier_mult <= 0:
             hier_mult = 1.0
 
-        cost = len_m * slope_mult * stair_mult * smooth_mult * thermal_mult * hier_mult
+        # 6. Posted speed limit (vehicles only).
+        speed_mult = 1.0
+        if self.category == "vehicle" and maxspeed_kmh is not None:
+            limit = float(maxspeed_kmh)
+            if math.isfinite(limit) and limit > 0:
+                from .kinematics import vehicle_free_flow_speed
+
+                free_flow = vehicle_free_flow_speed(hierarchy_rank, base_vehicle_speed_kmh=self.base_speed_kmh)
+                if limit < free_flow:
+                    speed_mult = free_flow / limit
+
+        cost = len_m * slope_mult * stair_mult * smooth_mult * thermal_mult * hier_mult * speed_mult
         if math.isinf(cost):
             return float("inf")
         if not math.isfinite(cost) or cost <= 0:
@@ -144,8 +170,14 @@ class MobilityProfile:
         length_m: float,
         slope_pct: float = 0.0,
         hierarchy_rank: int = 4,
+        maxspeed_kmh: Optional[float] = None,
+        lanes: Optional[int] = None,
     ) -> float:
-        """Estimate physically consistent travel time for one network edge."""
+        """Estimate physically consistent travel time for one network edge.
+
+        Vehicles drive at the road class's free-flow speed, capped by the
+        posted limit when the network carries one.
+        """
         from .kinematics import (
             cyclist_speed,
             scooter_speed,
@@ -163,7 +195,12 @@ class MobilityProfile:
         elif self.key == "scooter":
             speed_kmh = scooter_speed(slope_fraction, self.base_speed_kmh)
         else:
-            speed_kmh = vehicle_free_flow_speed(hierarchy_rank, slope_pct=slope, base_vehicle_speed_kmh=self.base_speed_kmh)
+            lane_count = int(lanes) if isinstance(lanes, (int, float)) and math.isfinite(lanes) and lanes > 0 else 2
+            speed_kmh = vehicle_free_flow_speed(
+                hierarchy_rank, lanes=lane_count, slope_pct=slope, base_vehicle_speed_kmh=self.base_speed_kmh
+            )
+            if maxspeed_kmh is not None and math.isfinite(float(maxspeed_kmh)) and float(maxspeed_kmh) > 0:
+                speed_kmh = min(speed_kmh, float(maxspeed_kmh))
         speed_mps = max(0.2, speed_kmh * 1000.0 / 3600.0)
         return length / speed_mps
 
@@ -172,7 +209,12 @@ class MobilityProfile:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> MobilityProfile:
-        return cls(**data)
+        known = set(cls.__dataclass_fields__)
+        values = {k: v for k, v in data.items() if k in known}
+        # JSON object keys are strings; the cost model looks ranks up as ints.
+        weights = values.get("hierarchy_weights") or {}
+        values["hierarchy_weights"] = {int(k): float(v) for k, v in weights.items()}
+        return cls(**values)
 
 
 # -------------------------------------------------------------------------
@@ -241,8 +283,9 @@ PROFILES: Dict[str, MobilityProfile] = {
         green_preference=0.7,
         surface_smoothness_req=0.8,
         hierarchy_weights={1: 3.5, 2: 2.0, 3: 1.3, 4: 1.0, 5: 0.9},
-        description="Strictly avoids steps; enforces smooth pavement and gentle ramps (max 6% grade).",
+        description="Strictly avoids steps; prefers smooth pavement and gentle ramps (6% grade); never routes over slopes steeper than 10%.",
         icon_name="stroller",
+        hard_slope_limit_pct=10.0,
     ),
     "wheelchair": MobilityProfile(
         key="wheelchair",
@@ -257,8 +300,9 @@ PROFILES: Dict[str, MobilityProfile] = {
         green_preference=0.6,
         surface_smoothness_req=0.9,
         hierarchy_weights={1: 3.0, 2: 1.8, 3: 1.2, 4: 1.0, 5: 0.9},
-        description="Strict universal accessibility: zero stairs, max 5% slope tolerance, smooth continuous surfaces.",
+        description="Strict universal accessibility: zero stairs, smooth continuous surfaces, slopes above 5% strongly avoided and never steeper than the 8.33% (1:12) ramp maximum.",
         icon_name="wheelchair",
+        hard_slope_limit_pct=8.33,
     ),
     "jogger": MobilityProfile(
         key="jogger",

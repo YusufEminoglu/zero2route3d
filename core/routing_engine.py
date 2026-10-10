@@ -20,6 +20,36 @@ from .profile_stats import (
 from .tsp_solver import solve_tsp_order
 
 
+# Shortest horizontal run (m) over which an edge slope is measured. DEM heights
+# are smooth over a few cells only; vertex heights from a 3D network are exact.
+DEM_MIN_RUN_M = 10.0
+VERTEX_MIN_RUN_M = 1.0
+# Cost multiplier on the primary route's edges when searching an alternative.
+ALTERNATIVE_PENALTY = 4.0
+
+
+def _distinct_route(primary, alternative, max_shared: float = 0.9) -> bool:
+    """True when less than max_shared of the alternative's length repeats the primary."""
+    def edges(coords):
+        keys = set()
+        for a, b in zip(coords, coords[1:]):
+            ka = (round(a[0], 5), round(a[1], 5))
+            kb = (round(b[0], 5), round(b[1], 5))
+            keys.add((min(ka, kb), max(ka, kb)))
+        return keys
+
+    shared_keys = edges(primary)
+    total = shared = 0.0
+    for a, b in zip(alternative, alternative[1:]):
+        d = haversine_distance_2d(a, b)
+        total += d
+        ka = (round(a[0], 5), round(a[1], 5))
+        kb = (round(b[0], 5), round(b[1], 5))
+        if (min(ka, kb), max(ka, kb)) in shared_keys:
+            shared += d
+    return total > 0 and shared / total < max_shared
+
+
 @dataclass
 class Waypoint:
     """Geographic stop point along the route."""
@@ -183,9 +213,16 @@ class RoutingEngine3D:
             key = (round(lon, 5), round(lat, 5))
             if key not in self.coord_to_node:
                 sampled_z = self.sampler.sample_elevation(lon, lat)
-                z = raw_z if raw_z != 0.0 else (sampled_z if sampled_z is not None else 0.0)
-                if not math.isfinite(z):
-                    z = 0.0
+                if raw_z != 0.0:
+                    z, source = raw_z, "vertex"
+                elif sampled_z is not None and math.isfinite(sampled_z):
+                    z, source = float(sampled_z), "dem"
+                else:
+                    # No elevation for this node: filled from its neighbours
+                    # below instead of 0 m, which turned the edge of DEM
+                    # coverage into cliffs.
+                    z, source = 0.0, "missing"
+                z_source[node_counter] = source
                 self.coord_to_node[key] = node_counter
                 self.nodes[node_counter] = (lon, lat, z)
                 self.adj[node_counter] = []
@@ -200,6 +237,21 @@ class RoutingEngine3D:
 
                 node_counter += 1
             return self.coord_to_node[key]
+
+        # First pass: create every node, then fill nodes without elevation from
+        # their neighbours, so edge slopes below are computed on final heights.
+        z_source: Dict[int, str] = {}
+        endpoint_pairs: List[Tuple[int, int]] = []
+        for seg in segments:
+            if not seg or len(seg.p1) < 2 or len(seg.p2) < 2:
+                continue
+            try:
+                if not all(math.isfinite(float(v)) for v in (*seg.p1[:2], *seg.p2[:2])):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            endpoint_pairs.append((get_or_create_node(seg.p1), get_or_create_node(seg.p2)))
+        missing_elevation = self._fill_missing_elevation(z_source, endpoint_pairs)
 
         edge_keys = set()
         for seg in segments:
@@ -245,7 +297,14 @@ class RoutingEngine3D:
             p2_z = self.nodes[v][2]
             dz = p2_z - p1_z
             dist_2d = haversine_distance_2d(self.nodes[u], self.nodes[v])
-            slope_pct = (dz / max(0.1, dist_2d)) * 100.0 if dist_2d > 0.1 else 0.0
+            # Heights sampled from a DEM (or filled) are only meaningful over a
+            # few raster cells: over a 1 m segment, half a metre of DEM noise
+            # is a 50 % "slope" that blocks wheelchairs and vehicles. Measure
+            # such slopes over at least DEM_MIN_RUN_M; heights carried by the
+            # network's own 3D vertices are trusted over shorter runs.
+            measured = z_source.get(u) == "vertex" and z_source.get(v) == "vertex"
+            run = max(dist_2d, VERTEX_MIN_RUN_M if measured else DEM_MIN_RUN_M)
+            slope_pct = (dz / run) * 100.0 if dist_2d > 0.1 else 0.0
             if not math.isfinite(slope_pct):
                 slope_pct = 0.0
 
@@ -267,6 +326,10 @@ class RoutingEngine3D:
                 "lit": getattr(seg, "lit", ""),
                 "sidewalk": getattr(seg, "sidewalk", ""),
                 "maxspeed_kmh": getattr(seg, "maxspeed_kmh", None),
+                "oneway": bool(seg.is_oneway),
+                "oneway_bicycle": getattr(seg, "oneway_bicycle", ""),
+                "oneway_foot": getattr(seg, "oneway_foot", ""),
+                "against_oneway": False,
             }
             self.adj[u].append((v, seg_len, slope_pct, meta_forward))
             weak_adj[u].add(v)
@@ -280,10 +343,16 @@ class RoutingEngine3D:
             ):
                 access_tagged_count += 1
 
-            if not seg.is_oneway:
-                meta_reverse = dict(meta_forward)
-                meta_reverse["slope_pct"] = -slope_pct
-                self.adj[v].append((u, seg_len, -slope_pct, meta_reverse))
+            # The reverse edge always exists: whether a mode may use it against
+            # a one-way street is a per-profile access decision
+            # (network_policy.evaluate_edge_access). Dropping it here made every
+            # one-way street one-way for pedestrians too, and ignored
+            # oneway:bicycle=no contra-flow lanes.
+            meta_reverse = dict(meta_forward)
+            meta_reverse["slope_pct"] = -slope_pct
+            meta_reverse["against_oneway"] = bool(seg.is_oneway)
+            meta_reverse["reverse_of_two_way"] = not seg.is_oneway
+            self.adj[v].append((u, seg_len, -slope_pct, meta_reverse))
 
         # Weakly connected components are used only for snapping. Traversability
         # remains directed in A*. The previous outgoing-only BFS made component
@@ -316,8 +385,50 @@ class RoutingEngine3D:
             "access_tagged_segments": access_tagged_count,
             "skipped_invalid_segments": skipped_invalid,
             "skipped_duplicate_segments": skipped_duplicate,
+            "elevation_filled_nodes": missing_elevation["filled"],
+            "elevation_missing_nodes": missing_elevation["unresolved"],
         }
         self._built = True
+
+    def _fill_missing_elevation(
+        self,
+        z_source: Dict[int, str],
+        pairs: Sequence[Tuple[int, int]],
+    ) -> Dict[str, int]:
+        """Give nodes without elevation the mean height of known neighbours.
+
+        Spreads outward ring by ring from nodes with a vertex or DEM height. A
+        component with no height anywhere stays at 0 m (flat), which is the
+        only honest choice without data; the count is reported in the graph
+        diagnostics.
+        """
+        missing = {n for n, src in z_source.items() if src == "missing"}
+        if not missing:
+            return {"filled": 0, "unresolved": 0}
+        neighbours: Dict[int, List[int]] = {}
+        for a, b in pairs:
+            if a == b:
+                continue
+            neighbours.setdefault(a, []).append(b)
+            neighbours.setdefault(b, []).append(a)
+        filled = 0
+        frontier = missing
+        while frontier:
+            resolved: Dict[int, float] = {}
+            for node in frontier:
+                known = [self.nodes[n][2] for n in neighbours.get(node, []) if n not in missing]
+                if known:
+                    resolved[node] = sum(known) / len(known)
+            if not resolved:
+                break
+            for node, z in resolved.items():
+                lon, lat, _ = self.nodes[node]
+                self.nodes[node] = (lon, lat, z)
+                z_source[node] = "filled"
+                missing.discard(node)
+            filled += len(resolved)
+            frontier = set(missing)
+        return {"filled": filled, "unresolved": len(missing)}
 
     def find_nearest_node(
         self,
@@ -411,8 +522,15 @@ class RoutingEngine3D:
         end_pt: Tuple[float, float],
         profile: MobilityProfile,
         avoid_edges: Optional[set] = None,
+        penalize_edges: Optional[set] = None,
+        penalty_factor: float = 1.0,
     ) -> Tuple[List[Tuple[float, float, float]], bool]:
-        """Compute A* least-cost path between single origin and destination pair."""
+        """Compute A* least-cost path between single origin and destination pair.
+
+        ``avoid_edges`` are forbidden; ``penalize_edges`` (either direction)
+        cost ``penalty_factor`` times more, which is how alternatives are found
+        without failing where the primary route uses the only bridge.
+        """
         if not self.nodes:
             self.last_segment_diagnostics = {"status": "empty_graph"}
             return [], False
@@ -449,6 +567,8 @@ class RoutingEngine3D:
         dest_coord = self.nodes[end_node]
         w_dict = self.weights.normalized_dict()
         avoid_set = avoid_edges or set()
+        penalized = penalize_edges or set()
+        penalty = max(1.0, float(penalty_factor)) if math.isfinite(penalty_factor) else 1.0
 
         # A* is only optimal when the heuristic never over-estimates the remaining
         # cost. g accumulates impedance, not metres, and impedance can be well
@@ -510,6 +630,7 @@ class RoutingEngine3D:
                     lst_normalized=lst_val,
                     green_normalized=green_val,
                     custom_weights=w_dict,
+                    maxspeed_kmh=meta.get("maxspeed_kmh"),
                 )
 
                 if not math.isfinite(edge_cost) or math.isinf(edge_cost) or edge_cost < 0:
@@ -524,6 +645,9 @@ class RoutingEngine3D:
                     extra_mean = sum(extra_values) / len(extra_values)
                     extra_factor = 1.0 + max(0.0, min(1.0, extra_mean)) * self.weights.weight_extra
                     edge_cost *= extra_factor
+
+                if penalized and ((u, v) in penalized or (v, u) in penalized):
+                    edge_cost *= penalty
 
                 tentative_g = cost + edge_cost
                 if tentative_g < g_scores.get(v, float("inf")):
@@ -759,13 +883,18 @@ class RoutingEngine3D:
             # The alternative must use the *requested* profile: routing a wheelchair
             # request as a scenic pedestrian path produced an "alternative" that could
             # cross stairs the primary profile forbids.
+            # Penalty method: edges of the primary route cost several times more
+            # instead of being forbidden, so an alternative is still found where
+            # the primary route crosses the only bridge, and it shares as little
+            # of the primary route as is reasonable.
             alt_coords, alt_matched = self.compute_segment_route(
                 (wp_list[0].lon, wp_list[0].lat),
                 (wp_list[1].lon, wp_list[1].lat),
                 profile,
-                avoid_edges=edge_set,
+                penalize_edges=edge_set,
+                penalty_factor=ALTERNATIVE_PENALTY,
             )
-            if alt_matched and len(alt_coords) > 2:
+            if alt_matched and len(alt_coords) > 2 and _distinct_route(all_coords, alt_coords):
                 alt_stats = compute_route_statistics(alt_coords, profile)
                 alternatives.append(
                     {

@@ -599,8 +599,17 @@ class Studio3DApp {
 
   switchScenario(scenarioKey) {
     this.activeScenario = scenarioKey;
-    const scenarioProfiles = { ada: 'wheelchair', cycle: 'bicycle', green: 'senior' };
-    const targetKey = scenarioProfiles[scenarioKey] || this.routeCollection?.properties?.primary_profile_key || this.activeProfileKey;
+    // Each scenario shows the first computed route among its profiles. The
+    // shade & greenery corridor prefers the scenic walk (strongest greenery
+    // preference), then the most heat-sensitive walkers.
+    const scenarioProfiles = {
+      ada: ['wheelchair', 'stroller'],
+      cycle: ['bicycle', 'mtb', 'scooter'],
+      green: ['sightseer', 'senior', 'jogger', 'child'],
+    };
+    const computed = new Set(this.routeFeatures.map((feature) => feature?.properties?.profile_key || 'adult'));
+    const preferred = (scenarioProfiles[scenarioKey] || []).find((key) => computed.has(key));
+    const targetKey = preferred || this.routeCollection?.properties?.primary_profile_key || this.activeProfileKey;
     if (targetKey && targetKey !== this.activeProfileKey && this.routeFeatures.some((feature) => (feature?.properties?.profile_key || 'adult') === targetKey)) {
       this.selectProfile(targetKey);
     } else {

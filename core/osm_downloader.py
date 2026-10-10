@@ -67,6 +67,10 @@ class OsmPark:
 class OsmDataFetcher:
     """Fetches real roads, building footprints, trees, and park greenery from OpenStreetMap Overpass API."""
 
+    # Why the last download returned nothing ("" when it succeeded), so the
+    # UI can tell "the server failed" apart from "this area has no data".
+    last_error: str = ""
+
     @staticmethod
     def fetch_roads_and_buildings(
         bbox: Tuple[float, float, float, float],
@@ -98,6 +102,7 @@ class OsmDataFetcher:
             return [], [], [], []
 
         to_sec = max(1, int(timeout_s)) if math.isfinite(timeout_s) and timeout_s > 0 else DEFAULT_TIMEOUT_S
+        OsmDataFetcher.last_error = ""
 
         query = f"""
         [out:json][timeout:{to_sec}];
@@ -118,7 +123,7 @@ class OsmDataFetcher:
         trees: List[OsmTree] = []
         parks: List[OsmPark] = []
 
-        with contextlib.suppress(Exception):
+        try:
             import urllib.parse
             body = urllib.parse.urlencode({"data": query}).encode("utf-8")
             headers = {
@@ -129,6 +134,8 @@ class OsmDataFetcher:
             try:
                 conn.request("POST", "/api/interpreter", body=body, headers=headers)
                 resp = conn.getresponse()
+                if resp.status != 200:
+                    OsmDataFetcher.last_error = f"Overpass returned HTTP {resp.status} {resp.reason}".strip()
                 if resp.status == 200:
                     raw_bytes = resp.read()
                     data = json.loads(raw_bytes.decode("utf-8"))
@@ -281,5 +288,7 @@ class OsmDataFetcher:
                                 )
             finally:
                 conn.close()
+        except Exception as exc:  # noqa: BLE001 - network/JSON failure is reported, not hidden
+            OsmDataFetcher.last_error = f"{type(exc).__name__}: {exc}"
 
         return roads, buildings, trees, parks

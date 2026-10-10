@@ -104,6 +104,7 @@ class IsochroneEngine3D:
                     is_steps=meta.get("is_steps", False),
                     surface_quality=surface_quality(meta.get("surface")),
                     hierarchy_rank=meta.get("hierarchy", 4),
+                    maxspeed_kmh=meta.get("maxspeed_kmh"),
                 )
                 if not math.isfinite(cost):
                     continue
@@ -112,6 +113,8 @@ class IsochroneEngine3D:
                     seg_len,
                     slope_pct=slope_pct,
                     hierarchy_rank=meta.get("hierarchy", 4),
+                    maxspeed_kmh=meta.get("maxspeed_kmh"),
+                    lanes=meta.get("lanes"),
                 )
                 tentative_t = t_curr + seg_time_s * access_decision.penalty
 

@@ -36,11 +36,19 @@ class ParetoCostVector:
     energy_kcal: float
 
     def dominates(self, other: ParetoCostVector, epsilon: float = 0.0) -> bool:
-        """Return True if self dominates other under approximate (1+eps) Pareto dominance."""
-        c1 = (1.0 + epsilon) * self.time_s <= other.time_s
-        c2 = (1.0 + epsilon) * self.ascent_m <= other.ascent_m
-        c3 = (1.0 + epsilon) * self.heat_dose <= other.heat_dose
-        c4 = (1.0 + epsilon) * self.energy_kcal <= other.energy_kcal
+        """Return True if self (1+eps)-dominates other.
+
+        Standard epsilon-dominance: self is no worse than (1 + eps) times other
+        in every objective (and, for exact dominance with eps = 0, strictly
+        better in at least one). (The previous
+        test, (1 + eps) * self <= other, made pruning stricter instead of
+        looser, so the label sets grew instead of shrinking.)
+        """
+        factor = 1.0 + max(0.0, epsilon)
+        c1 = self.time_s <= factor * other.time_s
+        c2 = self.ascent_m <= factor * other.ascent_m
+        c3 = self.heat_dose <= factor * other.heat_dose
+        c4 = self.energy_kcal <= factor * other.energy_kcal
 
         strictly_better = (
             self.time_s < other.time_s
@@ -48,7 +56,12 @@ class ParetoCostVector:
             or self.heat_dose < other.heat_dose
             or self.energy_kcal < other.energy_kcal
         )
-        return (c1 and c2 and c3 and c4) and strictly_better
+        if not (c1 and c2 and c3 and c4):
+            return False
+        # Exact dominance needs a strict improvement somewhere; with epsilon > 0
+        # a vector within the tolerance in every objective is close enough to
+        # stand in for the other (that is what keeps the frontier small).
+        return strictly_better or epsilon > 0
 
     def add(self, delta: ParetoCostVector) -> ParetoCostVector:
         return ParetoCostVector(
@@ -99,16 +112,40 @@ class ParetoFrontierResult:
     """Collection of all non-dominated routes along the Pareto frontier."""
 
     solutions: List[ParetoRouteSolution]
+    # Closeness of the knee solution to the ideal point (1 = ideal). Kept under
+    # its historical name; it is not a hypervolume.
     hypervolume_indicator: float
     profile_name: str
+    # True when the label search hit its iteration budget: the frontier is then
+    # a partial approximation and callers should say so.
+    search_truncated: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "solution_count": len(self.solutions),
             "hypervolume_indicator": round(self.hypervolume_indicator, 4),
+            "search_truncated": self.search_truncated,
             "profile_name": self.profile_name,
             "solutions": [s.to_dict() for s in self.solutions],
         }
+
+
+def _min_seconds_per_metre(profile: MobilityProfile) -> float:
+    """Lower bound on edge travel time per metre for a profile.
+
+    Takes the profile's own speed model over the slope range the graph can
+    produce and every road class, so the bound stays admissible however the
+    kinematics change. Access penalties only ever multiply time by >= 1.
+    """
+    best = math.inf
+    for rank in range(1, 6):
+        for slope in range(-40, 41, 2):
+            # Wide roads are modelled faster (up to +10 km/h for 5+ lanes).
+            t = profile.travel_time_seconds(1000.0, slope_pct=float(slope), hierarchy_rank=rank, lanes=8)
+            if math.isfinite(t) and t > 0:
+                best = min(best, t / 1000.0)
+    # Small safety margin for speeds between the sampled slopes.
+    return 0.95 * best if math.isfinite(best) else 0.0
 
 
 class ParetoMultiObjectiveRouter:
@@ -152,6 +189,8 @@ class ParetoMultiObjectiveRouter:
             length_m,
             slope_pct=slope_pct,
             hierarchy_rank=meta.get("hierarchy", 4),
+            maxspeed_kmh=meta.get("maxspeed_kmh"),
+            lanes=meta.get("lanes"),
         )
         ascent_m = dz
 
@@ -180,32 +219,34 @@ class ParetoMultiObjectiveRouter:
         """Compute the Pareto Frontier using multi-objective label propagation."""
         profile = get_profile(profile_key)
         dest_coord = self.nodes[end_node]
+        # Admissible time heuristic: straight-line distance at the fastest speed
+        # this profile can reach on any edge (downhill, best road class). The
+        # old bound, 1.5 x base speed, was slower than real top speeds (a bike
+        # downhill, a car on a motorway), so A* could return a slower route.
+        min_s_per_m = _min_seconds_per_metre(profile)
 
         def heuristic_time(u_coord: Tuple[float, float, float]) -> float:
-            d_m = haversine_distance_2d(u_coord, dest_coord)
-            max_spd_ms = (profile.base_speed_kmh * 1.5) * 1000.0 / 3600.0
-            return d_m / max_spd_ms
+            return haversine_distance_2d(u_coord, dest_coord) * min_s_per_m
 
-        labels_g: Dict[int, List[ParetoCostVector]] = {start_node: [ParetoCostVector(0, 0, 0, 0)]}
+        start_label = ParetoCostVector(0, 0, 0, 0)
+        labels_g: Dict[int, List[ParetoCostVector]] = {start_node: [start_label]}
         h0 = heuristic_time(self.nodes[start_node])
-        pq: List[Tuple[float, float, int, Tuple[int, ...]]] = [
-            (h0, 0.0, start_node, (start_node,))
+        tie = 0
+        # Heap entries carry the label object itself: matching a popped entry
+        # back to its label by comparing times could pick the wrong label.
+        pq: List[Tuple[float, int, int, ParetoCostVector, Tuple[int, ...]]] = [
+            (h0, tie, start_node, start_label, (start_node,))
         ]
-        
+
         dest_solutions: List[Tuple[ParetoCostVector, Tuple[int, ...]]] = []
         max_iters = 80_000
         iters = 0
 
         while pq and iters < max_iters:
             iters += 1
-            f_pri, g_time, u, path = heapq.heappop(pq)
-            g_vec = None
-            for cand in labels_g.get(u, []):
-                if abs(cand.time_s - g_time) < 1e-4:
-                    g_vec = cand
-                    break
-            if g_vec is None:
-                continue
+            _f, _tie, u, g_vec, path = heapq.heappop(pq)
+            if not any(label is g_vec for label in labels_g.get(u, [])):
+                continue  # pruned by a dominating label after it was queued
 
             if u == end_node:
                 is_dominated = any(
@@ -236,6 +277,7 @@ class ParetoMultiObjectiveRouter:
                     is_steps=meta.get("is_steps", False),
                     surface_quality=surface_quality(meta.get("surface")),
                     hierarchy_rank=meta.get("hierarchy", 4),
+                    maxspeed_kmh=meta.get("maxspeed_kmh"),
                 )
                 if not math.isfinite(resistance):
                     continue
@@ -261,12 +303,16 @@ class ParetoMultiObjectiveRouter:
                 labels_g[v].append(new_g)
 
                 h_val = heuristic_time(self.nodes[v])
-                heapq.heappush(pq, (new_g.time_s + h_val, new_g.time_s, v, path + (v,)))
+                tie += 1
+                heapq.heappush(pq, (new_g.time_s + h_val, tie, v, new_g, path + (v,)))
 
+        truncated = bool(pq) and iters >= max_iters
         if not dest_solutions:
-            return ParetoFrontierResult([], 0.0, profile.name)
+            return ParetoFrontierResult([], 0.0, profile.name, search_truncated=truncated)
 
-        return self._extract_archetypes(dest_solutions, profile)
+        result = self._extract_archetypes(dest_solutions, profile)
+        result.search_truncated = truncated
+        return result
 
     def _extract_archetypes(
         self,
