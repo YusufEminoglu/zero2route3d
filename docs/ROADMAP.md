@@ -68,6 +68,16 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 
 ## Faz 2 — Donmayan arayüz (QgsTask)
 
+> **Durum (Ekim 2026): 1–5 tamamlandı (v0.6.0); 6 kısmen.** Rotalama, OD
+> matrisi, OSM ve DEM indirmeleri QGIS görev yöneticisinde (ilerleme + iptal);
+> DEM 25.000 noktalık bütçeyle planlanıyor; Overpass parça parça okunduğu
+> için Processing iptali indirmeyi de durduruyor; ayarlar `QgsSettings`'te,
+> katman seçimleri projede; senaryolar `*.route3d.json` olarak kaydedilip
+> yükleniyor ve önceki çalıştırmayla karşılaştırılıyor. Görev katmanı
+> (`gui/tasks.py`) ve ayar/senaryo durumu (`gui/dock_state.py`) ayrıldı;
+> sekmelerin ayrı dosyalara bölünmesi Faz 3 ile birlikte sürecek. CI'da
+> QGIS 3.34 işi duman ve algoritma testlerini koşuyor (Faz 6.1'in ilk adımı).
+
 1. OSM indirme, DEM çekme ve rotalama `QgsTask`'a taşınır; ilerleme çubuğu,
    iptal, bitince sonuç. Şu an hepsi GUI iş parçacığında: "Tüm harita
    kapsamı DEM" şehir ölçeğinde ~4.000 sıralı istek atıp QGIS'i dakikalarca

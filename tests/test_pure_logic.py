@@ -1476,5 +1476,130 @@ class NetworkErrorReportingTests(unittest.TestCase):
         self.assertIn("timed out", OsmDataFetcher.last_error)
 
 
+class CancellationTests(unittest.TestCase):
+    """Background tasks and Processing feedback can stop downloads."""
+
+    def test_overpass_download_stops_between_chunks(self) -> None:
+        from zero2route3d.core.network_source import NetworkSourceCancelled
+
+        class Response:
+            def __init__(self) -> None:
+                self.reads = 0
+
+            def read(self, _size: int) -> bytes:
+                self.reads += 1
+                return b"x" * 10
+
+        resp = Response()
+        with self.assertRaises(NetworkSourceCancelled):
+            NetworkSourceManager._read_body(resp, is_canceled=lambda: resp.reads >= 2)
+        self.assertEqual(resp.reads, 2)
+
+    def test_cancelled_overpass_query_makes_no_request(self) -> None:
+        from unittest import mock
+        from zero2route3d.core.network_source import NetworkSourceCancelled
+
+        with mock.patch("http.client.HTTPSConnection") as conn:
+            with self.assertRaises(NetworkSourceCancelled):
+                NetworkSourceManager().require_segments(
+                    bbox=(12.3456, 45.6789, 12.3466, 45.6799), is_canceled=lambda: True
+                )
+        conn.assert_not_called()
+
+    def test_cancelled_dem_download_leaves_points_unresolved(self) -> None:
+        from unittest import mock
+        from zero2route3d.core.dem_fetcher import GlobalDemFetcher
+
+        coords = [(-170.0 + i * 1e-4, -80.0) for i in range(400)]
+        with mock.patch("http.client.HTTPSConnection") as conn:
+            values = GlobalDemFetcher.fetch_elevations_for_coords(coords, is_canceled=lambda: True)
+        conn.assert_not_called()
+        self.assertEqual(values, [None] * len(coords))
+
+
+class DemBudgetTests(unittest.TestCase):
+    def test_small_extent_keeps_requested_resolution(self) -> None:
+        from zero2route3d.core.copernicus_eo_suite import plan_dem_grid
+
+        plan = plan_dem_grid((27.14, 38.42, 27.15, 38.43))
+        self.assertFalse(plan["coarsened"])
+        self.assertLess(plan["res_m"], 40.0)
+        self.assertEqual(plan["points"], plan["width"] * plan["height"])
+
+    def test_city_extent_is_coarsened_to_the_budget(self) -> None:
+        from zero2route3d.core.copernicus_eo_suite import plan_dem_grid
+
+        for bbox in ((26.9, 38.3, 27.3, 38.6), (0.0, 0.0, 1.0, 0.01), (10.0, 50.0, 10.7, 50.7)):
+            plan = plan_dem_grid(bbox, max_points=25_000)
+            self.assertTrue(plan["coarsened"])
+            self.assertLessEqual(plan["points"], 25_000)
+            self.assertLessEqual(plan["requests"], 167)
+            # The grid still covers the whole extent.
+            self.assertGreaterEqual(plan["width"] * plan["res_deg"], (bbox[2] - bbox[0]) - 1e-9)
+            self.assertGreaterEqual(plan["height"] * plan["res_deg"], (bbox[3] - bbox[1]) - 1e-9)
+
+
+class ScenarioIoTests(unittest.TestCase):
+    def _scenario(self) -> dict:
+        from zero2route3d.core.scenario_io import build_scenario
+
+        return build_scenario(
+            inputs={"sliders": {"sld_slope": 60}},
+            layers={"cmb_dem_layer": "dem_1"},
+            points={"A": {"lon": 27.14, "lat": 38.42, "name": "Home"}, "B": {"lon": 27.15, "lat": 38.43}},
+            results={"adult": {"profile": "Adult", "distance_km": 2.0, "duration_min": 25.0, "climb_m": 10.0}},
+            name="morning",
+        )
+
+    def test_round_trip_through_a_file(self) -> None:
+        from zero2route3d.core.scenario_io import load_scenario, save_scenario
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.route3d.json"
+            save_scenario(path, self._scenario())
+            loaded = load_scenario(path)
+        self.assertEqual(loaded["name"], "morning")
+        self.assertEqual(loaded["points"]["A"], {"lon": 27.14, "lat": 38.42, "name": "Home"})
+        self.assertEqual(loaded["points"]["B"]["name"], "B")
+        self.assertEqual(loaded["layers"], {"cmb_dem_layer": "dem_1"})
+        self.assertEqual(loaded["results"]["adult"]["distance_km"], 2.0)
+        self.assertNotIn("max_slope_pct", loaded["results"]["adult"])
+
+    def test_rejects_foreign_or_broken_files(self) -> None:
+        from zero2route3d.core.scenario_io import ScenarioError, load_scenario, parse_scenario
+
+        with self.assertRaises(ScenarioError):
+            parse_scenario({"type": "FeatureCollection"})
+        bad_point = self._scenario()
+        bad_point["points"]["A"] = {"lon": 500, "lat": 0}
+        with self.assertRaises(ScenarioError):
+            parse_scenario(bad_point)
+        future = self._scenario()
+        future["version"] = 99
+        with self.assertRaises(ScenarioError):
+            parse_scenario(future)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(ScenarioError):
+                load_scenario(path)
+
+    def test_comparison_keeps_profiles_from_both_runs(self) -> None:
+        from zero2route3d.core.scenario_io import compare_runs
+
+        saved = {"adult": {"profile": "Adult", "distance_km": 2.0, "duration_min": 25.0}}
+        current = {
+            "adult": {"profile": "Adult", "distance_km": 2.5, "duration_min": 25.0},
+            "wheelchair": {"profile": "Wheelchair", "distance_km": 3.0},
+        }
+        rows = {(r["profile_key"], r["metric"]): r for r in compare_runs(saved, current)}
+        self.assertAlmostEqual(rows[("adult", "distance_km")]["delta"], 0.5)
+        self.assertAlmostEqual(rows[("adult", "distance_km")]["delta_pct"], 25.0)
+        self.assertEqual(rows[("adult", "duration_min")]["delta"], 0.0)
+        self.assertIsNone(rows[("wheelchair", "distance_km")]["saved"])
+        self.assertIsNone(rows[("wheelchair", "distance_km")]["delta"])
+        self.assertNotIn(("adult", "climb_m"), rows)
+
+
 if __name__ == "__main__":
     unittest.main()

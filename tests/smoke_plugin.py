@@ -479,6 +479,116 @@ def test_processing_algorithms_load():
     return _ok(f"All {len(algs)} Processing algorithm definitions verified", valid)
 
 
+def test_dock_route_runs_in_background(iface):
+    """compute_route returns at once; the route arrives from a QgsTask."""
+    import time
+
+    from zero2route3d.core.routing_engine import Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+    from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsProject, QgsVectorLayer
+
+    layer = QgsVectorLayer("LineString?crs=EPSG:4326&field=highway:string", "bg roads", "memory")
+    features = []
+    for i in range(4):
+        y = 38.4230 + i * 0.0008
+        for a, b in (((27.1420, y), (27.1460, y)),):
+            f = QgsFeature(layer.fields())
+            f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(*a), QgsPointXY(*b)]))
+            f.setAttributes(["residential"])
+            features.append(f)
+    for i in range(5):
+        x = 27.1420 + i * 0.001
+        f = QgsFeature(layer.fields())
+        f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(x, 38.4230), QgsPointXY(x, 38.4254)]))
+        f.setAttributes(["residential"])
+        features.append(f)
+    layer.dataProvider().addFeatures(features)
+    QgsProject.instance().addMapLayer(layer)
+
+    dock = Route3DStudioDock(iface=iface)
+    dock.point_a = Waypoint(lon=27.1421, lat=38.4231, name="A")
+    dock.point_b = Waypoint(lon=27.1459, lat=38.4253, name="B")
+    dock.cmb_route_road_layer.setLayer(layer)
+    dock.cmb_route_building_layer.setLayer(None)
+    # Skip the OSM building download: this test is about the task flow.
+    from zero2route3d.core.osm_downloader import OsmBuilding, OsmTree
+
+    dock.cached_osm_buildings = [OsmBuilding(
+        "b1", [(27.1430, 38.4240), (27.1432, 38.4240), (27.1432, 38.4242), (27.1430, 38.4242)], 12.0
+    )]
+    dock.cached_osm_trees = [OsmTree("t1", 27.1440, 38.4246)]
+
+    dock.compute_route()
+    started_in_background = bool(getattr(dock, "_computing", False))
+    deadline = time.time() + 60
+    while getattr(dock, "_computing", False) and time.time() < deadline:
+        QgsApplication.processEvents()
+        time.sleep(0.02)
+    result = dock.multi_route_results.get(dock.cmb_profile.currentData() or "adult")
+    routed = bool(result and result.coordinates_3d and result.statistics.total_distance_m > 300)
+    dock.teardown()
+    dock.deleteLater()
+    QgsApplication.processEvents()
+    QgsProject.instance().removeMapLayer(layer.id())
+    return _ok(
+        "Route calculation runs as a background QgsTask",
+        started_in_background and routed,
+        f"background={started_in_background} routed={routed}",
+    )
+
+
+def test_dock_settings_and_scenarios(iface):
+    """Inputs survive closing the dock; a scenario file restores points and compares runs."""
+    from zero2route3d.core.scenario_io import load_scenario, save_scenario
+    from zero2route3d.core.routing_engine import Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+
+    dock = Route3DStudioDock(iface=iface)
+    dock.sld_slope.setValue(77)
+    dock.cmb_profile.setCurrentIndex(dock.cmb_profile.findData("wheelchair"))
+    dock.teardown(remove_layers=False)
+    dock.deleteLater()
+
+    reopened = Route3DStudioDock(iface=iface)
+    restored = reopened.sld_slope.value() == 77 and reopened.cmb_profile.currentData() == "wheelchair"
+
+    reopened.point_a = Waypoint(lon=27.1421, lat=38.4231, name="Home")
+    reopened.point_b = Waypoint(lon=27.1459, lat=38.4253, name="Work")
+    scenario = reopened.build_current_scenario(name="smoke")
+    scenario["results"] = {"wheelchair": {"profile": "Wheelchair", "distance_km": 1.0, "duration_min": 20.0}}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "smoke.route3d.json"
+        save_scenario(path, scenario)
+        loaded = load_scenario(path)
+    reopened.point_a = reopened.point_b = None
+    reopened.sld_slope.setValue(10)
+    reopened.apply_scenario(loaded)
+    applied = (
+        reopened.point_a is not None
+        and reopened.point_a.name == "Home"
+        and reopened.point_b is not None
+        and reopened.sld_slope.value() == 77
+        and len(reopened.waypoints) == 2
+    )
+    dialog = reopened.show_scenario_comparison(
+        loaded, {"wheelchair": {"profile": "Wheelchair", "distance_km": 1.2, "duration_min": 21.0}}
+    )
+    table_rows = dialog.findChildren(type(reopened.table_od))[0].rowCount()
+    dialog.close()
+
+    # Back to defaults so later tests and runs start clean.
+    reopened.sld_slope.setValue(45)
+    reopened.cmb_profile.setCurrentIndex(0)
+    reopened.teardown()
+    reopened.deleteLater()
+    QgsApplication.processEvents()
+    return _ok(
+        "Dock settings persist; scenario save/load/compare",
+        restored and applied and table_rows == 2,
+        f"restored={restored} applied={applied} rows={table_rows}",
+    )
+
+
 def run_all(iface):
     print("=" * 60)
     print(" zero2route3d - lifecycle & GUI component audit tests")
@@ -496,6 +606,8 @@ def run_all(iface):
         test_dock_animation_playback(iface),
         test_dock_quick_mode_and_scenarios(iface),
         test_dock_point_ab_layers(iface),
+        test_dock_route_runs_in_background(iface),
+        test_dock_settings_and_scenarios(iface),
         test_cartographic_themes_in_qgis(iface),
         test_standalone_html_bundler_qgis(iface),
         test_processing_algorithms_load(),
