@@ -72,6 +72,11 @@ def plan_dem_grid(
         res = math.sqrt(d_lon * d_lat / budget)
     width = max(8, int(math.ceil(d_lon / res)))
     height = max(8, int(math.ceil(d_lat / res)))
+    # Rounding the grid up can overshoot the budget by a row or column.
+    while width * height > budget and (width > 8 or height > 8):
+        res *= 1.01
+        width = max(8, int(math.ceil(d_lon / res)))
+        height = max(8, int(math.ceil(d_lat / res)))
     mid_lat = math.radians((min_lat + max_lat) / 2.0)
     res_m = res * METRES_PER_DEGREE * math.sqrt(max(0.05, math.cos(mid_lat)))
     points = width * height

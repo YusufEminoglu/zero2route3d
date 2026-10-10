@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=0.5.0
+version=0.6.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -45,6 +45,13 @@ hasProcessingProvider=yes
 license=GPL-2.0-or-later
 
 changelog=
+    0.6.0 - QGIS no longer freezes:
+        - Route calculation, the OD matrix, OpenStreetMap downloads and the DEM download run in the background with progress and a cancel button in the QGIS task bar.
+        - DEM download budget: large extents use a coarser grid (the real cell size is shown in the layer name) and ask before many requests or when a DEM layer is already selected.
+        - Processing algorithms can be cancelled during the OpenStreetMap download.
+        - The dock remembers profiles, weights and playback settings between sessions; layer choices are saved in the project.
+        - Scenarios: save points, profiles, weights and results to a JSON file, load them later and compare the new routes with the saved run.
+
     0.5.0 - Correct routes for every profile:
         - Pedestrians may walk against one-way streets; cyclists only where oneway:bicycle=no; vehicles never.
         - Wheelchair and stroller routes never use slopes above 8.33 % / 10 % (previously only penalised).

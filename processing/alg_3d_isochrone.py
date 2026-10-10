@@ -143,7 +143,9 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         bbox = (center.x() - deg_lon, center.y() - deg_lat, center.x() + deg_lon, center.y() + deg_lat)
 
         try:
-            segments = NetworkSourceManager().require_segments(vector_layer=net_layer, bbox=bbox)
+            segments = NetworkSourceManager().require_segments(
+                vector_layer=net_layer, bbox=bbox, is_canceled=getattr(feedback, "isCanceled", None)
+            )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
 

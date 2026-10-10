@@ -372,7 +372,7 @@
             <a href="index.html" class="nav-brand">
                 <span class="logo-dot"></span>
                 02Route 3D
-                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.5.0</span>
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--kinetic-cyan-light); font-weight:600; margin-left:0.4rem;">Manual v0.6.0</span>
             </a>
             <ul class="nav-links">
                 <li><a href="index.html">← Landing &amp; Interactive Labs</a></li>
@@ -419,7 +419,7 @@
                     <ul style="list-style:none; display:flex; flex-direction:column; gap:1rem;">
                         <li><strong>1. Core Graph Engine:</strong> Builds 3D topological graphs draped with continuous elevation values from digital elevation models (DEMs). Features bicubic Catmull-Rom spline sampling, A* search, and Dijkstra wavefront propagation.</li>
                     <li><strong>2. Processing Provider:</strong> Exposes 15 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
-                        <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation.</li>
+                        <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation. Route calculation, the OD matrix and the OSM/DEM downloads run as QGIS background tasks: watch the progress and cancel them from the task bar at the bottom of the QGIS window. The dock remembers profiles, weights and playback settings; layer choices are saved with the project. <em>Save Scenario</em> writes points, profiles, weights and the route results to a <code>*.route3d.json</code> file; <em>Load Scenario</em> restores them and compares the saved run with the current (or next) routes.</li>
                         <li><strong>4. Embedded WebGL 3D Studio:</strong> A dedicated Three.js cockpit embedded within QGIS via <code>QWebEngineView</code> or local browser for  hardware-accelerated 3D inspection.</li>
                     </ul>
                 </div>

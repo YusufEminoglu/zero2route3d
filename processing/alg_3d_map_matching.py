@@ -123,6 +123,7 @@ class MapMatching3DAlgorithm(QgsProcessingAlgorithm):
             segments = net_mgr.require_segments(
                 vector_layer=net_layer,
                 bbox=rect_to_wgs84_bbox(bbox, source_track.sourceCrs(), context),
+                is_canceled=getattr(feedback, "isCanceled", None),
             )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc

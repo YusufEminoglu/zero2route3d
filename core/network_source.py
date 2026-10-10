@@ -15,7 +15,7 @@ import tempfile
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .kinematics import haversine_distance_2d
 from .input_validation import normalize_bbox
@@ -55,6 +55,14 @@ class NetworkSourceError(RuntimeError):
     """Raised when no usable real network can be loaded for an operation."""
 
 
+class NetworkSourceCancelled(NetworkSourceError):
+    """Raised when the caller cancelled an OpenStreetMap download."""
+
+
+# Overpass responses are read in pieces so a cancel takes effect mid-download.
+_READ_CHUNK_BYTES = 64 * 1024
+
+
 class NetworkSourceManager:
     """Acquires, caches, geocodes, and parses topological road networks."""
 
@@ -81,6 +89,7 @@ class NetworkSourceManager:
         self,
         bbox: Tuple[float, float, float, float],
         buffer_ratio: float = 0.15,
+        is_canceled: Optional[Callable[[], bool]] = None,
     ) -> List[RoadSegment]:
         """Fetch OSM highway ways within bbox using Overpass API with disk caching.
 
@@ -118,7 +127,7 @@ class NetworkSourceManager:
 
         if not data:
             query = f"""[out:json][timeout:25];(way["highway"]({s:.5f},{w:.5f},{n:.5f},{e:.5f}););out body;>;out skel qt;"""
-            data = self._query_overpass(query)
+            data = self._query_overpass(query, is_canceled=is_canceled)
             if data and isinstance(data, dict) and "elements" in data:
                 with contextlib.suppress(Exception):
                     temp_cache = cache_file.with_suffix(".tmp")
@@ -146,8 +155,13 @@ class NetworkSourceManager:
         self,
         vector_layer: Any = None,
         bbox: Optional[Tuple[float, float, float, float]] = None,
+        is_canceled: Optional[Callable[[], bool]] = None,
     ) -> List[RoadSegment]:
-        """Load a real network from a QGIS line layer or OSM, never fabricated data."""
+        """Load a real network from a QGIS line layer or OSM, never fabricated data.
+
+        ``is_canceled`` (e.g. ``feedback.isCanceled``) stops an OSM download
+        between reads with :class:`NetworkSourceCancelled`.
+        """
         if vector_layer is not None:
             segments = self.extract_from_qgis_layer(vector_layer)
             if not segments:
@@ -160,9 +174,11 @@ class NetworkSourceManager:
             raise NetworkSourceError(
                 "No network source was provided. Select a QGIS line layer or enable OSM download."
             )
-        return self.fetch_osm_network_bbox(bbox)
+        return self.fetch_osm_network_bbox(bbox, is_canceled=is_canceled)
 
-    def _query_overpass(self, query: str) -> Dict[str, Any] | None:
+    def _query_overpass(
+        self, query: str, is_canceled: Optional[Callable[[], bool]] = None
+    ) -> Dict[str, Any] | None:
         """Safe HTTPS POST to Overpass API without generic urlopen."""
         endpoints = [
             ("overpass-api.de", "/api/interpreter"),
@@ -176,13 +192,15 @@ class NetworkSourceManager:
 
         self.last_overpass_errors = []
         for host, path in endpoints:
+            if is_canceled is not None and is_canceled():
+                raise NetworkSourceCancelled("The OpenStreetMap download was cancelled.")
             try:
                 conn = http.client.HTTPSConnection(host, timeout=12)
                 try:
                     conn.request("POST", path, body=body, headers=headers)
                     resp = conn.getresponse()
                     if resp.status == 200:
-                        raw = resp.read().decode("utf-8")
+                        raw = self._read_body(resp, is_canceled).decode("utf-8")
                         parsed = json.loads(raw)
                         if isinstance(parsed, dict):
                             return parsed
@@ -191,9 +209,23 @@ class NetworkSourceManager:
                         self.last_overpass_errors.append(f"{host}: HTTP {resp.status} {resp.reason}".strip())
                 finally:
                     conn.close()
+            except NetworkSourceCancelled:
+                raise
             except Exception as exc:  # noqa: BLE001 - reported to the user below
                 self.last_overpass_errors.append(f"{host}: {type(exc).__name__}: {exc}")
         return None
+
+    @staticmethod
+    def _read_body(resp: Any, is_canceled: Optional[Callable[[], bool]] = None) -> bytes:
+        """Read an HTTP response in chunks, stopping if the caller cancels."""
+        parts: List[bytes] = []
+        while True:
+            if is_canceled is not None and is_canceled():
+                raise NetworkSourceCancelled("The OpenStreetMap download was cancelled.")
+            chunk = resp.read(_READ_CHUNK_BYTES)
+            if not chunk:
+                return b"".join(parts)
+            parts.append(chunk)
 
     def _parse_osm_json(self, data: Dict[str, Any]) -> List[RoadSegment]:
         """Convert OSM JSON response elements into list of RoadSegments."""

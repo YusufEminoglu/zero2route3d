@@ -78,3 +78,28 @@ jobs:
       - name: Run the pure-logic suite
         working-directory: zero2route3d
         run: python -m pytest -o pythonpath=.. -q -p no:cacheprovider tests/test_pure_logic.py
+
+  # The GUI smoke suite and the Processing algorithm suite need a real QGIS.
+  # Ubuntu 24.04 ships QGIS 3.34 with Python bindings; Qt runs offscreen.
+  qgis-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: zero2route3d
+
+      - name: Install QGIS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-qgis qgis-providers
+
+      - name: Plugin smoke suite (dock, tasks, settings, scenarios)
+        working-directory: zero2route3d
+        run: /usr/bin/python3 tests/smoke_plugin.py
+
+      - name: Processing algorithm suite
+        run: /usr/bin/python3 zero2route3d/tests/test_algorithms_qgis.py

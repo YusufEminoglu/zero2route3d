@@ -152,7 +152,9 @@ class Compute3DRouteAlgorithm(QgsProcessingAlgorithm):
 
         bbox = (min(p1.x(), p2.x()), min(p1.y(), p2.y()), max(p1.x(), p2.x()), max(p1.y(), p2.y()))
         try:
-            segments = net_mgr.require_segments(vector_layer=net_layer, bbox=bbox)
+            segments = net_mgr.require_segments(
+                vector_layer=net_layer, bbox=bbox, is_canceled=getattr(feedback, "isCanceled", None)
+            )
         except Exception as exc:
             raise QgsProcessingException(str(exc)) from exc
 

@@ -71,6 +71,8 @@ class FunctionTask(QgsTask):
         except TaskCancelled:
             return False
         except Exception as exc:  # noqa: BLE001 - handed to the UI in finished()
+            if self.isCanceled():
+                return False  # a download stopped by the cancel; not an error
             self.error = str(exc) or type(exc).__name__
             QgsMessageLog.logMessage(f"{self.description()} failed: {self.error}", "02Route 3D")
             return False

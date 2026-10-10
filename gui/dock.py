@@ -13,6 +13,8 @@ from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
     QFrame,
@@ -59,6 +61,15 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas, QgsMapLayerComboBox
 
 from ..core.basemap import add_osm_basemap
+from .dock_state import (
+    apply_inputs,
+    apply_layers,
+    collect_inputs,
+    collect_layers,
+    restore_project_layers,
+    restore_settings,
+    save_settings,
+)
 from .tasks import FunctionTask, TaskContext, cancel_tasks, snapshot, start_task
 from ..core.copernicus_eo_suite import (
     CorridorElevationSuite,
@@ -84,6 +95,14 @@ from ..core.osm_styling import (
 from ..core.qml_generator import apply_multiprofile_categorized_renderer
 from ..core.route_corridor_3d import filter_corridor_assets_multi_route
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
+from ..core.scenario_io import (
+    ScenarioError,
+    build_scenario,
+    compare_runs,
+    load_scenario,
+    save_scenario,
+    summarize_statistics,
+)
 from .canvas_animator import Route2DCanvasAnimator
 from .cue_sheet_widget import CueSheetWidget
 from .map_tools import RoutePointMapTool
@@ -226,6 +245,10 @@ class Route3DStudioDock(QDockWidget):
         self._build_ui()
         apply_adaptive_theme(self.root_widget)
         QgsProject.instance().layersWillBeRemoved.connect(self._on_project_layers_removed)
+        # Inputs from the last session; layer choices from the project file.
+        restore_settings(self)
+        QgsProject.instance().readProject.connect(self._on_project_read)
+        QgsProject.instance().writeProject.connect(self._on_project_write)
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self.root_widget)
@@ -836,6 +859,21 @@ class Route3DStudioDock(QDockWidget):
         """)
         self.btn_open_3d.clicked.connect(self.open_3d_studio)
         act_layout.addWidget(self.btn_open_3d)
+
+        scenario_row = QHBoxLayout()
+        self.btn_save_scenario = QPushButton("💾 Save Scenario")
+        self.btn_save_scenario.setToolTip(
+            "Save points, profiles, weights, layer choices and the current results to a JSON file."
+        )
+        self.btn_save_scenario.clicked.connect(self.save_scenario_dialog)
+        scenario_row.addWidget(self.btn_save_scenario)
+        self.btn_load_scenario = QPushButton("📂 Load Scenario")
+        self.btn_load_scenario.setToolTip(
+            "Restore a saved scenario. If routes are computed, they are compared with the saved run."
+        )
+        self.btn_load_scenario.clicked.connect(self.load_scenario_dialog)
+        scenario_row.addWidget(self.btn_load_scenario)
+        act_layout.addLayout(scenario_row)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -1958,17 +1996,17 @@ class Route3DStudioDock(QDockWidget):
         """Message bar when running inside QGIS, a dialog otherwise."""
         if self.iface:
             bar = self.iface.messageBar()
-            {"success": bar.pushSuccess, "warning": bar.pushWarning}.get(level, bar.pushInfo)(
-                "02Route 3D", message
-            )
+            push = {"success": bar.pushSuccess, "warning": bar.pushWarning, "critical": bar.pushCritical}
+            push.get(level, bar.pushInfo)("02Route 3D", message)
         elif level == "warning":
             QMessageBox.warning(self, "02Route 3D", message)
+        elif level == "critical":
+            QMessageBox.critical(self, "02Route 3D", message)
 
     def _set_compute_busy(self, busy: bool) -> None:
         """Disable the compute buttons while a computation is running.
 
-        compute_route blocks the UI thread for seconds at a time (Overpass, DEM),
-        so a second click re-entered it on a frozen UI.
+        A second click while the background task runs would start a duplicate.
         """
         for name in ("btn_compute", "btn_quick_compute"):
             button = getattr(self, name, None)
@@ -2137,7 +2175,7 @@ class Route3DStudioDock(QDockWidget):
         ctx.progress(20)
         segments = job["layer_segments"]
         if segments is None:
-            segments = self.network_manager.require_segments(bbox=job["bbox"])
+            segments = self.network_manager.require_segments(bbox=job["bbox"], is_canceled=ctx.is_canceled)
         ctx.check()
 
         ctx.progress(35)
@@ -2189,6 +2227,7 @@ class Route3DStudioDock(QDockWidget):
             return
 
         self._show_route_results(result)
+        self._finish_scenario_comparison()
 
     def _show_route_results(self, result: RouteResult3D) -> None:
         """Show computed routes: KPIs, ribbons, cue sheet, layer, animation, 3D data."""
@@ -2425,37 +2464,71 @@ class Route3DStudioDock(QDockWidget):
             self._on_profile_changed(self.cmb_profile.currentIndex())
 
     def _compute_od_matrix(self) -> None:
+        """Compute the waypoint OD matrix in a background task."""
         if len(self.waypoints) < 2:
             return
-        sampler = EnvironmentalSurfaceSampler(
-            dem_layer=self.cmb_dem_layer.currentLayer(),
-            lst_layer=self.cmb_lst_layer.currentLayer(),
-            green_layer=self.cmb_green_layer.currentLayer(),
-            additional_layers=self._selected_extra_raster_layers(),
-        )
-        engine = RoutingEngine3D(sampler=sampler)
+        if getattr(self, "_od_task_running", False):
+            self._notify("info", "An OD matrix calculation is already running.")
+            return
         lons = [w.lon for w in self.waypoints]
         lats = [w.lat for w in self.waypoints]
         bbox = (min(lons), min(lats), max(lons), max(lats))
+        layer_segments = None
         selected_road_layer = self.cmb_route_road_layer.currentLayer()
-        try:
-            segments = self.network_manager.require_segments(
-                vector_layer=selected_road_layer if selected_road_layer and selected_road_layer.isValid() else None,
-                bbox=bbox,
-            )
-        except NetworkSourceError as exc:
-            self._show_route_error(str(exc))
-            return
-        engine.build_graph(segments)
+        if selected_road_layer is not None and selected_road_layer.isValid():
+            try:
+                layer_segments = self.network_manager.require_segments(vector_layer=selected_road_layer)
+            except NetworkSourceError as exc:
+                self._show_route_error(str(exc))
+                return
+        sampler = EnvironmentalSurfaceSampler(
+            dem_layer=snapshot(self.cmb_dem_layer.currentLayer()),
+            lst_layer=snapshot(self.cmb_lst_layer.currentLayer()),
+            green_layer=snapshot(self.cmb_green_layer.currentLayer()),
+            additional_layers=[
+                snap for snap in (snapshot(layer) for layer in self._selected_extra_raster_layers()) if snap
+            ],
+        )
+        waypoints = list(self.waypoints)
+        profile_key = self.cmb_profile.currentData() or "adult"
+        manager = self.network_manager
 
-        rows = engine.calculate_od_matrix(self.waypoints, self.waypoints, profile_key=self.cmb_profile.currentData() or "adult")
-        self.table_od.setRowCount(len(rows))
-        for idx, r in enumerate(rows):
-            self.table_od.setItem(idx, 0, QTableWidgetItem(r["origin_name"]))
-            self.table_od.setItem(idx, 1, QTableWidgetItem(r["dest_name"]))
-            self.table_od.setItem(idx, 2, QTableWidgetItem(f"{r['distance_km']:.2f}"))
-            self.table_od.setItem(idx, 3, QTableWidgetItem(f"{r['duration_min']:.1f}"))
-            self.table_od.setItem(idx, 4, QTableWidgetItem(f"{r['climb_m']:.1f}"))
+        def work(ctx: TaskContext) -> Any:
+            segments = layer_segments
+            if segments is None:
+                segments = manager.require_segments(bbox=bbox, is_canceled=ctx.is_canceled)
+            ctx.check()
+            engine = RoutingEngine3D(sampler=sampler)
+            engine.build_graph(segments)
+
+            def report(done: int, total: int) -> bool:
+                ctx.progress(100.0 * done / max(1, total))
+                return not ctx.is_canceled()
+
+            rows = engine.calculate_od_matrix(waypoints, waypoints, profile_key=profile_key, progress_callback=report)
+            ctx.check()
+            return rows
+
+        def done(rows: Any) -> None:
+            self._od_task_running = False
+            self.table_od.setRowCount(len(rows))
+            for idx, r in enumerate(rows):
+                self.table_od.setItem(idx, 0, QTableWidgetItem(r["origin_name"]))
+                self.table_od.setItem(idx, 1, QTableWidgetItem(r["dest_name"]))
+                self.table_od.setItem(idx, 2, QTableWidgetItem(f"{r['distance_km']:.2f}"))
+                self.table_od.setItem(idx, 3, QTableWidgetItem(f"{r['duration_min']:.1f}"))
+                self.table_od.setItem(idx, 4, QTableWidgetItem(f"{r['climb_m']:.1f}"))
+
+        def failed(message: str) -> None:
+            self._od_task_running = False
+            self._show_route_error(message)
+
+        def cancelled() -> None:
+            self._od_task_running = False
+            self._notify("info", "OD matrix calculation cancelled.")
+
+        self._od_task_running = True
+        start_task(self, FunctionTask("02Route 3D: OD matrix", work, done, failed, cancelled))
 
     def _create_surface_sampler(self, weights: Optional[MCDAWeights] = None) -> EnvironmentalSurfaceSampler:
         """Create surface sampler from active dock raster layers and MCDA weights."""
@@ -2669,6 +2742,7 @@ class Route3DStudioDock(QDockWidget):
         """
         # On plugin unload, running downloads/routing are cancelled and must not
         # call back into the deleted dock. Merely hiding the panel lets them finish.
+        save_settings(self)
         if remove_layers:
             cancel_tasks(self)
         if self.active_tool is not None and self.canvas is not None:
@@ -2688,6 +2762,10 @@ class Route3DStudioDock(QDockWidget):
                 QgsProject.instance().layersWillBeRemoved.disconnect(
                     self._on_project_layers_removed
                 )
+            with contextlib.suppress(Exception):
+                QgsProject.instance().readProject.disconnect(self._on_project_read)
+            with contextlib.suppress(Exception):
+                QgsProject.instance().writeProject.disconnect(self._on_project_write)
             self._remove_transient_project_layers()
 
         if hasattr(self, "local_server") and self.local_server:
@@ -2696,6 +2774,131 @@ class Route3DStudioDock(QDockWidget):
 
         with contextlib.suppress(OSError):
             self.current_route_file.unlink()
+
+    # ------------------------------------------------------------------
+    # Settings and scenarios
+    # ------------------------------------------------------------------
+    def _on_project_read(self, *_args: Any) -> None:
+        restore_project_layers(self)
+
+    def _on_project_write(self, *_args: Any) -> None:
+        # Runs before QGIS writes the project properties, so the entry is saved.
+        save_settings(self)
+
+    def _results_summary(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            key: summarize_statistics(result.profile.name, result.statistics)
+            for key, result in self.multi_route_results.items()
+            if result is not None and result.coordinates_3d
+        }
+
+    def build_current_scenario(self, name: str = "") -> Dict[str, Any]:
+        def point(waypoint: Optional[Waypoint]) -> Optional[Dict[str, Any]]:
+            if waypoint is None:
+                return None
+            return {"lon": waypoint.lon, "lat": waypoint.lat, "name": waypoint.name}
+
+        return build_scenario(
+            inputs=collect_inputs(self),
+            layers=collect_layers(self),
+            points={"A": point(self.point_a), "B": point(self.point_b)},
+            results=self._results_summary(),
+            name=name,
+        )
+
+    def apply_scenario(self, scenario: Dict[str, Any]) -> None:
+        """Restore the inputs of a parsed scenario (results are not recomputed)."""
+        apply_inputs(self, scenario.get("inputs") or {})
+        apply_layers(self, scenario.get("layers") or {})
+        points = scenario.get("points") or {}
+        for key in ("A", "B"):
+            value = points.get(key)
+            waypoint = Waypoint(lon=value["lon"], lat=value["lat"], name=value["name"]) if value else None
+            if key == "A":
+                self.point_a = waypoint
+            else:
+                self.point_b = waypoint
+        self.waypoints = [w for w in (self.point_a, self.point_b) if w is not None]
+        self._update_point_labels()
+        self._update_point_vector_layers()
+
+    def save_scenario_dialog(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save 02Route 3D Scenario", "", "02Route 3D Scenario (*.route3d.json *.json)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".route3d.json"
+        try:
+            save_scenario(Path(path), self.build_current_scenario(name=Path(path).stem))
+        except OSError as exc:
+            self._notify("critical", f"The scenario could not be saved: {exc}")
+            return
+        self._notify("success", f"Scenario saved to {path}")
+
+    def load_scenario_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load 02Route 3D Scenario", "", "02Route 3D Scenario (*.route3d.json *.json)"
+        )
+        if not path:
+            return
+        try:
+            scenario = load_scenario(Path(path))
+        except ScenarioError as exc:
+            self._notify("critical", str(exc))
+            return
+        current = self._results_summary()
+        self.apply_scenario(scenario)
+        if scenario["results"] and current:
+            self.show_scenario_comparison(scenario, current)
+        else:
+            self._notify(
+                "success",
+                f"Scenario '{scenario['name'] or Path(path).stem}' loaded. Compute the route to compare with it.",
+            )
+            self._loaded_scenario = scenario
+
+    def _finish_scenario_comparison(self) -> None:
+        """After a route finishes, compare it with a scenario loaded before the run."""
+        scenario = getattr(self, "_loaded_scenario", None)
+        if scenario and scenario.get("results"):
+            self._loaded_scenario = None
+            self.show_scenario_comparison(scenario, self._results_summary())
+
+    def show_scenario_comparison(self, scenario: Dict[str, Any], current: Dict[str, Dict[str, Any]]) -> QDialog:
+        rows = compare_runs(scenario.get("results") or {}, current)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Scenario comparison: {scenario.get('name') or 'saved run'}")
+        layout = QVBoxLayout(dialog)
+        saved_at = scenario.get("saved_at") or "unknown time"
+        layout.addWidget(QLabel(f"Saved run ({saved_at}) compared with the current routes."))
+        table = QTableWidget(len(rows), 5, dialog)
+        table.setHorizontalHeaderLabels(["Profile", "Metric", "Saved", "Current", "Change"])
+
+        def fmt(value: Any, unit: str) -> str:
+            return "—" if value is None else f"{value:.2f} {unit}"
+
+        for index, row in enumerate(rows):
+            change = "—"
+            if row["delta"] is not None:
+                change = f"{row['delta']:+.2f} {row['unit']}"
+                if row["delta_pct"] is not None:
+                    change += f" ({row['delta_pct']:+.1f}%)"
+            cells = (row["profile"], row["label"], fmt(row["saved"], row["unit"]), fmt(row["current"], row["unit"]), change)
+            for column, text in enumerate(cells):
+                table.setItem(index, column, QTableWidgetItem(text))
+        stretch = getattr(getattr(QHeaderView, "ResizeMode", QHeaderView), "Stretch", 1)
+        table.horizontalHeader().setSectionResizeMode(stretch)
+        layout.addWidget(table)
+        close_button = getattr(getattr(QDialogButtonBox, "StandardButton", QDialogButtonBox), "Close")
+        buttons = QDialogButtonBox(close_button, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.resize(640, 420)
+        dialog.show()
+        self._comparison_dialog = dialog
+        return dialog
 
     def closeEvent(self, event: Any) -> None:
         # Hiding the panel must not destroy the user's work. Full teardown only

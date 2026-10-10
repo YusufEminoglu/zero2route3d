@@ -5,6 +5,33 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-10
+
+Roadmap phase 2: QGIS stays responsive (see docs/ROADMAP.md).
+
+### Changed
+- Route calculation, the OD matrix, OpenStreetMap downloads and the global
+  DEM download run as QGIS background tasks with progress and cancel. Raster
+  layers are read through cloned providers; layers are added to the project
+  only on the main thread.
+- The global DEM download is planned against a 25,000-point budget. Large
+  extents get a coarser grid instead of thousands of sequential requests;
+  the layer name shows the real cell size, and the dock asks before more
+  than 40 requests or when a DEM layer is already selected.
+- Overpass responses are read in chunks, so cancelling a Processing
+  algorithm or a dock task stops the OpenStreetMap download.
+
+### Added
+- The dock remembers profile scope, focus profile, MCDA weights, playback
+  speed, auto-pan and the open tab (QGIS settings); layer choices are stored
+  in the project file.
+- Scenario files (`*.route3d.json`): points, profiles, weights, layer
+  choices and a per-profile result summary. Loading a scenario restores the
+  inputs and compares the saved run with the current routes (or with the
+  next route computed).
+- CI job that installs QGIS 3.34 on Ubuntu 24.04 and runs the plugin smoke
+  suite and the Processing algorithm suite.
+
 ## [0.5.0] - 2026-10-09
 
 Roadmap phase 1: routes are correct for every profile (see docs/ROADMAP.md).
