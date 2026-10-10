@@ -54,7 +54,7 @@ changelog=
 
     0.5.0 - Correct routes for every profile:
         - Pedestrians may walk against one-way streets; cyclists only where oneway:bicycle=no; vehicles never.
-        - Wheelchair and stroller routes never use slopes above 8.33 % / 10 % (previously only penalised).
+        - Wheelchair and stroller routes never use slopes above 8.33 percent / 10 percent (previously only penalised).
         - Pareto routes: admissible time bound from each profile's real top speed, correct epsilon dominance, and a warning when the search is cut short.
         - Nodes without elevation take their neighbours' height instead of 0 m; DEM slopes are measured over at least 10 m, so DEM noise on short segments no longer blocks routes.
         - Vehicles respect posted speed limits (maxspeed) in cost and travel time.

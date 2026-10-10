@@ -1476,6 +1476,19 @@ class NetworkErrorReportingTests(unittest.TestCase):
         self.assertIn("timed out", OsmDataFetcher.last_error)
 
 
+class MetadataTests(unittest.TestCase):
+    def test_every_metadata_value_survives_interpolation(self) -> None:
+        """The QGIS Hub reads metadata.txt with ConfigParser interpolation: a bare
+        '%' anywhere (e.g. in the changelog) rejects the upload."""
+        import configparser
+
+        parser = configparser.ConfigParser()
+        parser.read(Path(__file__).resolve().parent.parent / "metadata.txt", encoding="utf-8")
+        self.assertTrue(parser.has_section("general"))
+        for key in parser["general"]:
+            parser.get("general", key)  # raises InterpolationSyntaxError on a stray '%'
+
+
 class CancellationTests(unittest.TestCase):
     """Background tasks and Processing feedback can stop downloads."""
 
