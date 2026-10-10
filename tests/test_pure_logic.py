@@ -1519,27 +1519,26 @@ class RoutingPerformanceTests(unittest.TestCase):
         for profile_key in ("adult", "bicycle", "car", "wheelchair"):
             profile = get_profile(profile_key)
             for start, goal in ((nodes[0], nodes[-1]), (nodes[5], nodes[len(nodes) // 2]), (nodes[-3], nodes[40])):
-                tree, settled, _ = engine._search(start, profile, set(engine.nodes))
-                path, _visited, _ = engine._search(start, profile, {goal}, goal=goal)
-                if goal not in settled:
-                    self.assertNotIn(goal, path)
+                full = engine._search(start, profile, set(engine.nodes))
+                single = engine._search(start, profile, {goal}, goal=goal)
+                if goal not in full.settled:
+                    self.assertIsNone(single.path_to(goal))
                     continue
 
-                def cost(prev):
-                    """Sum of the cheapest evaluated edge along the predecessor chain."""
-                    total, node = 0.0, goal
+                def cost(node_path):
+                    """Edge costs plus turn impedance along a node path."""
                     table = engine._edge_table(profile)
-                    while node != start:
-                        parent = prev[node]
+                    total = 0.0
+                    for a, b in zip(node_path, node_path[1:]):
                         total += min(
                             entry[0]
-                            for edge, entry in zip(engine.adj[parent], table[parent])
-                            if edge[0] == node and entry is not None
+                            for edge, entry in zip(engine.adj[a], table[a])
+                            if edge[0] == b and entry is not None
                         )
-                        node = parent
-                    return total
+                    speed = profile.base_speed_kmh / 3.6
+                    return total + engine.path_turn_delay_s(node_path, profile) * speed
 
-                self.assertAlmostEqual(cost(path), cost(tree), places=6)
+                self.assertAlmostEqual(cost(single.path_to(goal)), cost(full.path_to(goal)), places=6)
 
     def test_planar_bound_never_exceeds_haversine(self) -> None:
         from zero2route3d.core.kinematics import haversine_distance_2d
@@ -1630,6 +1629,165 @@ class RoutingPerformanceTests(unittest.TestCase):
                 self.assertAlmostEqual(point[1], 38.4)
             else:
                 self.assertAlmostEqual(point[0], 27.001)
+
+
+class TurnCostTests(unittest.TestCase):
+    def _engine(self, lines):
+        from zero2route3d.core.kinematics import haversine_distance_2d
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D
+
+        engine = RoutingEngine3D()
+        engine.build_graph([
+            RoadSegment(p1=a, p2=b, length_m=haversine_distance_2d(a, b), highway_type="residential")
+            for a, b in lines
+        ])
+        return engine
+
+    def test_turn_angles_and_delays(self) -> None:
+        from zero2route3d.core.mobility_profiles import get_profile
+        from zero2route3d.core.turn_costs import turn_angle_deg, turn_delay_s, turn_model_for
+
+        south, centre = (27.0, 38.399, 0.0), (27.0, 38.4, 0.0)
+        east, west = (27.001, 38.4, 0.0), (26.999, 38.4, 0.0)
+        self.assertAlmostEqual(turn_angle_deg(south, centre, east), 90.0, delta=1.0)  # right
+        self.assertAlmostEqual(turn_angle_deg(south, centre, west), -90.0, delta=1.0)  # left
+        car = turn_model_for(get_profile("car"))
+        self.assertGreater(turn_delay_s(car, -90, True, False), turn_delay_s(car, 90, True, False))
+        self.assertGreater(turn_delay_s(car, 90, True, False, drive_on_left=True),
+                           turn_delay_s(car, -90, True, False, drive_on_left=True))
+        self.assertEqual(turn_delay_s(car, 60, junction=False, dead_end=False), 0.0)  # a bend
+        self.assertEqual(turn_delay_s(car, 180, True, False), math.inf)
+        self.assertTrue(math.isfinite(turn_delay_s(car, 180, False, True)))  # dead-end turnaround
+        truck = turn_model_for(get_profile("truck"))
+        self.assertEqual(turn_delay_s(truck, -150, True, False), math.inf)
+        self.assertIsNone(turn_model_for(get_profile("adult")))
+
+    def test_truck_avoids_a_hairpin_the_car_takes(self) -> None:
+        from zero2route3d.core.routing_engine import Waypoint
+
+        # A main road west-east and a side road leaving it at a sharp angle
+        # back towards the west; a longer gentle link reaches the same street.
+        j = (27.002, 38.400, 0.0)
+        lines = [
+            ((27.000, 38.400, 0.0), (27.001, 38.400, 0.0)),
+            ((27.001, 38.400, 0.0), j),
+            (j, (27.003, 38.400, 0.0)),
+            (j, (27.0005, 38.4004, 0.0)),               # hairpin side road (about 165 deg)
+            ((27.0005, 38.4004, 0.0), (26.9995, 38.4006, 0.0)),
+            ((27.003, 38.400, 0.0), (27.003, 38.401, 0.0)),  # gentle detour
+            ((27.003, 38.401, 0.0), (26.9995, 38.4006, 0.0)),
+        ]
+        engine = self._engine(lines)
+        wps = [Waypoint(27.0, 38.4), Waypoint(26.9995, 38.4006)]
+        car = engine.calculate_route(wps, profile_key="car", compute_alternatives=False)
+        truck = engine.calculate_route(wps, profile_key="truck", compute_alternatives=False)
+        self.assertTrue(car.coordinates_3d and truck.coordinates_3d)
+        self.assertGreater(truck.statistics.total_distance_m, car.statistics.total_distance_m + 100)
+        self.assertGreater(car.statistics.turn_delay_s, 0.0)
+
+    def test_pedestrians_pay_no_turn_delay(self) -> None:
+        from zero2route3d.core.routing_engine import Waypoint
+
+        lines = [((27.0, 38.4, 0.0), (27.001, 38.4, 0.0)), ((27.001, 38.4, 0.0), (27.001, 38.401, 0.0)),
+                 ((27.001, 38.4, 0.0), (27.002, 38.4, 0.0))]
+        engine = self._engine(lines)
+        walk = engine.calculate_route([Waypoint(27.0, 38.4), Waypoint(27.001, 38.401)], compute_alternatives=False)
+        self.assertEqual(walk.statistics.turn_delay_s, 0.0)
+
+
+class TimeOfDayTests(unittest.TestCase):
+    def test_walker_prefers_lit_streets_only_at_night(self) -> None:
+        from zero2route3d.core.kinematics import haversine_distance_2d
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+
+        a, b = (27.000, 38.400, 0.0), (27.004, 38.400, 0.0)
+        mid_dark, mid_lit = (27.002, 38.4002, 0.0), (27.002, 38.4012, 0.0)
+
+        def seg(p, q, lit):
+            return RoadSegment(p1=p, p2=q, length_m=haversine_distance_2d(p, q), lit=lit)
+
+        engine = RoutingEngine3D()
+        engine.build_graph([seg(a, mid_dark, "no"), seg(mid_dark, b, "no"), seg(a, mid_lit, "yes"), seg(mid_lit, b, "yes")])
+        wps = [Waypoint(*a[:2]), Waypoint(*b[:2])]
+
+        def via_lit(hour):
+            engine.departure_hour = hour
+            route = engine.calculate_route(wps, compute_alternatives=False)
+            return any(abs(c[1] - 38.4012) < 1e-6 for c in route.coordinates_3d)
+
+        self.assertFalse(via_lit(None))
+        self.assertFalse(via_lit(13.0))
+        self.assertTrue(via_lit(23.0))
+        ctx = engine.time_context()
+        self.assertEqual(ctx["night"], 1.0)
+        engine.departure_hour = 13.0
+        self.assertGreater(engine.time_context()["sun"], 0.5)
+
+
+class BuildingShadowTests(unittest.TestCase):
+    def _street_and_block(self):
+        from zero2route3d.core.building_shadow import Building
+
+        lat = 38.4
+        kx = 111320.0 * math.cos(math.radians(lat))
+        ky = 110574.0
+        # East-west street 100 m long; a 20 m block 10-30 m south of it,
+        # spanning the middle 60 m of the street.
+        street = [(27.0, lat, 0.0), (27.0 + 100 / kx, lat, 0.0)]
+        x0, x1 = 20 / kx, 80 / kx
+        y0, y1 = -30 / ky, -10 / ky
+        block = Building([(27.0 + x0, lat + y0), (27.0 + x1, lat + y0), (27.0 + x1, lat + y1), (27.0 + x0, lat + y1)], 20.0)
+        return street, [block]
+
+    def test_low_winter_sun_shades_the_street_high_summer_sun_does_not(self) -> None:
+        from zero2route3d.core.building_shadow import shade_along_route
+        from zero2route3d.core.solar_shadow import calculate_solar_position
+
+        street, buildings = self._street_and_block()
+        winter = calculate_solar_position(38.4, solar_hour=12.0, day_of_year=355)
+        summer = calculate_solar_position(38.4, solar_hour=12.0, day_of_year=172)
+        in_winter = shade_along_route(street, buildings, winter.azimuth_deg, winter.elevation_deg)
+        in_summer = shade_along_route(street, buildings, summer.azimuth_deg, summer.elevation_deg)
+        self.assertAlmostEqual(in_winter.shaded_fraction, 0.6, delta=0.08)  # the 60 m behind the block
+        self.assertEqual(in_summer.shaded_fraction, 0.0)
+
+    def test_report_names_its_method(self) -> None:
+        from zero2route3d.core.solar_shadow import compute_shade_exposure_along_route
+
+        street, buildings = self._street_and_block()
+        geometric = compute_shade_exposure_along_route(street, solar_hour=12.0, buildings=buildings, day_of_year=355)
+        estimate = compute_shade_exposure_along_route(street, solar_hour=12.0, day_of_year=355)
+        self.assertEqual(geometric.method, "building shadows")
+        self.assertEqual(estimate.method, "street orientation estimate")
+        self.assertAlmostEqual(geometric.shaded_pct, 60.0, delta=8.0)
+
+
+class IsochroneCorridorTests(unittest.TestCase):
+    def test_partial_street_and_corridor_area(self) -> None:
+        from zero2route3d.core.isochrone_engine import IsochroneEngine3D, corridor_area_ha
+        from zero2route3d.core.kinematics import haversine_distance_2d
+        from zero2route3d.core.mobility_profiles import get_profile
+        from zero2route3d.core.network_source import RoadSegment
+        from zero2route3d.core.routing_engine import RoutingEngine3D, Waypoint
+
+        # One straight 1 km street of ten 100 m edges.
+        step = 100.0 / 87_000.0
+        pts = [(27.0 + i * step, 38.4, 0.0) for i in range(11)]
+        engine = RoutingEngine3D()
+        engine.build_graph([RoadSegment(p1=a, p2=b, length_m=haversine_distance_2d(a, b)) for a, b in zip(pts, pts[1:])])
+        profile = get_profile("adult")
+        seconds_per_100m = profile.travel_time_seconds(100.0)
+        minutes = 4.5 * seconds_per_100m / 60.0  # reaches 450 m: four edges and half of the fifth
+        band = IsochroneEngine3D(engine).compute_isochrones(
+            Waypoint(27.0, 38.4), time_intervals_min=(minutes,), buffer_m=50.0
+        ).bands[0]
+        reached = sum(haversine_distance_2d(a, b) for a, b in band.reached_segments)
+        self.assertAlmostEqual(reached, 450.0, delta=5.0)
+        expected = (450.0 * 100.0 + math.pi * 50.0 ** 2) / 10_000.0
+        self.assertAlmostEqual(band.approx_area_ha, expected, delta=expected * 0.06)
+        self.assertEqual(corridor_area_ha([], 50.0), 0.0)
 
 
 class ViewerDataTests(unittest.TestCase):

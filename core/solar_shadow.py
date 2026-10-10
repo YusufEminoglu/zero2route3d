@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
+from .building_shadow import Building, shade_along_route
 from .kinematics import haversine_distance_2d
 
 
@@ -27,9 +28,13 @@ class ShadeExposureReport:
     shaded_pct: float
     total_solar_exposure_kwh: float
     comfort_category: str  # 'Cool & Shaded', 'Balanced', 'Intense Sun'
+    # "building shadows" (geometric, from footprints and heights) or
+    # "street orientation estimate" (no building data: a heuristic).
+    method: str = "street orientation estimate"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "method": self.method,
             "solar_hour": self.solar_position.solar_hour,
             "azimuth_deg": round(self.solar_position.azimuth_deg, 1),
             "elevation_deg": round(self.solar_position.elevation_deg, 1),
@@ -90,17 +95,28 @@ def compute_shade_exposure_along_route(
     coords_3d: Sequence[Tuple[float, float, float]],
     solar_hour: float = 14.0,
     building_density_factor: float = 0.6,
+    buildings: Optional[Sequence[Building]] = None,
+    day_of_year: int = 172,
 ) -> ShadeExposureReport:
-    """Analyze the proportion of shade vs direct sun along a 3D path at a given time of day."""
+    """Analyze the proportion of shade vs direct sun along a 3D path at a given time of day.
+
+    With ``buildings`` (footprints and heights) shade is computed from real
+    building shadows; without, it is estimated from street orientation.
+    """
     if not coords_3d:
-        sun = calculate_solar_position(38.4, solar_hour)
+        sun = calculate_solar_position(38.4, solar_hour, day_of_year)
         return ShadeExposureReport(sun, 0.0, 100.0, 0.0, "Shaded")
 
     mean_lat = sum(c[1] for c in coords_3d) / len(coords_3d)
-    sun = calculate_solar_position(mean_lat, solar_hour=solar_hour)
+    sun = calculate_solar_position(mean_lat, solar_hour=solar_hour, day_of_year=day_of_year)
 
     if sun.elevation_deg <= 0:
-        return ShadeExposureReport(sun, 0.0, 100.0, 0.0, "Night / Twilight")
+        return ShadeExposureReport(sun, 0.0, 100.0, 0.0, "Night / Twilight",
+                                   method="building shadows" if buildings else "street orientation estimate")
+
+    if buildings:
+        shade = shade_along_route(coords_3d, buildings, sun.azimuth_deg, sun.elevation_deg)
+        return _report(sun, shade.total_length_m - shade.shaded_length_m, shade.shaded_length_m, "building shadows")
 
     sun_rad = math.radians(sun.azimuth_deg)
     sun_el_rad = math.radians(sun.elevation_deg)
@@ -128,6 +144,10 @@ def compute_shade_exposure_along_route(
         else:
             sunlit_length += seg_len
 
+    return _report(sun, sunlit_length, shaded_length, "street orientation estimate")
+
+
+def _report(sun: SolarPosition, sunlit_length: float, shaded_length: float, method: str) -> ShadeExposureReport:
     tot = sunlit_length + shaded_length
     sun_pct = (sunlit_length / tot * 100.0) if tot > 0 else 50.0
     shade_pct = (shaded_length / tot * 100.0) if tot > 0 else 50.0
@@ -149,4 +169,5 @@ def compute_shade_exposure_along_route(
         shaded_pct=shade_pct,
         total_solar_exposure_kwh=kwh,
         comfort_category=category,
+        method=method,
     )

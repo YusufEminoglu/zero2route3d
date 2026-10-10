@@ -123,6 +123,61 @@ def run():
         check("isochrone enum matches profile registry", list(options) == expected,
               f"{len(options)} options vs {len(expected)} profiles")
 
+    # ---- 4b. The isochrone follows the streets: the middle of a city block
+    # (about 200 m from any street) is outside, which the old node hull was not.
+    if iso is not None:
+        net = make_network()
+        errs = ErrorFeedback()
+        res, ok = iso.run({
+            "CENTER_POINT": "27.140,38.420 [EPSG:4326]",
+            "TIME_MINUTES": 15.0,
+            "PROFILE": 0,
+            "NETWORK_LAYER": net,
+            "BUFFER_M": 50.0,
+            "OUTPUT": "memory:",
+        }, ctx, errs)
+        layer = ctx.getMapLayer(res.get("OUTPUT")) if ok else None
+        feat = next(layer.getFeatures(), None) if layer is not None else None
+        if check("isochrone algorithm produced a polygon", feat is not None, str(errs.errors[:2])):
+            geom = feat.geometry()
+            block_centre = QgsGeometry.fromPointXY(QgsPointXY(27.1475, 38.4225))
+            street_point = QgsGeometry.fromPointXY(QgsPointXY(27.1475, 38.4202))
+            check("isochrone excludes the block interior and covers the streets",
+                  not geom.contains(block_centre) and geom.contains(street_point),
+                  f"area_ha={feat['area_ha']}")
+            # Five 440-560 m streets with a 50 m corridor each side: roughly 25 ha.
+            check("isochrone area is the street corridor, not the hull",
+                  10.0 < float(feat["area_ha"]) < 40.0, f"area_ha={feat['area_ha']}")
+
+    # ---- 4c. Solar exposure with a building layer uses real shadows.
+    solar = algs.get("solar_shade_exposure")
+    if solar is not None:
+        import math as _math
+        lat = 38.4
+        kx = 111320.0 * _math.cos(_math.radians(lat))
+        ky = 110574.0
+        route = QgsVectorLayer("LineStringZ?crs=EPSG:4326", "street", "memory")
+        rf = QgsFeature(route.fields())
+        rf.setGeometry(QgsGeometry.fromWkt(f"LineStringZ(27.0 {lat} 10, {27.0 + 100 / kx} {lat} 10)"))
+        route.dataProvider().addFeatures([rf])
+        blocks = QgsVectorLayer("Polygon?crs=EPSG:4326&field=height:double", "blocks", "memory")
+        bf = QgsFeature(blocks.fields())
+        x0, x1, y0, y1 = 27.0 + 20 / kx, 27.0 + 80 / kx, lat - 30 / ky, lat - 10 / ky
+        bf.setGeometry(QgsGeometry.fromWkt(f"Polygon(({x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}, {x0} {y0}))"))
+        bf.setAttributes([20.0])
+        blocks.dataProvider().addFeatures([bf])
+        solar.initAlgorithm({})
+        errs = ErrorFeedback()
+        res, ok = solar.run({
+            "INPUT_ROUTE": route, "SOLAR_HOUR": 12.0, "DAY_OF_YEAR": 355,
+            "BUILDINGS": blocks, "HEIGHT_FIELD": "height", "OUTPUT": "memory:",
+        }, ctx, errs)
+        out = ctx.getMapLayer(res.get("OUTPUT")) if ok else None
+        feat = next(out.getFeatures(), None) if out is not None else None
+        check("solar exposure computes building shadows",
+              feat is not None and feat["method"] == "building shadows" and 50.0 < float(feat["shaded_pct"]) < 70.0,
+              f"{feat and (feat['method'], feat['shaded_pct'])} {errs.errors[:1]}")
+
     # ---- 5. Walkability must refuse to certify without a DEM.
     walk = algs.get("walkability_3d_audit")
     if walk is not None:

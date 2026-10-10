@@ -6,6 +6,8 @@ from typing import Any, Dict
 
 from qgis.core import (
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsProject,
     QgsFeature,
     QgsFeatureSink,
     QgsFields,
@@ -29,7 +31,7 @@ from .field_utils import DOUBLE, STRING, make_field
 from .post_process import finalize_output
 from .crs_utils import point_to_wgs84
 from ..core.environmental_raster import EnvironmentalSurfaceSampler
-from ..core.isochrone_engine import IsochroneEngine3D
+from ..core.isochrone_engine import DEFAULT_BUFFER_M, IsochroneEngine3D
 from ..core.mobility_profiles import list_profile_keys, get_profile
 from ..core.network_source import NetworkSourceManager
 from ..core.routing_engine import RoutingEngine3D, Waypoint
@@ -43,6 +45,7 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
     TIME_MINUTES = "TIME_MINUTES"
     DEM_LAYER = "DEM_LAYER"
     NETWORK_LAYER = "NETWORK_LAYER"
+    BUFFER_M = "BUFFER_M"
     OUTPUT = "OUTPUT"
 
     def shortHelpString(self) -> str:
@@ -50,10 +53,11 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             "Computes the area reachable from a centre point within a travel-time "
             "budget, across a real road network and under the selected mobility "
             "profile.\n\n"
-            "The result is a hull built over the reachable network nodes. It is a "
-            "network-derived approximation of a service area, not a surveyed boundary: "
-            "it cannot represent concavity, and the reported area and equivalent-circle "
-            "radius are approximations.\n\n"
+            "The result is the land within the corridor width (default 50 m) of every "
+            "street reachable in time, including the reachable part of streets the "
+            "time limit cuts off. Unlike a hull around the reachable nodes it follows "
+            "the network: rivers, rail lines, blocks without access and one-way "
+            "detours stay outside.\n\n"
             "Provide a DEM to have gradient affect travel speed; without one the "
             "network is treated as flat."
         )
@@ -106,6 +110,16 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
+            QgsProcessingParameterNumber(
+                self.BUFFER_M,
+                "Corridor width either side of reachable streets (m)",
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=DEFAULT_BUFFER_M,
+                minValue=5.0,
+                maxValue=500.0,
+            )
+        )
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "3D Isochrone Polygon",
@@ -129,6 +143,7 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
         prof_idx = self.parameterAsEnum(parameters, self.PROFILE, context)
         dem_layer = self.parameterAsRasterLayer(parameters, self.DEM_LAYER, context)
         net_layer = self.parameterAsVectorLayer(parameters, self.NETWORK_LAYER, context)
+        buffer_m = self.parameterAsDouble(parameters, self.BUFFER_M, context) or DEFAULT_BUFFER_M
 
         keys = getattr(self, "profile_keys", None) or list_profile_keys()
         profile_key = keys[max(0, min(prof_idx, len(keys) - 1))]
@@ -158,11 +173,13 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             Waypoint(center.x(), center.y(), name="Origin"),
             profile_key=profile_key,
             time_intervals_min=(time_min,),
+            buffer_m=buffer_m,
         )
 
         fields = QgsFields()
         fields.append(make_field("profile", STRING))
         fields.append(make_field("time_min", DOUBLE))
+        fields.append(make_field("area_ha", DOUBLE))
         fields.append(make_field("reach_km", DOUBLE))
 
         crs_wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
@@ -171,21 +188,43 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             self.OUTPUT,
             context,
             fields,
-            QgsWkbTypes.Polygon,
+            QgsWkbTypes.MultiPolygon,
             crs_wgs84,
         )
 
+        # Buffer in metres: a local azimuthal equidistant projection centred on
+        # the origin is accurate to well under 1 % over any isochrone's extent.
+        local_crs = QgsCoordinateReferenceSystem.fromProj(
+            f"+proj=aeqd +lat_0={center.y():.7f} +lon_0={center.x():.7f} +datum=WGS84 +units=m +no_defs"
+        )
+        to_local = QgsCoordinateTransform(crs_wgs84, local_crs, QgsProject.instance())
+        to_wgs84 = QgsCoordinateTransform(local_crs, crs_wgs84, QgsProject.instance())
+
         for band in iso_result.bands:
-            if len(band.boundary_points) < 3:
+            if feedback.isCanceled():
+                return {}
+            lines = [
+                [QgsPointXY(*a), QgsPointXY(*b)]
+                for a, b in band.reached_segments
+                if a != b
+            ]
+            if not lines:
+                feedback.pushWarning(
+                    f"No street is reachable within {band.time_cutoff_min:g} min of the origin for this profile."
+                )
                 continue
-            points = [QgsPointXY(x, y) for x, y in band.boundary_points]
-            geom = QgsGeometry.fromMultiPointXY(points).convexHull()
+            geom = QgsGeometry.fromMultiPolylineXY(lines)
+            geom.transform(to_local)
+            geom = geom.buffer(buffer_m, 6)
             if geom.isNull() or geom.isEmpty():
                 continue
+            area_ha = geom.area() / 10000.0
+            geom.transform(to_wgs84)
+            geom.convertToMultiType()
             feat = QgsFeature(fields)
             feat.setGeometry(geom)
-            reach_km = math.sqrt(max(0.0, band.approx_area_ha) * 10000.0 / math.pi) / 1000.0
-            feat.setAttributes([profile.name, band.time_cutoff_min, round(reach_km, 2)])
+            reach_km = math.sqrt(max(0.0, area_ha) * 10000.0 / math.pi) / 1000.0
+            feat.setAttributes([profile.name, band.time_cutoff_min, round(area_ha, 2), round(reach_km, 2)])
             sink.addFeature(feat, QgsFeatureSink.FastInsert)
 
         # Remembered so postProcessAlgorithm can resolve and style the layer.
@@ -222,8 +261,8 @@ class ServiceArea3DAlgorithm(QgsProcessingAlgorithm):
             context,
             getattr(self, "_dest_id", ""),
             title='3D Isochrone Catchment',
-            abstract='Approximate service area reachable within the given travel time, built as a hull over reachable network nodes. It is a network-derived approximation, not a measured boundary.',
-            aliases={'profile': 'Mobility profile', 'time_min': 'Cutoff (min)', 'area_ha': 'Approx. area (ha)', 'reach_km': 'Equivalent-circle radius (km)'},
+            abstract='Land within the corridor width of every street reachable within the travel time (including partly reachable streets), for the selected mobility profile.',
+            aliases={'profile': 'Mobility profile', 'time_min': 'Cutoff (min)', 'area_ha': 'Area (ha)', 'reach_km': 'Equivalent-circle radius (km)'},
             line_color='#8b5cf6',
             feedback=feedback,
         )

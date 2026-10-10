@@ -150,6 +150,22 @@ def _chain_to_path(chain: PathChain) -> Tuple[int, ...]:
     return tuple(reversed(nodes))
 
 
+def _min_kcal_per_metre(profile: MobilityProfile) -> float:
+    """Lower bound on rider/walker energy per metre (0 for motor vehicles).
+
+    Mirrors _calculate_edge_vector: the cheapest slope of the same energy
+    model, so distance x this never over-estimates the energy still to come.
+    """
+    if profile.category == "pedestrian":
+        cost = lambda s: minetti_energy_cost(s, mass_kg=70.0, distance_m=1.0)[1]  # noqa: E731
+    elif profile.key in {"bicycle", "mtb"}:
+        cost = lambda s: cycling_energy_cost(s, mass_kg=70.0, distance_m=1.0)[1]  # noqa: E731
+    else:
+        return 0.0
+    best = min(cost(i / 100.0) for i in range(-100, 101))
+    return max(0.0, best) if math.isfinite(best) else 0.0
+
+
 def _min_seconds_per_metre(profile: MobilityProfile) -> float:
     """Lower bound on edge travel time per metre for a profile.
 
@@ -244,9 +260,31 @@ class ParetoMultiObjectiveRouter:
         # old bound, 1.5 x base speed, was slower than real top speeds (a bike
         # downhill, a car on a motorway), so A* could return a slower route.
         min_s_per_m = _min_seconds_per_metre(profile)
+        min_kcal_per_m = _min_kcal_per_metre(profile)
+        goal_z = dest_coord[2]
 
         def heuristic_time(u_coord: Tuple[float, float, float]) -> float:
             return haversine_distance_2d(u_coord, dest_coord) * min_s_per_m
+
+        # NAMOA*: a lower bound for every objective, not only time. A label is
+        # dropped once a found solution dominates its cost so far plus this
+        # bound (it cannot lead anywhere better), which prunes far more than
+        # comparing the cost so far alone.
+        def heuristic_vector(u: int) -> ParetoCostVector:
+            u_coord = self.nodes[u]
+            distance = haversine_distance_2d(u_coord, dest_coord)
+            return ParetoCostVector(
+                time_s=distance * min_s_per_m,
+                ascent_m=max(0.0, goal_z - u_coord[2]),  # climbing to the goal is unavoidable
+                heat_dose=0.0,
+                energy_kcal=distance * min_kcal_per_m,
+            )
+
+        def hopeless(g: ParetoCostVector, node: int) -> bool:
+            if not dest_solutions:
+                return False
+            bound = g.add(heuristic_vector(node))
+            return any(sol_cost.dominates(bound, epsilon_dominance) for sol_cost, _ in dest_solutions)
 
         start_label = ParetoCostVector(0, 0, 0, 0)
         labels_g: Dict[int, List[ParetoCostVector]] = {start_node: [start_label]}
@@ -286,7 +324,7 @@ class ParetoMultiObjectiveRouter:
                     dest_solutions.append((g_vec, _chain_to_path(chain)))
                 continue
 
-            if any(sol_cost.dominates(g_vec, epsilon_dominance) for sol_cost, _ in dest_solutions):
+            if hopeless(g_vec, u):
                 continue
 
             for v, seg_len, slope_pct, meta in self.adj.get(u, []):
@@ -317,6 +355,8 @@ class ParetoMultiObjectiveRouter:
                         energy_kcal=edge_vec.energy_kcal,
                     )
                 new_g = g_vec.add(edge_vec)
+                if hopeless(new_g, v):
+                    continue
 
                 existing = labels_g.setdefault(v, [])
                 if any(ext.dominates(new_g, epsilon_dominance) for ext in existing):

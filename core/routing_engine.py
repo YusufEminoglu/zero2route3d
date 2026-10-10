@@ -12,13 +12,15 @@ from .input_validation import deduplicate_adjacent_coordinates, validate_waypoin
 from .kinematics import haversine_distance_2d
 from .mobility_profiles import MobilityProfile, get_profile
 from .network_source import RoadSegment
-from .network_policy import evaluate_edge_access, surface_quality
+from .network_policy import evaluate_edge_access, normalize_tag, surface_quality
 from .profile_stats import (
     RouteStatistics,
     compute_route_statistics,
     densify_3d_linestring_indexed,
 )
+from .solar_shadow import calculate_solar_position
 from .tsp_solver import solve_tsp_order
+from .turn_costs import turn_angle_deg, turn_delay_s, turn_model_for
 
 
 # Shortest horizontal run (m) over which an edge slope is measured. DEM heights
@@ -99,6 +101,36 @@ def _distinct_route(primary, alternative, max_shared: float = 0.9) -> bool:
         if (min(ka, kb), max(ka, kb)) in shared_keys:
             shared += d
     return total > 0 and shared / total < max_shared
+
+
+@dataclass
+class SearchTree:
+    """Result of RoutingEngine3D._search.
+
+    ``prev`` maps a search state to its parent: a node, or (node, previous
+    node) when turn costs make the way a node was entered matter.
+    ``node_state`` is the state in which each settled node was first reached.
+    """
+
+    prev: Dict[Any, Any]
+    settled: Set[int]
+    node_state: Dict[int, Any]
+    counters: Dict[str, Any]
+    stateful: bool = False
+
+    def path_to(self, node: int) -> Optional[List[int]]:
+        """Nodes from the start to ``node``, or None when it was not reached."""
+        state = self.node_state.get(node)
+        if state is None:
+            return None
+        out: List[int] = []
+        seen = set()
+        while state is not None and state not in seen:
+            seen.add(state)
+            out.append(state[0] if self.stateful else state)
+            state = self.prev.get(state)
+        out.reverse()
+        return out
 
 
 @dataclass
@@ -237,6 +269,17 @@ class RoutingEngine3D:
         self._planar_kx = METRES_PER_DEGREE
         self._planar_ky = METRES_PER_DEGREE
         self._hierarchy_ranks: frozenset = frozenset()
+        self._node_degree: Dict[int, int] = {}
+        # Junction turn costs for profiles that have them (see turn_costs.py).
+        self.turn_costs = True
+        self.drive_on_left = False
+        # Time of day (local solar hours) and day of year. None: time-neutral
+        # routing. Set, it brings in night-time lighting and sidewalk
+        # preferences and scales the heat (LST) weight with the sun.
+        self.departure_hour: Optional[float] = None
+        self.day_of_year: int = 172
+        self.last_segment_nodes: List[int] = []
+        self._night_ctx = False
         self._built = False
 
     _GRAPH_ATTRS = (
@@ -251,6 +294,7 @@ class RoutingEngine3D:
         "_planar_kx",
         "_planar_ky",
         "_hierarchy_ranks",
+        "_node_degree",
     )
 
     def build_graph(self, segments: Sequence[RoadSegment], use_cache: bool = True) -> None:
@@ -440,6 +484,10 @@ class RoutingEngine3D:
             meta_reverse["against_oneway"] = bool(seg.is_oneway)
             meta_reverse["reverse_of_two_way"] = not seg.is_oneway
             self.adj[v].append((u, seg_len, -slope_pct, meta_reverse))
+
+        # Distinct neighbours per node: 3 or more is a junction (turn costs),
+        # 1 a dead end where a turnaround is allowed.
+        self._node_degree = {n: len(neigh) for n, neigh in weak_adj.items()}
 
         # Weakly connected components are used only for snapping. Traversability
         # remains directed in A*. The previous outgoing-only BFS made component
@@ -672,13 +720,37 @@ class RoutingEngine3D:
         memo[memo_key] = answer
         return answer
 
+    def time_context(self) -> Optional[Dict[str, float]]:
+        """Sun at the departure time over this graph: night flag and strength (0-1)."""
+        if self.departure_hour is None or not self.nodes:
+            return None
+        hour = float(self.departure_hour) % 24.0
+        lats = [c[1] for c in self.nodes.values()]
+        sun = calculate_solar_position((min(lats) + max(lats)) / 2.0, solar_hour=hour, day_of_year=int(self.day_of_year))
+        return {
+            "hour": round(hour, 2),
+            "night": 1.0 if sun.elevation_deg <= 0.0 else 0.0,
+            "sun": max(0.0, min(1.0, sun.direct_irradiance_w_m2 / 1000.0)),
+        }
+
+    def _weights_for_time(self) -> Dict[str, float]:
+        w_dict = dict(self.weights.normalized_dict())
+        ctx = self.time_context()
+        if ctx is not None and "heat" in w_dict:
+            # Heat stress follows the sun: 0.25x at night, up to 1.75x at a
+            # summer noon. (Only matters when an LST raster is selected.)
+            w_dict["heat"] = w_dict["heat"] * (0.25 + 1.5 * ctx["sun"])
+        return w_dict
+
     def _edge_table(self, profile: MobilityProfile) -> Dict[int, List[Optional[Tuple[float, str, str]]]]:
-        """Memo of evaluated edges for this profile and weight set (see _evaluate_edge)."""
-        w_dict = self.weights.normalized_dict()
+        """Memo of evaluated edges for this profile, weight set and time of day."""
+        w_dict = self._weights_for_time()
+        ctx = self.time_context()
         key = (
             repr(profile),
             tuple(sorted(w_dict.items())),
             float(self.weights.weight_extra),
+            tuple(sorted(ctx.items())) if ctx else None,
         )
         table = self._edge_cost_cache.get(key)
         if table is None:
@@ -727,7 +799,26 @@ class RoutingEngine3D:
         if extra_values:
             extra_mean = sum(extra_values) / len(extra_values)
             edge_cost *= 1.0 + max(0.0, min(1.0, extra_mean)) * self.weights.weight_extra
+        night_factor = self._night_factor(profile, meta)
+        if night_factor != 1.0:
+            edge_cost *= night_factor
         return (edge_cost, "ok", "")
+
+    def _night_factor(self, profile: MobilityProfile, meta: Dict[str, Any]) -> float:
+        """After dark, walkers and cyclists prefer lit streets; walkers sidewalks on main roads."""
+        ctx = self._night_ctx
+        if not ctx or profile.category not in ("pedestrian", "micromobility"):
+            return 1.0
+        factor = 1.0
+        lit = normalize_tag(meta.get("lit"))
+        if lit == "no" and profile.key != "night_walk":  # night_walk already doubles it
+            factor *= 1.6 if profile.category == "pedestrian" else 1.4
+        elif lit in ("", "unknown"):
+            factor *= 1.1
+        if profile.category == "pedestrian" and int(meta.get("hierarchy", 4) or 4) <= 3:
+            if normalize_tag(meta.get("sidewalk")) in ("no", "none"):
+                factor *= 1.3
+        return factor
 
     def _search(
         self,
@@ -738,27 +829,38 @@ class RoutingEngine3D:
         avoid_edges: Optional[set] = None,
         penalize_edges: Optional[set] = None,
         penalty_factor: float = 1.0,
-    ) -> Tuple[Dict[int, int], Set[int], Dict[str, Any]]:
+    ) -> "SearchTree":
         """Least-cost search from start_node until every target is settled.
 
         With a single ``goal`` this is A* with an admissible straight-line
         heuristic; with several targets it is a one-to-many Dijkstra, which is
         how the OD matrix answers a whole row with one search.
-        Returns (predecessors, settled nodes, counters).
+
+        When the profile has a turn model (vehicles, bikes, wheelchairs), the
+        search runs over (node, previous node) states so each junction
+        manoeuvre can be charged; otherwise over plain nodes.
         """
         nodes = self.nodes
         adj = self.adj
         table = self._edge_table(profile)
-        w_dict = self.weights.normalized_dict()
+        w_dict = self._weights_for_time()
+        ctx = self.time_context()
+        self._night_ctx = bool(ctx and ctx["night"])
         evaluate = self._evaluate_edge
         avoid_set = avoid_edges or set()
         penalized = penalize_edges or set()
         penalty = max(1.0, float(penalty_factor)) if math.isfinite(penalty_factor) else 1.0
+        model = turn_model_for(profile) if self.turn_costs else None
+        degree = self._node_degree
+        # Turn delays are seconds; at the profile's base speed they become
+        # impedance (metres of ordinary street), the unit of edge costs.
+        speed_ms = max(0.5, float(profile.base_speed_kmh) / 3.6)
 
         # A* is only optimal when the heuristic never over-estimates the
         # remaining cost. g accumulates impedance, not metres, and impedance
         # can be well below 1.0 per metre (a car on a motorway, a shaded edge),
-        # so the distance is scaled by the profile's own cost floor.
+        # so the distance is scaled by the profile's own cost floor. Turn
+        # delays are never negative, so they keep it admissible.
         if goal is not None:
             gx, gy = nodes[goal][0], nodes[goal][1]
             floor = profile.min_cost_per_metre(
@@ -778,25 +880,36 @@ class RoutingEngine3D:
                 return 0.0
 
         remaining = set(targets)
-        pq: List[Tuple[float, float, int]] = [(heuristic(start_node), 0.0, start_node)]
-        g_scores: Dict[int, float] = {start_node: 0.0}
-        prev_map: Dict[int, int] = {}
-        visited: Set[int] = set()
-        max_iters = min(150_000, len(nodes) * 3) if goal is not None else len(nodes) * 3 + 10
+        start_state: Any = (start_node, None) if model else start_node
+        pq: List[Tuple[float, float, int, Any]] = [(heuristic(start_node), 0.0, 0, start_state)]
+        g_scores: Dict[Any, float] = {start_state: 0.0}
+        prev: Dict[Any, Any] = {}
+        closed: Set[Any] = set()
+        settled: Set[int] = set()
+        node_state: Dict[int, Any] = {}
+        state_budget = len(nodes) * 3 if not model else sum(len(e) for e in adj.values()) * 2 + len(nodes)
+        max_iters = min(400_000 if model else 150_000, state_budget) if goal is not None else state_budget + 10
         iters = 0
+        tie = 0
         blocked_by_access = 0
         blocked_by_profile = 0
+        blocked_by_turn = 0
         access_reasons: Dict[str, int] = {}
 
         while pq and iters < max_iters and remaining:
             iters += 1
-            _f, cost, u = heapq.heappop(pq)
-            if u in visited:
+            _f, cost, _tie, state = heapq.heappop(pq)
+            if state in closed:
                 continue
-            visited.add(u)
-            remaining.discard(u)
-            if not remaining:
-                break
+            closed.add(state)
+            u = state[0] if model else state
+            came_from = state[1] if model else None
+            if u not in settled:
+                settled.add(u)
+                node_state[u] = state
+                remaining.discard(u)
+                if not remaining:
+                    break
             edges = adj.get(u, ())
             row = table.get(u)
             if row is None:
@@ -804,7 +917,8 @@ class RoutingEngine3D:
                 table[u] = row
             for index, edge in enumerate(edges):
                 v = edge[0]
-                if v in visited:
+                next_state: Any = (v, u) if model else v
+                if next_state in closed:
                     continue
                 entry = row[index]
                 if entry is None:
@@ -821,19 +935,53 @@ class RoutingEngine3D:
                     continue
                 if penalized and ((u, v) in penalized or (v, u) in penalized):
                     edge_cost *= penalty
+                if model and came_from is not None:
+                    delay = turn_delay_s(
+                        model,
+                        turn_angle_deg(nodes[came_from], nodes[u], nodes[v]),
+                        junction=degree.get(u, 0) >= 3,
+                        dead_end=degree.get(u, 0) <= 1,
+                        drive_on_left=self.drive_on_left,
+                    )
+                    if not math.isfinite(delay):
+                        blocked_by_turn += 1
+                        continue
+                    edge_cost += delay * speed_ms
                 tentative_g = cost + edge_cost
-                if tentative_g < g_scores.get(v, math.inf):
-                    g_scores[v] = tentative_g
-                    prev_map[v] = u
-                    heapq.heappush(pq, (tentative_g + heuristic(v), tentative_g, v))
+                if tentative_g < g_scores.get(next_state, math.inf):
+                    g_scores[next_state] = tentative_g
+                    prev[next_state] = state
+                    tie += 1
+                    heapq.heappush(pq, (tentative_g + heuristic(v), tentative_g, tie, next_state))
 
         counters = {
-            "expanded_nodes": len(visited),
+            "expanded_nodes": len(settled),
             "blocked_by_access": blocked_by_access,
             "blocked_by_profile": blocked_by_profile,
             "access_reasons": access_reasons,
         }
-        return prev_map, visited, counters
+        if model:
+            counters["blocked_by_turn"] = blocked_by_turn
+            counters["expanded_states"] = len(closed)
+        return SearchTree(prev=prev, settled=settled, node_state=node_state, counters=counters, stateful=bool(model))
+
+    def path_turn_delay_s(self, node_path: Sequence[int], profile: MobilityProfile) -> float:
+        """Seconds of junction turn delay along a node path for this profile."""
+        model = turn_model_for(profile) if self.turn_costs else None
+        if not model or len(node_path) < 3:
+            return 0.0
+        total = 0.0
+        for a, b, c in zip(node_path, node_path[1:], node_path[2:]):
+            delay = turn_delay_s(
+                model,
+                turn_angle_deg(self.nodes[a], self.nodes[b], self.nodes[c]),
+                junction=self._node_degree.get(b, 0) >= 3,
+                dead_end=self._node_degree.get(b, 0) <= 1,
+                drive_on_left=self.drive_on_left,
+            )
+            if math.isfinite(delay):
+                total += delay
+        return total
 
     def compute_segment_route(
         self,
@@ -843,7 +991,7 @@ class RoutingEngine3D:
         avoid_edges: Optional[set] = None,
         penalize_edges: Optional[set] = None,
         penalty_factor: float = 1.0,
-        search_trees: Optional[Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]]] = None,
+        search_trees: Optional[Dict[int, "SearchTree"]] = None,
     ) -> Tuple[List[Tuple[float, float, float]], bool]:
         """Compute A* least-cost path between single origin and destination pair.
 
@@ -887,10 +1035,8 @@ class RoutingEngine3D:
             return [], False
 
         tree = search_trees.get(start_node) if search_trees else None
-        if tree is not None and end_node in tree[1] and not avoid_edges and not penalize_edges:
-            prev_map, _visited, counters = tree
-        else:
-            prev_map, _visited, counters = self._search(
+        if tree is None or end_node not in tree.settled or avoid_edges or penalize_edges:
+            tree = self._search(
                 start_node,
                 profile,
                 {end_node},
@@ -900,7 +1046,9 @@ class RoutingEngine3D:
                 penalty_factor=penalty_factor,
             )
 
-        if end_node not in prev_map:
+        counters = tree.counters
+        node_path = tree.path_to(end_node)
+        if not node_path:
             self.last_segment_diagnostics = {
                 "status": "no_directed_path",
                 "start_snap_m": start_snap_m,
@@ -908,15 +1056,8 @@ class RoutingEngine3D:
                 **counters,
             }
             return [], False
-
-        # Reconstruct path
-        path: List[Tuple[float, float, float]] = []
-        curr: Optional[int] = end_node
-        while curr is not None:
-            path.append(self.nodes[curr])
-            curr = prev_map.get(curr) if curr != start_node else None
-
-        path.reverse()
+        self.last_segment_nodes = node_path
+        path: List[Tuple[float, float, float]] = [self.nodes[n] for n in node_path]
         z_start = self._endpoint_elevation(start_pt, start_node)
         z_end = self._endpoint_elevation(end_pt, end_node)
 
@@ -1019,7 +1160,7 @@ class RoutingEngine3D:
         profile_key: str = "adult",
         optimize_tsp: bool = False,
         compute_alternatives: bool = True,
-        search_trees: Optional[Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]]] = None,
+        search_trees: Optional[Dict[int, "SearchTree"]] = None,
         detail: bool = True,
     ) -> RouteResult3D:
         """Compute complete multi-stop 3D route traversing all waypoints.
@@ -1074,6 +1215,7 @@ class RoutingEngine3D:
         all_coords: List[Tuple[float, float, float]] = []
         matched_all = True
         segment_diagnostics: List[Dict[str, Any]] = []
+        turn_delay = 0.0
 
         for i in range(len(wp_list) - 1):
             w1 = wp_list[i]
@@ -1123,6 +1265,8 @@ class RoutingEngine3D:
                 all_coords.extend(seg_coords[1:])
             else:
                 all_coords.extend(seg_coords)
+            if self.last_segment_diagnostics.get("status") == "matched":
+                turn_delay += self.path_turn_delay_s(self.last_segment_nodes, profile)
 
         all_coords = deduplicate_adjacent_coordinates(all_coords)
         stats = compute_route_statistics(
@@ -1133,6 +1277,9 @@ class RoutingEngine3D:
             segment_metadata=self._segment_metadata_for(all_coords),
             detail=detail,
         )
+        # Time lost turning at junctions (vehicles, bikes, wheelchairs).
+        stats.turn_delay_s = turn_delay
+        stats.total_duration_s += turn_delay
 
         # Compute Alternative Route (e.g. Flattest or Coolest)
         alternatives: List[Dict[str, Any]] = []
@@ -1219,7 +1366,7 @@ class RoutingEngine3D:
                 start_node, end_node = self.find_compatible_nodes((orig.lon, orig.lat), (dest.lon, dest.lat))
                 if start_node is not None and end_node is not None and start_node != end_node:
                     targets_by_start.setdefault(start_node, set()).add(end_node)
-        search_trees: Dict[int, Tuple[Dict[int, int], Set[int], Dict[str, Any]]] = {}
+        search_trees: Dict[int, SearchTree] = {}
 
         for i, orig in enumerate(origins):
             for j, dest in enumerate(destinations):
