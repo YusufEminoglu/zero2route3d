@@ -32,3 +32,23 @@ test('first-party modules use plain named imports (the offline bundler strips th
   }
   assert.deepEqual(bad, []);
 });
+
+test('mixin modules do not redefine each other\'s or the class\'s methods', () => {
+  // Object.assign(Studio3DApp.prototype, ...) silently keeps the last
+  // definition of a name, so a duplicate would drop a method without error.
+  const owners = new Map();
+  const dupes = [];
+  const methodNames = (code) => [...code.matchAll(/^ {2}(?:async )?([A-Za-z_]\w*)\([^)]*\) \{$/gm)].map((m) => m[1]);
+  for (const name of fs.readdirSync(jsRoot).filter((f) => f.endsWith('.js') && !VENDORED.has(f))) {
+    const code = fs.readFileSync(path.join(jsRoot, name), 'utf8');
+    const isMixin = /^export const \w+Methods = \{/m.test(code);
+    if (!isMixin && name !== 'app3d.js') continue;
+    const body = name === 'app3d.js' ? code.slice(code.indexOf('class Studio3DApp'), code.indexOf('\n}\n', code.indexOf('class Studio3DApp'))) : code;
+    for (const method of methodNames(body)) {
+      if (owners.has(method)) dupes.push(`${method}: ${owners.get(method)} and ${name}`);
+      else owners.set(method, name);
+    }
+  }
+  assert.ok(owners.size > 50, `found ${owners.size} methods`);
+  assert.deepEqual(dupes, []);
+});

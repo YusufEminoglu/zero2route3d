@@ -211,9 +211,12 @@ Her düzeltme saf Python birim testiyle gelir (QGIS gerekmez; CI'da koşar).
 > `live_sync.js`; çevrimdışı dışa aktarma modülleri içe aktarma sırasıyla
 > buluyor) ve CI'da ESLint, JSDoc tip denetimi, node:test birim testleri,
 > başsız Chromium duman testleri (güneş/gölge, boşta kare çizilmemesi,
-> çevrimdışı HTML) ve piksel referanslı görsel regresyon koşuyor. Kalan:
-> `app3d.js` hâlâ ~2.400 satır (sınıf yöntemleri bölünmedi); three.js'e
-> bağlı modüller tip denetimine girmiyor; QGIS içi gömülü görünüm yok.
+> çevrimdışı HTML) ve piksel referanslı görsel regresyon koşuyor. Sonra
+> `app3d.js` de bölündü (~2.400 → ~520 satır): yöntemler konu modüllerinde
+> (`lighting`, `controls`, `route_layers`, `terrain`, `basemap`,
+> `scene_builders`, `capture`, `charts`) ve sınıfa karıştırılıyor; bir test
+> aynı adlı iki yöntemi yakalıyor. Kalan: three.js'e bağlı modüller tip
+> denetimine girmiyor; QGIS içi gömülü görünüm yok.
 
 1. CI'da QGIS (Docker `qgis/qgis`) işi: duman testi ve algoritma testleri
    (bugün hiç koşmuyor); QGIS 3.x ve 4.x matrisi.
