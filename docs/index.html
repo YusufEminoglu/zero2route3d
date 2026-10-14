@@ -6,7 +6,7 @@
     <title>02Route 3D — Multi-Criteria 3D Mobility Studio for QGIS</title>
     <meta name="description" content="Multi-profile 3D route planning studio for QGIS. Biomechanical kinematics, raster resistance surfaces, Pareto optimization, and a browser-based Three.js WebGL animation." />
     <meta property="og:title" content="02Route 3D QGIS Plugin" />
-    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 16 Processing algorithms, profile-aware access, Tobler/Minetti kinematics, and WebGL route inspection." />
+    <meta property="og:description" content="Multi-Criteria 3D Mobility Studio with 15 mobility profiles, 16 analysis tools in the dock, profile-aware access, Tobler/Minetti kinematics, and WebGL route inspection." />
     <meta property="og:type" content="website" />
 
     <!-- Google Fonts -->
@@ -1084,8 +1084,8 @@
                     <div class="stat-label">Mobility Profiles</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value"><span class="counter" data-target="14">0</span></div>
-                    <div class="stat-label">Processing Algorithms</div>
+                    <div class="stat-value"><span class="counter" data-target="16">0</span></div>
+                    <div class="stat-label">Analysis Tools</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value"><span class="counter" data-target="60">0</span> <span>FPS</span></div>
@@ -1119,7 +1119,7 @@
                 <span class="eyebrow">About</span>
                 <h2>3D mobility intelligence for every traveler</h2>
                 <p><strong>02Route 3D</strong> bridges topological network analysis with physical terrain realities and urban microclimates. Traditional GIS shortest-path engines treat cities as flat planes, overlooking the punishing physiological impact of steep grades, extreme urban heat, and barrier-rich environments.</p>
-                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into the QGIS Processing framework. The plugin operates completely headless for batch modeler workflows, while offering a browser-based Three.js WebGL studio for an interactive 3D cockpit view, gait animation, and instant scorecards.</p>
+                <p>Developed with research from <strong>Dokuz Eylül University, Department of City and Regional Planning</strong>, it brings academic rigor directly into QGIS. All sixteen analysis tools run from a docked Tools tab, while the plugin also offers a browser-based Three.js WebGL studio for an interactive 3D cockpit view, gait animation, and instant scorecards.</p>
                 <div class="author-buttons">
                     <a href="https://github.com/YusufEminoglu" class="btn btn-secondary" target="_blank">👤 Yusuf Eminoğlu</a>
                     <a href="mailto:yusuf.eminoglu@deu.edu.tr" class="btn btn-secondary">✉ yusuf.eminoglu@deu.edu.tr</a>
@@ -1704,20 +1704,20 @@
         </div>
     </section>
 
-    <!-- Processing Algorithms -->
+    <!-- Analysis tools -->
     <section id="algorithms" class="container">
         <div class="section-header fade-up">
-            <span class="eyebrow">Processing Algorithms</span>
-            <h2>16 headless algorithms, fully scriptable</h2>
-            <p>Integrate 02Route 3D deeply into your QGIS Graphical Modeler workflows, Python scripts, and automated batch processing pipelines.</p>
+            <span class="eyebrow">Analysis Tools</span>
+            <h2>16 analysis tools, one docked Tools tab</h2>
+            <p>Pick a tool in the dock, fill its form, run it in the background and open the result. Points, DEM, road network and buildings are filled in from the dock.</p>
         </div>
 
         <div class="table-responsive fade-up">
             <table>
                 <thead>
                     <tr>
-                        <th>Algorithm Name</th>
-                        <th>Processing ID</th>
+                        <th>Tool</th>
+                        <th>Tool key</th>
                         <th>Description</th>
                         <th>Tags</th>
                     </tr>
@@ -1879,8 +1879,8 @@
             <div class="arch-row">
                 <div class="arch-node" style="display:flex; justify-content:space-between; width:100%; max-width:840px; background:transparent; border:none; box-shadow:none;">
                     <div class="arch-node">
-                        <h4>Processing Provider</h4>
-                        <p>15 Headless Algorithms</p>
+                        <h4>Analysis Tools</h4>
+                        <p>16 Tools in the Dock</p>
                     </div>
                     <div class="arch-connector-h"></div>
                     <div class="arch-node">
@@ -2085,7 +2085,7 @@
                 </div>
                 <ul style="list-style:none; color:var(--text-secondary); line-height:1.8;">
                     <li>✨ Added 15 specialized mobility profiles (Pedestrian, Micromobility, Vehicle, Emergency)</li>
-                    <li>✨ Integrated 15 headless QGIS Processing algorithms with modeler support</li>
+                    <li>✨ Added 15 analysis algorithms (now 16 tools, run from the dock's Tools tab)</li>
                     <li>✨ Launched the browser-based Three.js WebGL studio with chase/POV/orbit cameras</li>
                     <li>✨ Implemented Tobler hiking velocity and Minetti 5th-order polynomial metabolic expenditure</li>
                     <li>✨ Added Keys' 16-point bicubic convolution spline with analytical C¹ slope/aspect derivatives</li>

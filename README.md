@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
- A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 16 headless Processing algorithms, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and a browser-based Three.js WebGL 3D cockpit.
+ A multi-criteria 3D spatial mobility and kinematic routing studio for QGIS. Combines 15 specialized mobility profiles, 16 analysis tools in a docked Tools tab, profile-aware road access, biomechanical human energy expenditure (Tobler, Minetti), raster resistance surfaces, and a browser-based Three.js WebGL 3D cockpit.
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
  <a href="#why-it-matters">Why It Matters</a> |
  <a href="#signature-features">Signature Features</a> |
  <a href="#mobility-profiles-catalog">15 Profiles</a> |
- <a href="#processing-algorithms-catalog">15 Algorithms</a> |
+ <a href="#analysis-tools">16 Tools</a> |
  <a href="#scientific--mathematical-foundations">Science &amp; Math</a> |
  <a href="#viewer-experience">WebGL Studio</a> |
  <a href="#showcase-playbook">Showcase Playbook</a> |
@@ -35,7 +35,7 @@
 ## 📖 Live Documentation & Interactive Labs
 
 - 🌐 **[Interactive Web Labs & Web Labs](https://geophilo.com/zero2route3d/)** — Multi-layer parallax hero animation with real-time avatar rig slope physics, interactive MCDA cost surface lab, 4D Pareto trade-off explorer, and anisotropic 3D isochrone wavefront simulator.
-- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.com/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 16 Processing algorithms, PyQGIS automation snippets, and troubleshooting guide.
+- 📚 **[Comprehensive Technical Reference Manual](https://geophilo.com/zero2route3d/MANUAL.html)** — Full technical specification for all 15 mobility profiles, 16 analysis tools, and troubleshooting guide.
 
 ---
 
@@ -115,27 +115,30 @@ The engine features 15 distinct mobility models across Pedestrian, Micromobility
 
 ---
 
-### ⚙️ 15 Headless Processing Algorithms
+<a id="analysis-tools"></a>
 
-Every analytical module is fully scriptable in QGIS Graphical Modeler, PyQGIS, and standalone Python:
+### 🧰 16 Analysis Tools (dock → Tools tab)
 
-| Algorithm Name | Processing ID | Key Output | Tags |
-| :--- | :--- | :--- | :--- |
-| **3D Least-Cost Route** | `zero2route3d:compute_3d_route` | `LineStringZ` layer | Routing, 3D |
-| **3D Isochrones** | `zero2route3d:generate_3d_isochrone` | Multi-tier Polygon layer | Catchment, Wavefront |
-| **E2SFCA Accessibility Score** | `zero2route3d:accessibility_equity_scorecard` | Equity Score Point/Grid | Equity, Justice, Gini |
-| **Multi-Criteria Cost Surface** | `zero2route3d:mcda_cost_surface` | Normalized Friction Raster | Raster, AHP, MCDA |
-| **NAMOA\* Pareto Routing** | `zero2route3d:pareto_3d_routes` | Non-Dominated Routes | Pareto, Multi-Objective |
-| **GPS 3D Map Matching** | `zero2route3d:map_match_3d_track` | Snapped 3D Track Layer | GPX, HMM, Viterbi |
-| **ADA Walkability Audit** | `zero2route3d:walkability_3d_audit` | Compliance Gradient Audit | Audit, ADA, Barrier-Free |
-| **Hazard Evacuation Routing** | `zero2route3d:emergency_evacuation_3d` | Dynamic Egress Paths | Emergency, Hazard |
-| **Solar Exposure Analysis** | `zero2route3d:solar_shade_exposure` | Sun/Shade Polyline Layer | Climate, Solar, Shade |
-| **Batch 3D Routing** | `zero2route3d:batch_3d_routes` | Batch Route Vector Layer | Batch, Vector, OD |
-| **3D OD Cost Matrix** | `zero2route3d:od_matrix_3d` | N×M Matrix CSV / Table | Matrix, OD, Distance |
-| **Analytical Report Generator** | `zero2route3d:generate_route_report_html` | HTML Scorecard Document | Report, HTML, SVG |
-| **Export Route to AutoCAD DXF** | `zero2route3d:export_3d_route_dxf` | AutoCAD DXF (AC1009) | CAD, DXF, Polyline |
-| **Export Standalone 3D HTML** | `zero2route3d:export_3d_html_report` | Self-Contained HTML | Export, WebGL, 3D |
-| **Routing Network Readiness Audit** | `zero2route3d:audit_routing_network` | Annotated LineStringZ network | Topology, Access, QA |
+Every analytical module runs from the **🧰 Tools** tab of the 02Route 3D dock: choose a group and a tool, fill its form, press **Run**. Tools execute in the background with progress and **Cancel**, add their result layers to the project, and give an **Open** button for the HTML or DXF they wrote. Points, DEM, road network, buildings, the last route layer and the selected profile are filled in from the dock (**🔄 Use dock inputs** re-applies them). The tools are not part of the QGIS Processing Toolbox.
+
+| Tool | Group | Key Output |
+| :--- | :--- | :--- |
+| **Compute 3D Route** (turn costs, time of day) | Routing | `LineStringZ` layer |
+| **Transit + Walk Route** (GTFS, RAPTOR) | Routing | One line per walk / ride leg |
+| **Multi-Objective Pareto Routes** (NAMOA\*) | Routing | Non-dominated routes |
+| **Batch Route Planner** | Routing | Batch route vector layer |
+| **Origin-Destination Cost Matrix** | Routing | N×M matrix table |
+| **Emergency Evacuation & Hazard Avoidance** | Routing | Egress paths |
+| **3D Isochrone** (street-corridor service area) | Accessibility | Polygon layer |
+| **Accessibility & Equity Scorecard** (E2SFCA, Gini) | Accessibility | Scored zones |
+| **Walkability & Barrier-Free Audit** | Accessibility | Segment compliance audit |
+| **Solar & Shade Exposure** (building shadows) | Accessibility | Sun / shade polyline layer |
+| **Routing Network Readiness Audit** | Network and data | Annotated network |
+| **MCDA Friction Surface** | Network and data | Normalized friction raster |
+| **GPS Track Map Matching** (HMM / Viterbi) | Network and data | Snapped 3D track |
+| **Route Scorecard** | Reports and export | HTML report |
+| **Standalone 3D WebGL Report** | Reports and export | Self-contained HTML |
+| **AutoCAD DXF** (3D polyline + profile) | Reports and export | DXF (AC1009) |
 
 ---
 
@@ -212,7 +215,7 @@ The Three.js WebGL 3D Studio opens in the browser from QGIS (a local server push
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
 | `web/` | Three.js WebGL studio. `app3d.js` keeps construction, route loading, playback and the render loop; its methods live in topic modules mixed into the class (`lighting.js`, `controls.js`, `route_layers.js`, `terrain.js`, `basemap.js`, `scene_builders.js`, `capture.js`, `charts.js`), on top of pure helpers (`geo.js`, `solar.js`, `scene_geometry.js`, `chart_math.js`, `live_sync.js`, `colors.js`). Tested with ESLint, a JSDoc type check, node:test unit tests and headless-Chromium smoke and pixel-baseline tests (`npm test`, `npm run smoke`, `npm run visual`). |
 | `docs/` | Web Documentation landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
-| `tests/` | Pure-logic unit tests, a routing benchmark gate, the QGIS plugin smoke suite and Processing algorithm suite (run in CI on QGIS 3.28, 3.34, 3.44 LTR and 4.2 / Qt6), `check_qgis_api.py` (every QGIS / Qt name used exists in the running QGIS), and the viewer's JS and browser tests. |
+| `tests/` | Pure-logic unit tests, a routing benchmark gate, the QGIS plugin smoke suite and analysis-tool suite (run in CI on QGIS 3.28, 3.34, 3.44 LTR and 4.2 / Qt6), `check_qgis_api.py` (every QGIS / Qt name used exists in the running QGIS), and the viewer's JS and browser tests. |
 
 ---
 

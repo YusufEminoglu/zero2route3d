@@ -137,14 +137,6 @@ def test_lifecycle(iface):
     )
 
 
-def test_processing_provider():
-    from zero2route3d.processing.provider import Route3DProcessingProvider
-    provider = Route3DProcessingProvider()
-    provider.loadAlgorithms()
-    algs = provider.algorithms()
-    return _ok(f"Route3DProcessingProvider loaded {len(algs)} algorithms", len(algs) >= 10)
-
-
 def test_gui_profile_editor():
     from zero2route3d.core.mobility_profiles import get_profile
     from zero2route3d.gui.profile_editor import ProfileEditorDialog
@@ -467,16 +459,167 @@ def test_standalone_html_bundler_qgis(iface):
         return _ok("StandaloneHtmlBundler self-contained 3D report bundling", is_ok)
 
 
-def test_processing_algorithms_load():
-    from zero2route3d.processing.provider import Route3DProcessingProvider
+def _grid_network(name="tool roads"):
+    """A small connected street grid in Izmir, as a memory line layer."""
+    from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
 
-    provider = Route3DProcessingProvider()
-    provider.loadAlgorithms()
-    algs = provider.algorithms()
-    names = [alg.name() for alg in algs]
-    display_names = [alg.displayName() for alg in algs]
-    valid = len(algs) >= 14 and all(len(n) > 0 for n in names) and all(len(dn) > 0 for dn in display_names)
-    return _ok(f"All {len(algs)} Processing algorithm definitions verified", valid)
+    layer = QgsVectorLayer("LineString?crs=EPSG:4326&field=highway:string", name, "memory")
+    features = []
+    for i in range(4):
+        y = 38.4230 + i * 0.0008
+        f = QgsFeature(layer.fields())
+        f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(27.1420, y), QgsPointXY(27.1460, y)]))
+        f.setAttributes(["residential"])
+        features.append(f)
+    for i in range(5):
+        x = 27.1420 + i * 0.001
+        f = QgsFeature(layer.fields())
+        f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(x, 38.4230), QgsPointXY(x, 38.4254)]))
+        f.setAttributes(["residential"])
+        features.append(f)
+    layer.dataProvider().addFeatures(features)
+    return layer
+
+
+def _wait_for(predicate, seconds=90):
+    import time
+
+    deadline = time.time() + seconds
+    while not predicate() and time.time() < deadline:
+        QgsApplication.processEvents()
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_tools_catalog_and_registry(iface):
+    """Sixteen tools exist, and none of them is in the Processing registry."""
+    from zero2route3d.analysis.catalog import CATEGORIES, tool_names
+
+    names = tool_names()
+    mod = __import__(PACKAGE, fromlist=["classFactory"])
+    plugin = mod.classFactory(iface)
+    plugin.initGui()
+    plugin.toggle_dock()
+    QgsApplication.processEvents()
+    registry = QgsApplication.processingRegistry()
+    in_registry = registry.providerById("zero2route3d")
+    leaked = [a.id() for a in registry.algorithms() if "zero2route3d" in a.id()]
+    plugin.unload()
+    QgsApplication.processEvents()
+    return _ok(
+        "16 analysis tools exist and none is registered with Processing",
+        len(names) == 16 and len(set(names)) == 16 and len(CATEGORIES) == 4
+        and in_registry is None and not leaked,
+        f"tools={len(names)} provider={in_registry} leaked={leaked[:2]}",
+    )
+
+
+def test_tool_panel_builds_every_form(iface):
+    """Every tool gets a native widget for every visible parameter and output."""
+    from zero2route3d.gui.tool_panel import ToolPanel
+
+    panel = ToolPanel(iface=iface)
+    problems = []
+    for name in panel.tool_names():
+        if not panel.select_tool(name):
+            problems.append(f"{name}: cannot select")
+            continue
+        alg = panel._algorithm
+        missing = [p.name() for p in alg.parameterDefinitions() if p.name() not in panel.form.wrappers]
+        if missing:
+            problems.append(f"{name}: no widget for {missing}")
+        if not (alg.shortHelpString() or "").strip():
+            problems.append(f"{name}: no help text")
+    panel.shutdown()
+    panel.deleteLater()
+    return _ok("Tools tab builds a form for all 16 tools", not problems, "; ".join(problems[:3]))
+
+
+def test_tool_panel_runs_route_in_background(iface):
+    """Run Compute 3D Route from the panel: background task, layer in project, styled."""
+    from qgis.core import QgsProject, QgsVectorLayer
+    from zero2route3d.gui.tool_panel import ToolPanel
+
+    network = _grid_network()
+    project = QgsProject.instance()
+    project.addMapLayer(network)
+    before = set(project.mapLayers())
+    panel = ToolPanel(
+        iface=iface,
+        defaults=lambda: {
+            "start": (27.1421, 38.4231),
+            "end": (27.1459, 38.4253),
+            "network": network,
+        },
+    )
+    panel.select_tool("compute_3d_route")
+    started = panel.run_current_tool()
+    running_at_once = panel.is_running
+    done = _wait_for(lambda: panel.last_ok is not None)
+    added = [project.mapLayer(i) for i in set(project.mapLayers()) - before]
+    routes = [l for l in added if isinstance(l, QgsVectorLayer) and l.featureCount() >= 1]
+    aliased = bool(routes) and any(routes[0].attributeAlias(i) for i in range(routes[0].fields().count()))
+    log_text = panel.log.toPlainText()
+    ok = bool(panel.last_ok)
+    panel.shutdown()
+    panel.deleteLater()
+    for layer in added:
+        project.removeMapLayer(layer.id())
+    project.removeMapLayer(network.id())
+    return _ok(
+        "Tools tab runs Compute 3D Route in the background and loads a styled layer",
+        started and running_at_once and done and ok and bool(routes) and aliased,
+        f"started={started} done={done} ok={ok} layers={len(routes)} aliased={aliased} log={log_text[-120:]!r}",
+    )
+
+
+def test_tool_panel_refuses_incomplete_form(iface):
+    """A missing required input is reported in the panel and no task is started."""
+    from zero2route3d.gui.tool_panel import ToolPanel
+
+    panel = ToolPanel(iface=iface)
+    panel.select_tool("export_3d_html_report")
+    started = panel.run_current_tool()
+    message = panel.lbl_status.text()
+    running = panel.is_running
+    panel.shutdown()
+    panel.deleteLater()
+    return _ok(
+        "Tools tab reports a missing required input instead of running",
+        (not started) and bool(message) and not running,
+        message,
+    )
+
+
+def test_dock_tools_tab_is_prefilled(iface):
+    """Point A/B and the road network chosen in the dock reach the Tools tab."""
+    from qgis.core import QgsProject
+    from zero2route3d.core.routing_engine import Waypoint
+    from zero2route3d.gui.dock import Route3DStudioDock
+
+    network = _grid_network("dock roads")
+    QgsProject.instance().addMapLayer(network)
+    dock = Route3DStudioDock(iface=iface)
+    dock.point_a = Waypoint(lon=27.1421, lat=38.4231, name="A")
+    dock.point_b = Waypoint(lon=27.1459, lat=38.4253, name="B")
+    dock.cmb_route_road_layer.setLayer(network)
+    tab_index = dock.tab_widget.indexOf(dock.tool_panel)
+    panel = dock.tool_panel
+    panel.select_tool("compute_3d_route")
+    panel.apply_dock_defaults()
+    params = panel.form.createProcessingParameters()
+    start = str(params.get("START_POINT"))
+    end = str(params.get("END_POINT"))
+    net_ok = params.get("NETWORK_LAYER") is not None
+    dock.teardown()
+    dock.deleteLater()
+    QgsApplication.processEvents()
+    QgsProject.instance().removeMapLayer(network.id())
+    return _ok(
+        "Dock pre-fills Start/End points and road network in the Tools tab",
+        tab_index >= 0 and "27.1421" in start and "38.4253" in end and net_ok,
+        f"tab={tab_index} start={start} end={end} network={net_ok}",
+    )
 
 
 def test_dock_route_runs_in_background(iface):
@@ -648,7 +791,7 @@ def run_all(iface):
         test_metadata(),
         test_class_factory(),
         test_lifecycle(iface),
-        test_processing_provider(),
+        test_tools_catalog_and_registry(iface),
         test_gui_profile_editor(),
         test_gui_cue_sheet_widget(),
         test_gui_multi_metric_panel(iface),
@@ -662,7 +805,10 @@ def run_all(iface):
         test_dock_payload_carries_dem_terrain(iface),
         test_cartographic_themes_in_qgis(iface),
         test_standalone_html_bundler_qgis(iface),
-        test_processing_algorithms_load(),
+        test_tool_panel_builds_every_form(iface),
+        test_tool_panel_runs_route_in_background(iface),
+        test_tool_panel_refuses_incomplete_form(iface),
+        test_dock_tools_tab_is_prefilled(iface),
     ]
     passed = sum(1 for r in results if r)
     print("-" * 60)

@@ -11,10 +11,8 @@ try:  # Qt6 (QGIS 4) moved QAction to QtGui.
     from qgis.PyQt.QtGui import QAction
 except ImportError:  # Qt5 (QGIS 3)
     from qgis.PyQt.QtWidgets import QAction
-from qgis.core import QgsApplication
 
 from .gui.dock import Route3DStudioDock
-from .processing.provider import Route3DProcessingProvider
 
 
 class Route3DPlugin:
@@ -24,11 +22,10 @@ class Route3DPlugin:
         self.iface = iface
         self.dock: Optional[Route3DStudioDock] = None
         self.action: Optional[QAction] = None
-        self.provider: Optional[Route3DProcessingProvider] = None
         self.plugin_dir = Path(__file__).resolve().parent
 
     def initGui(self) -> None:
-        """Initialize plugin GUI action, dock widget, and processing provider."""
+        """Create the toolbar action and menu entry; the dock opens on demand."""
         icon_path = self.plugin_dir / "icons" / "icon.png"
         icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
 
@@ -38,16 +35,6 @@ class Route3DPlugin:
 
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("&02Route 3D", self.action)
-
-        # Initialize Processing Provider
-        self.provider = Route3DProcessingProvider()
-        QgsApplication.processingRegistry().addProvider(self.provider)
-
-    def initProcessing(self) -> None:
-        """Called by QGIS when processing is initialized."""
-        if self.provider is None:
-            self.provider = Route3DProcessingProvider()
-            QgsApplication.processingRegistry().addProvider(self.provider)
 
     def toggle_dock(self) -> None:
         """Open or toggle visibility of the 3D Studio dock panel."""
@@ -69,7 +56,7 @@ class Route3DPlugin:
                 self.dock.activateWindow()
 
     def unload(self) -> None:
-        """Tear down GUI elements and deregister processing provider."""
+        """Tear down the toolbar action, menu entry and dock."""
         if self.action is not None:
             with contextlib.suppress(Exception):
                 self.iface.removePluginMenu("&02Route 3D", self.action)
@@ -85,11 +72,6 @@ class Route3DPlugin:
                 self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None
-
-        if self.provider is not None:
-            with contextlib.suppress(Exception):
-                QgsApplication.processingRegistry().removeProvider(self.provider)
-            self.provider = None
 
         # Release the cached routing graph (can be 100+ MB for a large city).
         with contextlib.suppress(Exception):

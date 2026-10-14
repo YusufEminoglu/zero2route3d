@@ -84,7 +84,7 @@ jobs:
       - name: Routing benchmark gate
         run: python -m zero2route3d.tests.benchmark_routing --gate
 
-  # The GUI smoke suite and the Processing algorithm suite need a real QGIS.
+  # The GUI smoke suite and the Analysis tool suite need a real QGIS.
   # Ubuntu 24.04 ships QGIS 3.34 with Python bindings; Qt runs offscreen.
   qgis-tests:
     runs-on: ubuntu-24.04
@@ -106,7 +106,7 @@ jobs:
         working-directory: zero2route3d
         run: /usr/bin/python3 tests/smoke_plugin.py
 
-      - name: Processing algorithm suite
+      - name: Analysis tool suite
         run: /usr/bin/python3 zero2route3d/tests/test_algorithms_qgis.py
 
       - name: QGIS / Qt API references resolve
@@ -206,7 +206,7 @@ jobs:
           export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
           python3 tests/smoke_plugin.py
 
-      - name: Processing algorithm suite
+      - name: Analysis tool suite
         run: |
           export PYTHONPATH="/usr/share/qgis/python:$GITHUB_WORKSPACE"
           python3 zero2route3d/tests/test_algorithms_qgis.py

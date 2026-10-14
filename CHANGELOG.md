@@ -5,9 +5,28 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-14
 
 ### Changed
+- **The sixteen analysis tools moved from the Processing Toolbox into the dock.**
+  A new **🧰 Tools** tab lists them in four groups (Routing, Accessibility,
+  Network and data, Reports and export). A tool's form is built from QGIS's own
+  parameter widgets (canvas point picker, layer and field combos, output
+  destinations); it runs as a cancellable background task with progress and a
+  log, adds its result layers to the project (with the same symbology and
+  field aliases as before) and offers an Open button for HTML and DXF files.
+- The Tools tab is pre-filled from the dock: Point A and B, DEM, LST and green
+  rasters, road network, building layer, the last route layer and the selected
+  mobility profile. **Use dock inputs** re-applies them.
+- The `processing/` package is now `analysis/`; its `provider.py` is replaced by
+  `analysis/catalog.py` (tool list and groups).
+
+### Removed
+- The Processing provider. `hasProcessingProvider` is now `no`; the tools are no
+  longer reachable from the Processing Toolbox, the Graphical Modeler, the batch
+  dialog or `processing.run("zero2route3d:...")`.
+
+### Changed (earlier, unreleased)
 - `web/js/app3d.js` (about 2,400 lines) is split by topic: the class keeps
   construction, route loading, playback and the render loop (about 520
   lines), and its other methods live in `lighting.js`, `controls.js`,

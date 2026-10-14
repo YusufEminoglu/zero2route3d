@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>02Route 3D — Technical Reference Manual</title>
-    <meta name="description" content="Complete user and technical reference manual for the 02Route 3D QGIS plugin. Documentation for 15 mobility profiles, 16 Processing algorithms, profile-aware access, kinematics, and WebGL studio." />
+    <meta name="description" content="Complete user and technical reference manual for the 02Route 3D QGIS plugin. Documentation for 15 mobility profiles, 16 analysis tools, profile-aware access, kinematics, and WebGL studio." />
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -391,7 +391,7 @@
             <ul class="toc-list" id="toc-list">
                 <li><a href="#overview">1. System Overview</a></li>
                 <li><a href="#profiles">2. Mobility Profiles (15)</a></li>
-                <li><a href="#algorithms">3. Processing Algorithms (16)</a></li>
+                <li><a href="#algorithms">3. Analysis Tools (16)</a></li>
                 <li><a href="#kinematics">4. Kinematics &amp; Math</a></li>
                 <li><a href="#mcda">5. MCDA &amp; AHP Surface</a></li>
                 <li><a href="#pareto">6. NAMOA* Pareto Routing</a></li>
@@ -418,8 +418,8 @@
                 <div class="glass-panel">
                     <ul style="list-style:none; display:flex; flex-direction:column; gap:1rem;">
                         <li><strong>1. Core Graph Engine:</strong> Builds 3D topological graphs draped with continuous elevation values from digital elevation models (DEMs). Features bicubic Catmull-Rom spline sampling, A* search, and Dijkstra wavefront propagation.</li>
-                    <li><strong>2. Processing Provider:</strong> Exposes 16 headless, scriptable algorithms compatible with QGIS Graphical Modeler, batch processing, and pure Python automation.</li>
-                        <li><strong>3. Studio GUI Dock:</strong> A 5-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation. Route calculation, the OD matrix and the OSM/DEM downloads run as QGIS background tasks: watch the progress and cancel them from the task bar at the bottom of the QGIS window. The dock remembers profiles, weights and playback settings; layer choices are saved with the project. <em>Save Scenario</em> writes points, profiles, weights and the route results to a <code>*.route3d.json</code> file; <em>Load Scenario</em> restores them and compares the saved run with the current (or next) routes.</li>
+                    <li><strong>2. Analysis Tools:</strong> Sixteen analysis tools (routing, accessibility, network and data, reports and export) that run from the dock's <strong>🧰 Tools</strong> tab as background tasks.</li>
+                        <li><strong>3. Studio GUI Dock:</strong> A 6-tab docked interface for interactive origin-destination picking, live profile switching, AHP weight matrix adjustment, and real-time canvas animation. Route calculation, the OD matrix and the OSM/DEM downloads run as QGIS background tasks: watch the progress and cancel them from the task bar at the bottom of the QGIS window. The dock remembers profiles, weights and playback settings; layer choices are saved with the project. <em>Save Scenario</em> writes points, profiles, weights and the route results to a <code>*.route3d.json</code> file; <em>Load Scenario</em> restores them and compares the saved run with the current (or next) routes.</li>
                         <li><strong>4. WebGL 3D Studio:</strong> A Three.js viewer that opens in your web browser from a local server started by the plugin (127.0.0.1 only). It shows the routes on real terrain sampled from the DEM you select in QGIS (or an approximate surface, labelled as such, without one), an elevation chart linked to the 3D walker, and a comparison of all computed profiles. New routes appear automatically. Keyboard: Space plays or pauses, the arrow keys move along the route, Home/End jump to its ends, R resets the view. Snapshot saves a captioned PNG at twice the screen resolution (Shift-click: four times); Record saves a captioned video. The standalone HTML export contains the same viewer and works offline.</li>
                     </ul>
                 </div>
@@ -464,10 +464,10 @@
                 </div>
             </section>
 
-            <!-- Section 3: 16 Processing Algorithms -->
+            <!-- Section 3: 16 analysis tools -->
             <section id="algorithms" class="doc-section">
-                <h2>3. Processing Algorithms Catalog</h2>
-                <p>All algorithms are available in the QGIS Processing Toolbox under the <strong>02Route 3D</strong> provider:</p>
+                <h2>3. Analysis Tools Catalog</h2>
+                <p>All tools are in the dock's <strong>🧰 Tools</strong> tab: pick a group, pick a tool, fill the form and press <strong>Run</strong>. A tool runs in the background (progress bar and <strong>Cancel</strong>), adds its result layers to the project and shows an <strong>Open</strong> button for the HTML or DXF file it wrote. Point A/B, DEM, road network, buildings, the last route and the selected profile are filled in from the dock; <strong>Use dock inputs</strong> re-applies them. The tools are not part of the QGIS Processing Toolbox.</p>
                 
                 <div class="glass-panel">
                     <h3>1. <code>zero2route3d:compute_3d_route</code> (3D Least-Cost Route)</h3>
@@ -503,13 +503,13 @@
                     <h3>11. <code>zero2route3d:od_matrix_3d</code> (3D OD Cost Matrix)</h3>
                     <p>Computes N×M travel times, distances, and calorie matrices across the 3D network.</p>
 
-                    <h3>12. <code>zero2route3d:generate_route_report_html</code> (HTML Scorecard)</h3>
+                    <h3>12. Tools tab: <strong>Route Scorecard</strong> (HTML Scorecard)</h3>
                     <p>Generates a publication-grade HTML audit scorecard with embedded SVG elevation profiles.</p>
 
-                    <h3>13. <code>zero2route3d:export_3d_route_dxf</code> (AutoCAD DXF Exporter)</h3>
+                    <h3>13. Tools tab: <strong>AutoCAD DXF</strong> (AutoCAD DXF Exporter)</h3>
                     <p>Exports 3D Polyline (AC1009) and longitudinal elevation profile drawings directly to DXF format.</p>
 
-                    <h3>14. <code>zero2route3d:export_3d_html_report</code> (Standalone 3D HTML)</h3>
+                    <h3>14. Tools tab: <strong>Standalone 3D WebGL Report</strong> (Standalone 3D HTML)</h3>
                     <p>Bundles the route data, Three.js and the viewer into a self-contained offline 3D WebGL viewer.</p>
 
                     <h3>15. <code>zero2route3d:audit_routing_network</code> (Routing Network Readiness Audit)</h3>
@@ -625,7 +625,7 @@
             <!-- Section 8: Data Formats & Exports -->
             <section id="exports" class="doc-section">
                 <h2>8. Data Formats &amp; Interoperability</h2>
-                <p>Route results leave 02Route 3D through a mix of Studio dock quick-export buttons and dedicated Processing algorithms:</p>
+                <p>Route results leave 02Route 3D through a mix of Studio dock quick-export buttons and dedicated tools in the Tools tab:</p>
                 <div class="glass-panel">
                     <div class="table-wrap">
                         <table>
@@ -634,36 +634,25 @@
                                 <tr><td><code>LineStringZ</code></td><td>Native QGIS vector layer</td><td>The result of every routing algorithm; usable directly in QGIS or exported via QGIS's own "Save As".</td></tr>
                                 <tr><td>GPX 1.1</td><td>Dock <strong>💾 GPX</strong> button</td><td>GPS Exchange Format with elevation, for handheld GPS units and GPX-aware apps.</td></tr>
                                 <tr><td>GeoJSON 3D</td><td>Dock <strong>💾 GeoJSON</strong> button</td><td>3D-coordinate GeoJSON for web maps and lightweight GIS tools.</td></tr>
-                                <tr><td>AutoCAD DXF</td><td><code>zero2route3d:export_3d_route_dxf</code></td><td>AC1009-standard 3D Polyline plus a longitudinal elevation profile drawing; opens in AutoCAD, Civil 3D, Rhino and SketchUp.</td></tr>
-                                <tr><td>Standalone 3D HTML</td><td><code>zero2route3d:export_3d_html_report</code></td><td>Self-contained, offline-capable HTML file with an embedded Three.js viewer &mdash; no server or QGIS needed to view it.</td></tr>
-                                <tr><td>HTML scorecard</td><td><code>zero2route3d:generate_route_report_html</code></td><td>Publication-grade analytical report with embedded SVG elevation profiles.</td></tr>
+                                <tr><td>AutoCAD DXF</td><td>Tools tab: <strong>AutoCAD DXF</strong></td><td>AC1009-standard 3D Polyline plus a longitudinal elevation profile drawing; opens in AutoCAD, Civil 3D, Rhino and SketchUp.</td></tr>
+                                <tr><td>Standalone 3D HTML</td><td>Tools tab: <strong>Standalone 3D WebGL Report</strong></td><td>Self-contained, offline-capable HTML file with an embedded Three.js viewer &mdash; no server or QGIS needed to view it.</td></tr>
+                                <tr><td>HTML scorecard</td><td>Tools tab: <strong>Route Scorecard</strong></td><td>Publication-grade analytical report with embedded SVG elevation profiles.</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </section>
 
-            <!-- Section 9: PyQGIS Automation -->
+            <!-- Section 9: Running the tools -->
             <section id="pyqgis" class="doc-section">
-                <h2>9. PyQGIS Automation &amp; Batch Scripting</h2>
-                <p>You can script 02Route 3D directly from the QGIS Python Console or standalone headless scripts:</p>
-
-                <pre><code>import processing
-
-# 1. Compute 3D Least Cost Route
-result = processing.run("zero2route3d:compute_3d_route", {
-    'NETWORK_LAYER': 'streets_network',
-    'DEM_LAYER': 'dem',  # any elevation raster loaded in QGIS
-    'START_POINT': '27.1428,38.4237',
-    'END_POINT': '27.1550,38.4350',
-    'PROFILE': 4,  # index in the profile list: 4 = Wheelchair
-    'OUTPUT': 'memory:wheelchair_route'
-})
-
-route_layer = result['OUTPUT']
-QgsProject.instance().addMapLayer(route_layer)
-print("Route generated with length:", route_layer.featureCount())
-</code></pre>
+                <h2>9. Running the Tools</h2>
+                <p>Open the dock, switch to <strong>🧰 Tools</strong>, choose a group (Routing, Accessibility, Network and data, Reports and export) and a tool. <strong>ℹ️ About this tool</strong> shows what it computes. Pick start and end points with the canvas picker next to each point field, or leave the values the dock filled in from Point A and B.</p>
+                <ul>
+                    <li><strong>Output layers</strong> are added to the project when the run finishes; leave an output on <em>Create temporary layer</em> or choose a file.</li>
+                    <li><strong>HTML and DXF outputs</strong> get an <strong>Open</strong> button under the progress bar.</li>
+                    <li><strong>Cancel</strong> stops a running tool; the log under the form lists warnings and errors.</li>
+                </ul>
+                <p>The tools are not registered with the QGIS Processing framework, so they are not available in the Processing Toolbox, the Graphical Modeler or <code>processing.run()</code>.</p>
             </section>
 
             <!-- Section 10: Troubleshooting & FAQ -->

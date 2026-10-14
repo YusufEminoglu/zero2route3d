@@ -113,16 +113,14 @@ def make_route_layer_z():
 
 
 def run():
-    from zero2route3d.processing.provider import Route3DProcessingProvider
+    from zero2route3d.analysis.catalog import create_tool, tool_names
 
-    provider = Route3DProcessingProvider()
-    provider.loadAlgorithms()
-    algs = {a.name(): a for a in provider.algorithms()}
-    print(f"\nProvider exposes {len(algs)} algorithms")
+    algs = {name: create_tool(name) for name in tool_names()}
+    print(f"\nCatalog exposes {len(algs)} analysis tools")
 
     ctx = QgsProcessingContext()
     ctx.setProject(QgsProject.instance())
-    # ---- 1. Group ids must not split the toolbox into two identical folders.
+    # ---- 1. Group ids must stay uniform across the tools.
     group_ids = {a.groupId() for a in algs.values()}
     check("all algorithms share one groupId", len(group_ids) == 1, str(group_ids))
 
@@ -259,7 +257,7 @@ def run():
               f"ok={ok} errors={errs.errors[:1]}")
 
     # ---- 6. Export algorithms must reject empty input rather than invent Izmir.
-    from zero2route3d.processing.route_input import extract_route_coords_3d
+    from zero2route3d.analysis.route_input import extract_route_coords_3d
     empty = QgsVectorLayer("LineString?crs=EPSG:4326", "empty", "memory")
     try:
         extract_route_coords_3d(empty, ctx, "test layer")
@@ -343,7 +341,7 @@ def run():
                 check("routing network audit styles allowed and blocked links",
                       audited.renderer().__class__.__name__ == "QgsCategorizedSymbolRenderer")
 
-    check("provider exposes network audit algorithm",
+    check("catalog exposes network audit tool",
           "audit_routing_network" in algs, str(sorted(algs)))
 
     # ---- 10. Custom QGIS networks must preserve Z and common fields.

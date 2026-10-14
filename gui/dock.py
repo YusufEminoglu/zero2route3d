@@ -1,4 +1,4 @@
-"""Unified 5-Tab Studio DockWidget for 02Route 3D."""
+"""Unified 6-Tab Studio DockWidget for 02Route 3D."""
 from __future__ import annotations
 
 import contextlib
@@ -111,6 +111,7 @@ from .multi_metric_panel import MultiMetricPanel
 from .profile_editor import ProfileEditorDialog
 from .server import Route3DLocalServer
 from .theme import apply_adaptive_theme
+from .tool_panel import ToolPanel
 
 
 def _vector_filters() -> Any:
@@ -256,7 +257,7 @@ class Route3DStudioDock(QDockWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
 
         # -------------------------------------------------------------
-        # 5-Tab Multi-Studio Panel (Quick Mode First)
+        # 6-Tab Multi-Studio Panel (Quick Mode First)
         # -------------------------------------------------------------
         self.tab_widget = QTabWidget(self.root_widget)
         self.tab_widget.setObjectName("route3dTabs")
@@ -280,7 +281,11 @@ class Route3DStudioDock(QDockWidget):
         self._build_tab_od(self.tab_od)
         self.tab_widget.addTab(self.tab_od, "📊 OD Matrix")
 
-        # Tab 5: Settings & Profiles
+        # Tab 5: the sixteen analysis tools (routing, accessibility, network, reports)
+        self.tool_panel = ToolPanel(iface=self.iface, defaults=self.tool_defaults)
+        self.tab_widget.addTab(self.tool_panel, "🧰 Tools")
+
+        # Tab 6: Settings & Profiles
         self.tab_settings = QWidget()
         self._build_tab_settings(self.tab_settings)
         self.tab_widget.addTab(self.tab_settings, "⚙️ Profiles")
@@ -2773,6 +2778,7 @@ class Route3DStudioDock(QDockWidget):
         save_settings(self)
         if remove_layers:
             cancel_tasks(self)
+            self.tool_panel.shutdown()
         if self.active_tool is not None and self.canvas is not None:
             with contextlib.suppress(Exception):
                 self.canvas.unsetMapTool(self.active_tool)
@@ -2802,6 +2808,40 @@ class Route3DStudioDock(QDockWidget):
 
         with contextlib.suppress(OSError):
             self.current_route_file.unlink()
+
+    # ------------------------------------------------------------------
+    # Tools tab
+    # ------------------------------------------------------------------
+    def tool_defaults(self) -> Dict[str, Any]:
+        """Dock state the Tools tab uses to pre-fill a tool's parameters."""
+
+        def layer_of(combo_name: str) -> Any:
+            combo = getattr(self, combo_name, None)
+            return combo.currentLayer() if combo is not None else None
+
+        def point(waypoint: Optional[Waypoint]) -> Optional[Tuple[float, float]]:
+            return (waypoint.lon, waypoint.lat) if waypoint is not None else None
+
+        route_layer = None
+        project = QgsProject.instance()
+        for layer_id in self._managed_route_layer_ids:
+            candidate = project.mapLayer(layer_id)
+            if isinstance(candidate, QgsVectorLayer) and candidate.isValid():
+                route_layer = candidate  # the last one added wins (set order is not insertion)
+        profile_name = ""
+        with contextlib.suppress(Exception):
+            profile_name = get_profile(self.cmb_profile.currentData() or "adult").name
+        return {
+            "start": point(self.point_a),
+            "end": point(self.point_b),
+            "dem": layer_of("cmb_dem_layer"),
+            "lst": layer_of("cmb_lst_layer"),
+            "green": layer_of("cmb_green_layer"),
+            "network": layer_of("cmb_route_road_layer"),
+            "buildings": layer_of("cmb_route_building_layer"),
+            "route": route_layer,
+            "profile_name": profile_name,
+        }
 
     # ------------------------------------------------------------------
     # Settings and scenarios
