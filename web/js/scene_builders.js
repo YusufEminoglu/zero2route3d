@@ -16,10 +16,71 @@ export const sceneBuilderMethods = {
     return Array.isArray(list) ? list : [];
   },
 
+  corridorParks() {
+    const list = this.routeData?.properties?.corridor_parks || this.routeCollection?.properties?.corridor_parks;
+    return Array.isArray(list) ? list : [];
+  },
+
+  ribbonVertexColors(geo, mode) {
+    if (!mode || mode === 'profile') return false;
+    const posAttr = geo.getAttribute('position');
+    if (!posAttr) return false;
+    const vertexCount = posAttr.count;
+    const sampleCount = Math.max(1, Math.floor(vertexCount / 2) - 1);
+    const series = typeof this.profileSeries === 'function' ? this.profileSeries() : [];
+    const totalD = series.length ? (series[series.length - 1].d || 1) : 1;
+    const colors = new Float32Array(vertexCount * 3);
+    const col = new THREE.Color();
+
+    let minSpd = Infinity;
+    let maxSpd = -Infinity;
+    series.forEach((p) => {
+      if (Number.isFinite(p.speed)) {
+        minSpd = Math.min(minSpd, p.speed);
+        maxSpd = Math.max(maxSpd, p.speed);
+      }
+    });
+    if (!Number.isFinite(minSpd) || maxSpd <= minSpd) {
+      minSpd = 0;
+      maxSpd = 25;
+    }
+
+    for (let i = 0; i <= sampleCount; i++) {
+      const frac = i / sampleCount;
+      const targetD = frac * totalD;
+      let idx = 0;
+      while (idx < series.length - 1 && series[idx + 1].d <= targetD) idx += 1;
+      const pt = series[idx] || { slope: 0, speed: 5 };
+      if (mode === 'slope') {
+        const a = Math.abs(Number(pt.slope) || 0);
+        if (a < 3) col.setHex(0x10b981);
+        else if (a < 6) col.setHex(0xeab308);
+        else if (a < 10) col.setHex(0xf97316);
+        else col.setHex(0xef4444);
+      } else {
+        const s = Number.isFinite(pt.speed) ? pt.speed : minSpd;
+        const norm = Math.max(0, Math.min(1, (s - minSpd) / Math.max(0.5, maxSpd - minSpd)));
+        col.setHSL(0.58 - norm * 0.25, 0.88, 0.50);
+      }
+      const base = i * 6;
+      if (base + 5 < colors.length) {
+        colors[base] = col.r;
+        colors[base + 1] = col.g;
+        colors[base + 2] = col.b;
+        colors[base + 3] = col.r;
+        colors[base + 4] = col.g;
+        colors[base + 5] = col.b;
+      }
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return true;
+  },
+
   buildClassyRoadRibbon() {
     if (!this.activePath || this.scenePoints.length < 2) return;
     const profColor = new THREE.Color(this.profileColor(this.routeData));
     const side = THREE.DoubleSide;
+    const colorMode = this.ribbonColorMode || 'profile';
 
     // Layer 1: asphalt band, 7.5 m wide, 0.8 m above the route line.
     this.roadMesh = new THREE.Mesh(
@@ -33,11 +94,17 @@ export const sceneBuilderMethods = {
     this.roadMesh.renderOrder = 8;
     this.scene.add(this.roadMesh);
 
-    // Layer 2: translucent glow band in the profile colour.
+    // Layer 2: translucent glow band in the profile or metric colour.
+    const glowGeo = ribbonGeometry(this.activePath, 2.6, 1.1);
+    const hasGlowVC = this.ribbonVertexColors(glowGeo, colorMode);
     this.glowTubeMesh = new THREE.Mesh(
-      ribbonGeometry(this.activePath, 2.6, 1.1),
+      glowGeo,
       new THREE.MeshBasicMaterial({
-        color: profColor, transparent: true, opacity: 0.35, side,
+        color: hasGlowVC ? 0xffffff : profColor,
+        vertexColors: hasGlowVC,
+        transparent: true,
+        opacity: 0.38,
+        side,
         polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
       }),
     );
@@ -45,10 +112,17 @@ export const sceneBuilderMethods = {
     this.scene.add(this.glowTubeMesh);
 
     // Layer 3: bright centre line.
+    const centerGeo = ribbonGeometry(this.activePath, 0.9, 1.4);
+    const hasCenterVC = this.ribbonVertexColors(centerGeo, colorMode);
     this.centerlineMesh = new THREE.Mesh(
-      ribbonGeometry(this.activePath, 0.9, 1.4),
+      centerGeo,
       new THREE.MeshStandardMaterial({
-        color: 0xffffff, emissive: profColor, emissiveIntensity: 0.95, roughness: 0.15, side,
+        color: 0xffffff,
+        vertexColors: hasCenterVC,
+        emissive: hasCenterVC ? 0x111827 : profColor,
+        emissiveIntensity: hasCenterVC ? 0.25 : 0.95,
+        roughness: 0.15,
+        side,
         polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
       }),
     );
@@ -306,8 +380,52 @@ export const sceneBuilderMethods = {
   buildUrbanEnvironment() {
     this.buildBuildings(this.corridorBuildings());
     this.buildTrees(this.corridorTrees());
+    this.buildParks(this.corridorParks());
     this.buildingsGroup.visible = this.showBuildings;
     this.treesGroup.visible = this.showTrees;
+    if (this.parksGroup) this.parksGroup.visible = this.showTrees;
+  },
+
+  buildParks(parks) {
+    if (!this.parksGroup || !Array.isArray(parks) || !parks.length) return;
+    const geos = [];
+    parks.forEach((park) => {
+      const coords = park.polygon || park.coordinates || [];
+      if (coords.length < 3) return;
+      const scenePts = coords.map(([lon, lat]) => this.lonLatToSceneMeters(lon, lat, this.baseElevation));
+      let groundY = Infinity;
+      scenePts.forEach((p) => {
+        groundY = Math.min(groundY, this.groundY(p.x, p.z));
+      });
+      if (!Number.isFinite(groundY)) {
+        const fallbackEle = park.base_elevation_m !== undefined ? Number(park.base_elevation_m) : this.baseElevation;
+        groundY = (fallbackEle - this.baseElevation) * this.elevationExaggeration;
+      }
+      const shape = new THREE.Shape();
+      shape.moveTo(scenePts[0].x, -scenePts[0].z);
+      for (let i = 1; i < scenePts.length; i++) shape.lineTo(scenePts[i].x, -scenePts[i].z);
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.35, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      geo.translate(0, groundY + 0.15, 0);
+      geos.push(geo);
+    });
+    if (!geos.length) return;
+    const merged = mergeGeometries(geos);
+    geos.forEach((g) => g.dispose());
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x22c55e,
+      roughness: 0.85,
+      metalness: 0.02,
+      transparent: true,
+      opacity: 0.55,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.receiveShadow = true;
+    this.parksGroup.add(mesh);
   },
 
   // Buildings: one merged mesh per facade material (five draw calls in all)

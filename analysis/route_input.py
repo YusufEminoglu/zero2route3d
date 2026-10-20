@@ -77,8 +77,3 @@ def extract_route_coords_3d(
         )
 
     return coords_3d
-
-
-def has_real_z(coords_3d: List[Tuple[float, float, float]]) -> bool:
-    """True when at least one vertex carries a non-zero elevation."""
-    return any(abs(c[2]) > 1e-9 for c in coords_3d)

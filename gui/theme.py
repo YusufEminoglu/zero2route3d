@@ -71,7 +71,7 @@ def build_dock_qss(palette: QPalette | None = None) -> str:
         border-radius: 10px;
         margin-bottom: 8px;
     }}
-    QLabel.route3dCardTitle {{
+    QLabel.route3dCardTitle, QLabel.route3dSectionTitle {{
         font-weight: 700;
         font-size: 13px;
         color: {c['accent_cyan']};
@@ -79,6 +79,45 @@ def build_dock_qss(palette: QPalette | None = None) -> str:
     QLabel.route3dSubtle {{
         color: {c['subtle']};
         font-size: 11px;
+    }}
+    QLabel.route3dBadgeInfo {{
+        background: {c['surface']};
+        color: {c['accent_cyan']};
+        border: 1px solid {c['border']};
+        border-radius: 8px;
+        padding: 4px 10px;
+        font-weight: 700;
+        font-size: 10px;
+    }}
+    QLabel.route3dKpi {{
+        background: {c['surface']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 8px;
+        padding: 8px 6px;
+        font-size: 11px;
+    }}
+    QTabWidget#route3dTabs::pane {{
+        border: 1px solid {c['border']};
+        border-radius: 8px;
+        background: {c['window']};
+    }}
+    QTabBar::tab {{
+        background: {c['surface']};
+        color: {c['subtle']};
+        border: 1px solid {c['border']};
+        border-bottom: none;
+        border-top-left-radius: 6px;
+        border-top-right-radius: 6px;
+        padding: 6px 10px;
+        margin-right: 2px;
+        font-weight: 600;
+        font-size: 11px;
+    }}
+    QTabBar::tab:selected {{
+        background: {c['card']};
+        color: {c['accent_cyan']};
+        font-weight: 700;
     }}
     QPushButton.route3dPrimaryBtn {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 {c['primary_btn']}, stop:1 #2563eb);
@@ -92,7 +131,7 @@ def build_dock_qss(palette: QPalette | None = None) -> str:
     QPushButton.route3dPrimaryBtn:hover {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #38bdf8, stop:1 #3b82f6);
     }}
-    QPushButton.route3dToolBtn {{
+    QPushButton.route3dSecondaryBtn, QPushButton.route3dToolBtn {{
         background: {c['surface']};
         border: 1px solid {c['border']};
         color: {c['text']};
@@ -101,11 +140,11 @@ def build_dock_qss(palette: QPalette | None = None) -> str:
         font-weight: 600;
         font-size: 11px;
     }}
-    QPushButton.route3dToolBtn:hover {{
+    QPushButton.route3dSecondaryBtn:hover, QPushButton.route3dToolBtn:hover {{
         background: {c['card']};
         border-color: {c['accent_cyan']};
     }}
-    QPushButton.route3dToolBtn:checked {{
+    QPushButton.route3dSecondaryBtn:checked, QPushButton.route3dToolBtn:checked {{
         background: {c['accent_cyan']};
         color: #0f172a;
         font-weight: 700;

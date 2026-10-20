@@ -5,9 +5,10 @@ import csv
 from pathlib import Path
 from typing import List, Sequence
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
+    QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -26,9 +27,12 @@ from ..core.profile_stats import CueInstruction
 class CueSheetWidget(QWidget):
     """Interactive table displaying step-by-step turn-by-turn route navigation cues."""
 
+    cue_selected = pyqtSignal(int, float)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.cues: List[CueInstruction] = []
+        self._cumulative_distances: List[float] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -76,11 +80,26 @@ class CueSheetWidget(QWidget):
         self.table.setAlternatingRowColors(True)
         _SelectRows = getattr(getattr(QTableWidget, "SelectionBehavior", QTableWidget), "SelectRows", 1)
         self.table.setSelectionBehavior(_SelectRows)
+        _NoEdit = getattr(getattr(QAbstractItemView, "EditTrigger", QAbstractItemView), "NoEditTriggers", 0)
+        self.table.setEditTriggers(_NoEdit)
+        self.table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self.table)
+
+    def _on_cell_clicked(self, row: int, _col: int) -> None:
+        if 0 <= row < len(self._cumulative_distances):
+            self.cue_selected.emit(row, self._cumulative_distances[row])
 
     def load_cues(self, cues: Sequence[CueInstruction]) -> None:
         """Populate table with cue instructions."""
         self.cues = list(cues)
+        self._cumulative_distances = []
+        running_dist = 0.0
+        for c in self.cues:
+            self._cumulative_distances.append(running_dist)
+            try:
+                running_dist += max(0.0, float(getattr(c, "distance_m", 0.0)))
+            except (ValueError, TypeError):
+                pass
         self.table.setRowCount(len(self.cues))
 
         dir_icons = {

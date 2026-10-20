@@ -67,15 +67,15 @@ class Studio3DApp {
     this.centerlineMesh = null;
     this.glowTubeMesh = null;
     this.pulseBeacon = null;
-    this.avatarMesh = null;
-    this.needlePin = null;
     this.buildingsGroup = new THREE.Group();
     this.treesGroup = new THREE.Group();
+    this.parksGroup = new THREE.Group();
     this.pinsGroup = new THREE.Group();
     this.routeOverlayGroup = new THREE.Group();
 
     this.scene.add(this.buildingsGroup);
     this.scene.add(this.treesGroup);
+    this.scene.add(this.parksGroup);
     this.scene.add(this.pinsGroup);
     this.scene.add(this.routeOverlayGroup);
 
@@ -104,6 +104,8 @@ class Studio3DApp {
 
     // Feature Toggles & State
     this.isPlaying = false;
+    this.loopPlayback = true;
+    this.ribbonColorMode = 'profile';
     this.progress = 0.0;
     this.playbackSpeed = 1.0;
     this.cameraMode = 'orbit'; // Default to Orbit camera
@@ -163,6 +165,11 @@ class Studio3DApp {
     this.lblExag = document.getElementById('lblExag');
     this.elLayerList = document.getElementById('layerList');
     this.elLayerCount = document.getElementById('layerCount');
+    this.elLiveCueBanner = document.getElementById('liveCueBanner');
+    this.elLiveCueIcon = document.getElementById('liveCueIcon');
+    this.elLiveCueText = document.getElementById('liveCueText');
+    this.elLiveCueMeta = document.getElementById('liveCueMeta');
+    this.elLiveCueStep = document.getElementById('liveCueStep');
     this.activeMetrics = [];
   }
 
@@ -196,6 +203,7 @@ class Studio3DApp {
       if (this.elMultiMetricRows) this.elMultiMetricRows.innerHTML = '';
       this.activeMetrics = [];
       if (this.radarCtx) this.radarCtx.clearRect(0, 0, 130, 130);
+      if (this.elLiveCueBanner) this.elLiveCueBanner.hidden = true;
       this.clearSceneObjects();
       this.updateHudMetrics();
       this.renderLayerPanel();
@@ -316,10 +324,6 @@ class Studio3DApp {
     this.glowTubeMesh = null;
     removeAndDispose(this.pulseBeacon);
     this.pulseBeacon = null;
-    removeAndDispose(this.avatarMesh);
-    this.avatarMesh = null;
-    removeAndDispose(this.needlePin);
-    this.needlePin = null;
 
     const clearGroup = (group) => {
       while (group.children.length) {
@@ -331,6 +335,7 @@ class Studio3DApp {
 
     clearGroup(this.buildingsGroup);
     clearGroup(this.treesGroup);
+    if (this.parksGroup) clearGroup(this.parksGroup);
     clearGroup(this.pinsGroup);
     clearGroup(this.routeOverlayGroup);
 
@@ -391,6 +396,7 @@ class Studio3DApp {
     // from the scrubber rather than the render loop.
     const frameDelta = Number.isFinite(this.lastFrameDelta) ? this.lastFrameDelta : 0.016;
     const animDelta = this.isPlaying ? frameDelta * Math.max(0.2, this.playbackSpeed) : 0.0;
+    const isNight = this.timeOfDay < 6.0 || this.timeOfDay >= 19.0;
     this.routeVisuals.forEach((visual) => {
       if (!visual.rig || !visual.path) return;
       const props = visual.feature?.properties || {};
@@ -406,8 +412,13 @@ class Studio3DApp {
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
       visual.rig.root.rotation.y = curYaw + diff * 0.35;
+      const horizSpan = Math.hypot(visualTangent.x, visualTangent.z) || 1.0;
+      const slopeAngle = Math.atan2(visualTangent.y, horizSpan);
+      if (visual.rig.subMeshGroup) {
+        visual.rig.subMeshGroup.rotation.x = THREE.MathUtils.clamp(-slopeAngle * 0.65, -0.35, 0.35);
+      }
       const spd = Number(props.base_speed_kmh || 5.0);
-      visual.rig.updateKinematics(animDelta, spd, visualTangent, 0, false);
+      visual.rig.updateKinematics(animDelta, spd, visualTangent, slopeAngle, isNight);
     });
 
     if (this.pulseBeacon && !this.isPlaying) {
@@ -419,6 +430,7 @@ class Studio3DApp {
     if (this.voiceSystem) {
       this.voiceSystem.update(safeProgress);
     }
+    this.updateLiveCueBanner(safeProgress);
 
     if (this.elScrubber) {
       this.elScrubber.value = (safeProgress * 1000.0).toFixed(0);
@@ -454,6 +466,56 @@ class Studio3DApp {
     this.updateRadarMap();
   }
 
+  updateLiveCueBanner(progress) {
+    if (!this.elCueBanner) return;
+    const cues = Array.isArray(this.voiceSystem?.cues) ? this.voiceSystem.cues : [];
+    const totalPoints = this.scenePoints ? this.scenePoints.length : 0;
+    if (!cues.length || totalPoints < 2) {
+      this.elCueBanner.classList.add('is-hidden');
+      return;
+    }
+    this.elCueBanner.classList.remove('is-hidden');
+    let activeCue = cues[0];
+    let nextCue = null;
+    for (let i = 0; i < cues.length; i += 1) {
+      const cProg = Number(cues[i].vertex_idx || 0) / Math.max(1, totalPoints - 1);
+      if (progress + 0.005 >= cProg) {
+        activeCue = cues[i];
+        nextCue = i + 1 < cues.length ? cues[i + 1] : null;
+      } else {
+        nextCue = cues[i];
+        break;
+      }
+    }
+    const targetCue = nextCue || activeCue;
+    const iconMap = {
+      start: '🚩',
+      finish: '🏁',
+      left: '↰',
+      sharp_left: '⏪',
+      slight_left: '↖',
+      right: '↱',
+      sharp_right: '⏩',
+      slight_right: '↗',
+      straight: '↑',
+      steep_up: '⛰',
+      steep_down: '📉',
+    };
+    const turnKey = String(targetCue.turn_type || 'straight').toLowerCase();
+    if (this.elCueIcon) this.elCueIcon.textContent = iconMap[turnKey] || '🧭';
+    if (this.elCueInstruction) this.elCueInstruction.textContent = targetCue.instruction || 'Continue along route';
+    if (this.elCueMeta) {
+      const totalDistM = Number(this.routeData?.properties?.distance_km || 0) * 1000.0;
+      const curDistM = progress * totalDistM;
+      const targetDistM = Number(targetCue.distance_from_start_m || 0);
+      const remainM = Math.max(0, Math.round(targetDistM - curDistM));
+      const slopeStr = Number.isFinite(Number(targetCue.slope_pct))
+        ? ` · Slope ${Number(targetCue.slope_pct).toFixed(1)}%`
+        : '';
+      this.elCueMeta.textContent = remainM > 5 ? `In ${remainM} m${slopeStr}` : `Now${slopeStr}`;
+    }
+  }
+
   setProgress(fraction) {
     this.progress = Math.max(0.0, Math.min(1.0, Number(fraction) || 0));
     this.updateAvatarPosition();
@@ -469,9 +531,17 @@ class Studio3DApp {
     if (this.isPlaying && hasRoute) {
       this.progress += this.lastFrameDelta * 0.04 * this.playbackSpeed;
       if (this.progress > 1.0) {
-        this.progress = 0.0;
+        if (this.loopPlayback === false) {
+          this.progress = 1.0;
+          this.updateAvatarPosition();
+          this.togglePlay();
+        } else {
+          this.progress = 0.0;
+          this.updateAvatarPosition();
+        }
+      } else {
+        this.updateAvatarPosition();
       }
-      this.updateAvatarPosition();
       this.needsRender = true;
     }
 

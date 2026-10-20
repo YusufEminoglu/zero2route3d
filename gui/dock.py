@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import datetime
 import json
 from pathlib import Path
@@ -84,6 +85,7 @@ from ..core.mobility_profiles import (
     get_profile_color,
     list_profile_keys,
     list_profile_keys_for_group,
+    reset_default_profiles,
 )
 from ..core.network_source import NetworkSourceError, NetworkSourceManager
 from ..core.osm_downloader import OsmBuilding, OsmDataFetcher, OsmPark, OsmTree
@@ -92,8 +94,14 @@ from ..core.osm_styling import (
     apply_osm_theme_style,
     list_osm_themes,
 )
-from ..core.qml_generator import apply_multiprofile_categorized_renderer
-from ..core.route_corridor_3d import filter_corridor_assets_multi_route
+from ..core.qml_generator import (
+    apply_multiprofile_categorized_renderer,
+    apply_native_3d_route_scene,
+)
+from ..core.route_corridor_3d import (
+    filter_corridor_assets_multi_route,
+    filter_corridor_parks_multi_route,
+)
 from ..core.routing_engine import RouteResult3D, RoutingEngine3D, Waypoint
 from ..core.terrain_grid import grid_bbox, sample_terrain_grid
 from ..core.scenario_io import (
@@ -274,6 +282,7 @@ class Route3DStudioDock(QDockWidget):
 
         # Tab 3: Turn-by-Turn Cue Sheet
         self.cue_widget = CueSheetWidget()
+        self.cue_widget.cue_selected.connect(self._on_cue_selected)
         self.tab_widget.addTab(self.cue_widget, "📋 Cue Sheet")
 
         # Tab 4: OD Matrix Studio
@@ -487,7 +496,7 @@ class Route3DStudioDock(QDockWidget):
 
         status_row = QHBoxLayout()
         self.chk_quick_autopan = QCheckBox("🎯 Auto-pan")
-        self.chk_quick_autopan.toggled.connect(self.canvas_animator.set_auto_pan)
+        self.chk_quick_autopan.toggled.connect(self._on_autopan_toggled)
         status_row.addWidget(self.chk_quick_autopan)
         self.lbl_quick_anim_status = QLabel("Ready to animate")
         self.lbl_quick_anim_status.setStyleSheet("color: #64748b; font-size: 11px;")
@@ -511,6 +520,14 @@ class Route3DStudioDock(QDockWidget):
         """)
         self.btn_quick_open_3d.clicked.connect(self.open_3d_studio)
         play_layout.addWidget(self.btn_quick_open_3d)
+
+        self.btn_quick_native_3d = QPushButton("🏔️ Setup Native QGIS 3D Scene (View ➔ 3D Map Views)")
+        self.btn_quick_native_3d.setToolTip(
+            "Configure native QGIS 3D renderers (qgis._3d) on route ribbons, 3D extruded buildings, "
+            "tree crowns, and Point A/B pins so you can view them inside QGIS's built-in 3D Map View."
+        )
+        self.btn_quick_native_3d.clicked.connect(self._on_setup_native_qgis_3d)
+        play_layout.addWidget(self.btn_quick_native_3d)
         layout.addWidget(card_play)
 
         # 5. Quick Export Card
@@ -866,6 +883,14 @@ class Route3DStudioDock(QDockWidget):
         self.btn_open_3d.clicked.connect(self.open_3d_studio)
         act_layout.addWidget(self.btn_open_3d)
 
+        self.btn_native_3d = QPushButton("🏔️ Setup Native QGIS 3D Scene (View ➔ 3D Map Views)")
+        self.btn_native_3d.setToolTip(
+            "Configure native QGIS 3D renderers (qgis._3d) on route ribbons, 3D extruded buildings, "
+            "tree crowns, and Point A/B pins so you can view them inside QGIS's built-in 3D Map View."
+        )
+        self.btn_native_3d.clicked.connect(self._on_setup_native_qgis_3d)
+        act_layout.addWidget(self.btn_native_3d)
+
         scenario_row = QHBoxLayout()
         self.btn_save_scenario = QPushButton("💾 Save Scenario")
         self.btn_save_scenario.setToolTip(
@@ -988,7 +1013,7 @@ class Route3DStudioDock(QDockWidget):
         anim_status_row = QHBoxLayout()
         self.chk_anim_autopan = QCheckBox("🎯 Auto-pan canvas")
         self.chk_anim_autopan.setChecked(False)
-        self.chk_anim_autopan.toggled.connect(self.canvas_animator.set_auto_pan)
+        self.chk_anim_autopan.toggled.connect(self._on_autopan_toggled)
         anim_status_row.addWidget(self.chk_anim_autopan)
 
         self.lbl_anim_status = QLabel("00:00 / 00:00 (0%) | Ready to animate")
@@ -1028,7 +1053,31 @@ class Route3DStudioDock(QDockWidget):
     def _build_tab_od(self, parent: QWidget) -> None:
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
         layout.addWidget(QLabel("<b>Multi-Point Origin-Destination Cost Matrix</b>"))
+
+        sub_lbl = QLabel(
+            "Compute a 3D network cost matrix using either Point A & Point B or multi-point vector layers."
+        )
+        sub_lbl.setProperty("class", "route3dSubtle")
+        sub_lbl.setWordWrap(True)
+        layout.addWidget(sub_lbl)
+
+        src_grid = QGridLayout()
+        src_grid.addWidget(QLabel("Origins layer (optional):"), 0, 0)
+        self.cmb_od_origin_layer = QgsMapLayerComboBox()
+        self.cmb_od_origin_layer.setFilters(_vector_filters())
+        self.cmb_od_origin_layer.setAllowEmptyLayer(True)
+        self.cmb_od_origin_layer.setToolTip("Leave empty to use current Point A & Point B waypoints.")
+        src_grid.addWidget(self.cmb_od_origin_layer, 0, 1)
+
+        src_grid.addWidget(QLabel("Destinations layer (optional):"), 1, 0)
+        self.cmb_od_dest_layer = QgsMapLayerComboBox()
+        self.cmb_od_dest_layer.setFilters(_vector_filters())
+        self.cmb_od_dest_layer.setAllowEmptyLayer(True)
+        self.cmb_od_dest_layer.setToolTip("Leave empty to use Origins layer (all-pairs) or Point A & Point B.")
+        src_grid.addWidget(self.cmb_od_dest_layer, 1, 1)
+        layout.addLayout(src_grid)
 
         self.table_od = QTableWidget()
         self.table_od.setColumnCount(5)
@@ -1036,20 +1085,64 @@ class Route3DStudioDock(QDockWidget):
         resize_mode_enum = getattr(QHeaderView, "ResizeMode", QHeaderView)
         stretch_mode = getattr(resize_mode_enum, "Stretch", 1)
         self.table_od.horizontalHeader().setSectionResizeMode(stretch_mode)
+        _NoEdit = getattr(getattr(QAbstractItemView, "EditTrigger", QAbstractItemView), "NoEditTriggers", 0)
+        self.table_od.setEditTriggers(_NoEdit)
+        self.table_od.setAlternatingRowColors(True)
         layout.addWidget(self.table_od)
 
-        btn_run_od = QPushButton("📊 Compute Full OD Matrix")
-        btn_run_od.clicked.connect(self._compute_od_matrix)
-        layout.addWidget(btn_run_od)
+        btn_row = QHBoxLayout()
+        self.btn_run_od = QPushButton("📊 Compute Full OD Matrix")
+        self.btn_run_od.clicked.connect(self._compute_od_matrix)
+        btn_row.addWidget(self.btn_run_od)
+
+        self.btn_export_od_csv = QPushButton("💾 Export CSV")
+        self.btn_export_od_csv.setEnabled(False)
+        self.btn_export_od_csv.clicked.connect(self._export_od_csv)
+        btn_row.addWidget(self.btn_export_od_csv)
+
+        self.btn_add_od_layer = QPushButton("🗺️ Add OD Desire Lines")
+        self.btn_add_od_layer.setEnabled(False)
+        self.btn_add_od_layer.clicked.connect(self._add_od_desire_lines_layer)
+        btn_row.addWidget(self.btn_add_od_layer)
+        layout.addLayout(btn_row)
 
     def _build_tab_settings(self, parent: QWidget) -> None:
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(QLabel("<b>Mobility Profile Configuration</b>"))
+        layout.setSpacing(8)
+        layout.addWidget(QLabel("<b>Mobility Profile Configuration (15 Kinematic Modes)</b>"))
 
-        self.btn_edit_profile = QPushButton("⚙️ Open Profile Editor Dialog")
+        top_row = QHBoxLayout()
+        self.btn_edit_profile = QPushButton("⚙️ Edit Active Profile")
         self.btn_edit_profile.clicked.connect(self._open_profile_editor)
-        layout.addWidget(self.btn_edit_profile)
+        top_row.addWidget(self.btn_edit_profile)
+
+        self.btn_reset_profiles = QPushButton("🔄 Reset Defaults")
+        self.btn_reset_profiles.setToolTip("Restore all 15 mobility profiles to their built-in reference values.")
+        self.btn_reset_profiles.clicked.connect(self._reset_default_profiles)
+        top_row.addWidget(self.btn_reset_profiles)
+        layout.addLayout(top_row)
+
+        hint_lbl = QLabel("Double-click any profile row below to customize its speed, max gradient, or stair policy:")
+        hint_lbl.setProperty("class", "route3dSubtle")
+        hint_lbl.setWordWrap(True)
+        layout.addWidget(hint_lbl)
+
+        self.table_profiles = QTableWidget(0, 5)
+        self.table_profiles.setHorizontalHeaderLabels([
+            "Profile", "Category", "Speed (km/h)", "Max Slope %", "Stairs"
+        ])
+        resize_mode_enum = getattr(QHeaderView, "ResizeMode", QHeaderView)
+        stretch_mode = getattr(resize_mode_enum, "Stretch", 1)
+        self.table_profiles.horizontalHeader().setSectionResizeMode(stretch_mode)
+        _NoEdit = getattr(getattr(QAbstractItemView, "EditTrigger", QAbstractItemView), "NoEditTriggers", 0)
+        self.table_profiles.setEditTriggers(_NoEdit)
+        _SelectRows = getattr(getattr(QAbstractItemView, "SelectionBehavior", QTableWidget), "SelectRows", 1)
+        self.table_profiles.setSelectionBehavior(_SelectRows)
+        self.table_profiles.setAlternatingRowColors(True)
+        self.table_profiles.cellDoubleClicked.connect(self._on_profile_table_double_clicked)
+        layout.addWidget(self.table_profiles, 1)
+        self._refresh_profile_table()
 
         grp_info = QGroupBox("Kinematic Equations & Literature Standards")
         info_layout = QVBoxLayout(grp_info)
@@ -1065,7 +1158,6 @@ class Route3DStudioDock(QDockWidget):
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
         layout.addWidget(grp_info)
-        layout.addStretch()
 
     def _on_add_osm_basemap(self) -> None:
         """Add or reveal the OpenStreetMap standard XYZ tile layer."""
@@ -1092,7 +1184,7 @@ class Route3DStudioDock(QDockWidget):
                 styled += 1
 
         # 2. Managed OSM layers in project
-        for name in ("OSM Road Network", "OSM Buildings 3D", "OSM Trees & Greenery"):
+        for name in ("OSM Road Network", "OSM Buildings 3D", "OSM Trees & Greenery", "OSM Parks & Green Areas"):
             for lyr in proj.mapLayersByName(name):
                 if lyr.isValid() and apply_osm_theme_style(lyr, theme_key):
                     styled += 1
@@ -1217,6 +1309,8 @@ class Route3DStudioDock(QDockWidget):
             self.current_route_file.unlink()
         if hasattr(self, "table_comparison"):
             self.table_comparison.setRowCount(0)
+        if hasattr(self, "cue_widget"):
+            self.cue_widget.load_cues([])
         if hasattr(self, "quick_multi_metric_panel"):
             self.quick_multi_metric_panel.clear()
         if hasattr(self, "advanced_multi_metric_panel"):
@@ -1245,19 +1339,25 @@ class Route3DStudioDock(QDockWidget):
                 button.setEnabled(False)
         if hasattr(self, "lbl_anim_status"):
             self.lbl_anim_status.setText("00:00 / 00:00 (0%) | Ready to animate")
-        for button in (getattr(self, "btn_anim_play", None), getattr(self, "btn_anim_stop", None)):
+        if hasattr(self, "lbl_quick_anim_status"):
+            self.lbl_quick_anim_status.setText("Ready to animate")
+        for button in (
+            getattr(self, "btn_anim_play", None),
+            getattr(self, "btn_anim_stop", None),
+            getattr(self, "btn_quick_play", None),
+            getattr(self, "btn_quick_stop", None),
+        ):
             if button is not None:
                 button.setEnabled(False)
-        if hasattr(self, "btn_anim_play") and self.btn_anim_play:
-            self.btn_anim_play.setText("▶️ Play")
-        if hasattr(self, "sld_anim_progress"):
-            self.sld_anim_progress.setValue(0)
-            self.sld_anim_progress.setEnabled(False)
+        for play_btn in (getattr(self, "btn_anim_play", None), getattr(self, "btn_quick_play", None)):
+            if play_btn is not None:
+                play_btn.setText("▶️ Play")
+        for slider in (getattr(self, "sld_anim_progress", None), getattr(self, "sld_quick_progress", None)):
+            if slider is not None:
+                slider.setValue(0)
+                slider.setEnabled(False)
         if hasattr(self, "btn_add_layer"):
             self.btn_add_layer.setEnabled(False)
-        for button in (getattr(self, "btn_export_gpx", None), getattr(self, "btn_export_geojson", None), getattr(self, "btn_export_html", None), getattr(self, "btn_export_dxf", None)):
-            if button is not None:
-                button.setEnabled(False)
 
     def _reset_route_session(self) -> None:
         """Start a genuinely empty route session, including A/B point pins."""
@@ -1846,6 +1946,50 @@ class Route3DStudioDock(QDockWidget):
                 tree_layer.updateExtents()
                 apply_osm_theme_style(tree_layer, theme_key)
                 proj.addMapLayer(tree_layer)
+
+        # 4. Parks & Green Areas Layer
+        if parks:
+            park_layers = proj.mapLayersByName("OSM Parks & Green Areas")
+            if park_layers:
+                park_layer = park_layers[0]
+                with contextlib.suppress(Exception):
+                    park_layer.startEditing()
+                    park_layer.deleteFeatures(park_layer.allFeatureIds())
+                    p_feats = []
+                    for p in parks:
+                        if len(p.polygon) < 3:
+                            continue
+                        f = QgsFeature(park_layer.fields())
+                        pts = [QgsPointXY(pt[0], pt[1]) for pt in p.polygon]
+                        f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
+                        f.setAttributes([p.name, p.park_type])
+                        p_feats.append(f)
+                    park_layer.addFeatures(p_feats)
+                    park_layer.commitChanges()
+                    park_layer.updateExtents()
+                    apply_osm_theme_style(park_layer, theme_key)
+            else:
+                park_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "OSM Parks & Green Areas", "memory")
+                p_pr = park_layer.dataProvider()
+                p_pr.addAttributes([
+                    QgsField("name", QVariant.String),
+                    QgsField("park_type", QVariant.String),
+                ])
+                park_layer.updateFields()
+                p_feats = []
+                for p in parks:
+                    if len(p.polygon) < 3:
+                        continue
+                    f = QgsFeature()
+                    pts = [QgsPointXY(pt[0], pt[1]) for pt in p.polygon]
+                    f.setGeometry(QgsGeometry.fromPolygonXY([pts]))
+                    f.setAttributes([p.name, p.park_type])
+                    p_feats.append(f)
+                p_pr.addFeatures(p_feats)
+                park_layer.updateExtents()
+                park_layer.setCustomProperty("zero2route3d/source", "osm")
+                apply_osm_theme_style(park_layer, theme_key)
+                proj.addMapLayer(park_layer)
 
     def _fetch_osm_layers_for_extent(self) -> None:
         """Download real OSM roads, 3D buildings, trees and parks in the background."""
@@ -2456,11 +2600,58 @@ class Route3DStudioDock(QDockWidget):
             self.advanced_multi_metric_panel.set_progress(fraction)
         self.canvas_animator.seek_progress(fraction)
 
-    def _on_anim_speed_changed(self, _index: int) -> None:
+    def _on_anim_speed_changed(self, index: int) -> None:
         sender = self.sender()
         speed_str = sender.currentText().replace("x", "") if sender else "10"
+        for cmb_name in ("cmb_quick_speed", "cmb_anim_speed"):
+            cmb = getattr(self, cmb_name, None)
+            if cmb is not None and cmb is not sender and cmb.currentIndex() != index:
+                cmb.blockSignals(True)
+                cmb.setCurrentIndex(index)
+                cmb.blockSignals(False)
         with contextlib.suppress(ValueError):
             self.canvas_animator.set_speed_multiplier(float(speed_str))
+
+    def _on_autopan_toggled(self, checked: bool) -> None:
+        sender = self.sender()
+        for chk_name in ("chk_quick_autopan", "chk_anim_autopan"):
+            chk = getattr(self, chk_name, None)
+            if chk is not None and chk is not sender and chk.isChecked() != checked:
+                chk.blockSignals(True)
+                chk.setChecked(checked)
+                chk.blockSignals(False)
+        self.canvas_animator.set_auto_pan(checked)
+
+    def _on_cue_selected(self, _row: int, cumulative_dist_m: float) -> None:
+        """Seek the 2D animation to the selected turn-by-turn navigation cue."""
+        res = self.current_route_result
+        if not res or res.statistics.total_distance_m <= 0:
+            return
+        fraction = max(0.0, min(1.0, cumulative_dist_m / res.statistics.total_distance_m))
+        self.sld_anim_progress.blockSignals(True)
+        self.sld_anim_progress.setValue(int(fraction * 1000))
+        self.sld_anim_progress.blockSignals(False)
+        if hasattr(self, "sld_quick_progress"):
+            self.sld_quick_progress.blockSignals(True)
+            self.sld_quick_progress.setValue(int(fraction * 1000))
+            self.sld_quick_progress.blockSignals(False)
+        self._on_anim_slider_moved(int(fraction * 1000))
+
+    def _on_setup_native_qgis_3d(self) -> None:
+        """Apply native QGIS 3D renderers (qgis._3d) to all project route, building, tree and pin layers."""
+        configured = apply_native_3d_route_scene(QgsProject.instance())
+        if configured > 0:
+            self._notify(
+                "success",
+                f"Configured native QGIS 3D renderers on {configured} layer(s). "
+                "Open 'View ➔ 3D Map Views ➔ New 3D Map View' to explore in QGIS 3D!",
+            )
+        else:
+            self._notify(
+                "warning",
+                "No 3D-compatible route/building layers found, or qgis._3d is unavailable in this build. "
+                "Compute a route or fetch OSM buildings first.",
+            )
 
     def open_3d_studio(self) -> None:
         """Start the local HTTP server and open the 3D WebGL studio (30 m building corridor)."""
@@ -2471,8 +2662,45 @@ class Route3DStudioDock(QDockWidget):
         server_url = self.local_server.start()
         QDesktopServices.openUrl(QUrl(server_url))
 
+    def _refresh_profile_table(self) -> None:
+        if not hasattr(self, "table_profiles"):
+            return
+        keys = list_profile_keys()
+        self.table_profiles.setRowCount(len(keys))
+        user_role = getattr(getattr(Qt, "ItemDataRole", Qt), "UserRole", 32)
+        for row, key in enumerate(keys):
+            p = get_profile(key)
+            it_name = QTableWidgetItem(p.name)
+            it_name.setData(user_role, key)
+            it_cat = QTableWidgetItem(p.category.capitalize())
+            it_spd = QTableWidgetItem(f"{p.base_speed_kmh:.1f}")
+            it_slp = QTableWidgetItem(f"{p.max_slope_pct:.1f}%")
+            it_str = QTableWidgetItem("Allowed" if p.stair_allowed else "Prohibited")
+            self.table_profiles.setItem(row, 0, it_name)
+            self.table_profiles.setItem(row, 1, it_cat)
+            self.table_profiles.setItem(row, 2, it_spd)
+            self.table_profiles.setItem(row, 3, it_slp)
+            self.table_profiles.setItem(row, 4, it_str)
+
+    def _on_profile_table_double_clicked(self, row: int, _col: int) -> None:
+        user_role = getattr(getattr(Qt, "ItemDataRole", Qt), "UserRole", 32)
+        item = self.table_profiles.item(row, 0)
+        key = item.data(user_role) if item else None
+        if key:
+            self._open_profile_editor_for_key(str(key))
+
+    def _reset_default_profiles(self) -> None:
+        reset_default_profiles()
+        self._refresh_profile_table()
+        self._on_mode_scope_changed(self.cmb_mode_scope.currentIndex())
+        self._on_profile_changed(self.cmb_profile.currentIndex())
+        self._notify("success", "Restored all 15 mobility profiles to their built-in reference defaults.")
+
     def _open_profile_editor(self) -> None:
         key = self.cmb_profile.currentData() or "adult"
+        self._open_profile_editor_for_key(str(key))
+
+    def _open_profile_editor_for_key(self, key: str) -> None:
         prof = get_profile(key)
         dialog = ProfileEditorDialog(profile=prof, parent=self)
         if dialog.exec():
@@ -2485,19 +2713,62 @@ class Route3DStudioDock(QDockWidget):
             else:
                 self.cmb_profile.addItem(updated.name, updated.key)
                 self.cmb_profile.setCurrentIndex(self.cmb_profile.count() - 1)
+            self._refresh_profile_table()
             self._on_mode_scope_changed(self.cmb_mode_scope.currentIndex())
             self._on_profile_changed(self.cmb_profile.currentIndex())
 
+    def _waypoints_from_vector_layer(self, layer: Any, prefix: str) -> List[Waypoint]:
+        if layer is None or not layer.isValid():
+            return []
+        pts: List[Waypoint] = []
+        crs_layer = layer.crs()
+        crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+        transform = None
+        if crs_layer.isValid() and crs_layer != crs_wgs:
+            with contextlib.suppress(Exception):
+                transform = QgsCoordinateTransform(crs_layer, crs_wgs, QgsProject.instance())
+        fields = [f.name() for f in layer.fields()]
+        name_field = next((n for n in fields if n.lower() in ("name", "label", "title", "id")), None)
+        features = layer.selectedFeatures() or list(layer.getFeatures())
+        for idx, feat in enumerate(features[:40]):
+            if not feat.hasGeometry() or feat.geometry().isEmpty():
+                continue
+            c_geom = feat.geometry().centroid()
+            if c_geom.isEmpty():
+                continue
+            pt = c_geom.asPoint()
+            if transform is not None and transform.isValid():
+                with contextlib.suppress(Exception):
+                    pt = transform.transform(pt)
+            label = str(feat[name_field]) if name_field and feat[name_field] not in (None, "") else f"{prefix} #{idx + 1}"
+            pts.append(Waypoint(lon=float(pt.x()), lat=float(pt.y()), name=label))
+        return pts
+
     def _compute_od_matrix(self) -> None:
         """Compute the waypoint OD matrix in a background task."""
-        if len(self.waypoints) < 2:
+        orig_layer = self.cmb_od_origin_layer.currentLayer() if hasattr(self, "cmb_od_origin_layer") else None
+        dest_layer = self.cmb_od_dest_layer.currentLayer() if hasattr(self, "cmb_od_dest_layer") else None
+        origins = self._waypoints_from_vector_layer(orig_layer, "Orig") if orig_layer else list(self.waypoints)
+        destinations = (
+            self._waypoints_from_vector_layer(dest_layer, "Dest")
+            if dest_layer
+            else (origins if orig_layer else list(self.waypoints))
+        )
+        all_pts = origins + [d for d in destinations if d not in origins]
+        if len(origins) < 1 or len(destinations) < 1 or (orig_layer is None and dest_layer is None and len(self.waypoints) < 2):
+            self._notify(
+                "warning",
+                "Select Point A and Point B first, or choose an Origins/Destinations vector layer above.",
+            )
             return
         if getattr(self, "_od_task_running", False):
             self._notify("info", "An OD matrix calculation is already running.")
             return
-        lons = [w.lon for w in self.waypoints]
-        lats = [w.lat for w in self.waypoints]
-        bbox = (min(lons), min(lats), max(lons), max(lats))
+        lons = [w.lon for w in all_pts]
+        lats = [w.lat for w in all_pts]
+        d_lon = max(0.002, (max(lons) - min(lons)) * 0.25)
+        d_lat = max(0.002, (max(lats) - min(lats)) * 0.25)
+        bbox = (min(lons) - d_lon, min(lats) - d_lat, max(lons) + d_lon, max(lats) + d_lat)
         layer_segments = None
         selected_road_layer = self.cmb_route_road_layer.currentLayer()
         if selected_road_layer is not None and selected_road_layer.isValid():
@@ -2514,9 +2785,9 @@ class Route3DStudioDock(QDockWidget):
                 snap for snap in (snapshot(layer) for layer in self._selected_extra_raster_layers()) if snap
             ],
         )
-        waypoints = list(self.waypoints)
         profile_key = self.cmb_profile.currentData() or "adult"
         manager = self.network_manager
+        coord_lookup = {w.name: (w.lon, w.lat) for w in all_pts}
 
         def work(ctx: TaskContext) -> Any:
             segments = layer_segments
@@ -2530,12 +2801,14 @@ class Route3DStudioDock(QDockWidget):
                 ctx.progress(100.0 * done / max(1, total))
                 return not ctx.is_canceled()
 
-            rows = engine.calculate_od_matrix(waypoints, waypoints, profile_key=profile_key, progress_callback=report)
+            rows = engine.calculate_od_matrix(origins, destinations, profile_key=profile_key, progress_callback=report)
             ctx.check()
             return rows
 
         def done(rows: Any) -> None:
             self._od_task_running = False
+            self._last_od_rows = list(rows)
+            self._last_od_coords = coord_lookup
             self.table_od.setRowCount(len(rows))
             for idx, r in enumerate(rows):
                 self.table_od.setItem(idx, 0, QTableWidgetItem(r["origin_name"]))
@@ -2543,6 +2816,13 @@ class Route3DStudioDock(QDockWidget):
                 self.table_od.setItem(idx, 2, QTableWidgetItem(f"{r['distance_km']:.2f}"))
                 self.table_od.setItem(idx, 3, QTableWidgetItem(f"{r['duration_min']:.1f}"))
                 self.table_od.setItem(idx, 4, QTableWidgetItem(f"{r['climb_m']:.1f}"))
+            has_rows = len(rows) > 0
+            if hasattr(self, "btn_export_od_csv"):
+                self.btn_export_od_csv.setEnabled(has_rows)
+            if hasattr(self, "btn_add_od_layer"):
+                self.btn_add_od_layer.setEnabled(has_rows)
+            if has_rows:
+                self._notify("success", f"Computed {len(rows)} OD matrix pair(s).")
 
         def failed(message: str) -> None:
             self._od_task_running = False
@@ -2554,6 +2834,63 @@ class Route3DStudioDock(QDockWidget):
 
         self._od_task_running = True
         start_task(self, FunctionTask("02Route 3D: OD matrix", work, done, failed, cancelled))
+
+    def _export_od_csv(self) -> None:
+        rows = getattr(self, "_last_od_rows", [])
+        if not rows:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export OD Matrix to CSV", "", "CSV Files (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Origin", "Destination", "Distance_km", "Duration_min", "Climb_m"])
+            for r in rows:
+                writer.writerow([
+                    r.get("origin_name", ""),
+                    r.get("dest_name", ""),
+                    f"{float(r.get('distance_km', 0.0)):.3f}",
+                    f"{float(r.get('duration_min', 0.0)):.2f}",
+                    f"{float(r.get('climb_m', 0.0)):.1f}",
+                ])
+        self._notify("success", f"Exported OD matrix CSV to {path}")
+
+    def _add_od_desire_lines_layer(self) -> None:
+        rows = getattr(self, "_last_od_rows", [])
+        coord_lookup = getattr(self, "_last_od_coords", {})
+        if not rows:
+            return
+        layer = QgsVectorLayer(
+            "LineString?crs=EPSG:4326&field=origin:string&field=destination:string"
+            "&field=dist_km:double&field=time_min:double&field=climb_m:double",
+            "📊 02Route 3D — OD Desire Lines",
+            "memory",
+        )
+        pr = layer.dataProvider()
+        feats = []
+        for r in rows:
+            o_name = r.get("origin_name", "")
+            d_name = r.get("dest_name", "")
+            if o_name == d_name:
+                continue
+            p_orig = coord_lookup.get(o_name)
+            p_dest = coord_lookup.get(d_name)
+            if not p_orig or not p_dest:
+                continue
+            f = QgsFeature(layer.fields())
+            f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(*p_orig), QgsPointXY(*p_dest)]))
+            f.setAttributes([
+                str(o_name),
+                str(d_name),
+                float(r.get("distance_km", 0.0)),
+                float(r.get("duration_min", 0.0)),
+                float(r.get("climb_m", 0.0)),
+            ])
+            feats.append(f)
+        pr.addFeatures(feats)
+        layer.updateExtents()
+        QgsProject.instance().addMapLayer(layer)
+        self._notify("success", f"Added OD Desire Lines layer ({len(feats)} links) to QGIS.")
 
     def _create_surface_sampler(self, weights: Optional[MCDAWeights] = None) -> EnvironmentalSurfaceSampler:
         """Create surface sampler from active dock raster layers and MCDA weights."""
@@ -2590,6 +2927,12 @@ class Route3DStudioDock(QDockWidget):
             osm_trees=self.cached_osm_trees,
             osm_parks=self.cached_osm_parks,
         )
+        corridor_parks = filter_corridor_parks_multi_route(
+            routes_coords,
+            self.cached_osm_parks,
+            buffer_meters=45.0,
+            green_sampler=sampler,
+        )
 
         # Buildings and trees are stored once on the collection; copying them
         # into every profile's feature multiplied the payload by the profile count.
@@ -2613,6 +2956,7 @@ class Route3DStudioDock(QDockWidget):
                 "source": "02Route 3D QGIS multi-profile result",
                 "corridor_buildings": corridor_blds,
                 "corridor_trees": corridor_trees,
+                "corridor_parks": corridor_parks,
                 "terrain": terrain,
             },
         }

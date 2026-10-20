@@ -60,38 +60,15 @@ def point_to_multi_linestrings_distance_meters(
     px: float, py: float, linestrings: Sequence[Sequence[Tuple[float, float]]]
 ) -> float:
     """Minimum distance in meters from point P to any polyline in the collection."""
-    if not linestrings:
+    linestring_list = [line for line in linestrings if line]
+    if not linestring_list:
         return float("inf")
     min_d = float("inf")
-    for line in linestrings:
+    for line in linestring_list:
         d = point_to_linestring_distance_meters(px, py, line)
         if d < min_d:
             min_d = d
     return min_d
-
-
-def get_closest_route_elevation(
-    px: float, py: float, route_coords: Sequence[Tuple[float, float, ...]]
-) -> float:
-    """Find the ground elevation of the closest point along a 3D route polyline."""
-    if not route_coords:
-        return 0.0
-    if len(route_coords) == 1:
-        return float(route_coords[0][2]) if len(route_coords[0]) > 2 and math.isfinite(float(route_coords[0][2])) else 0.0
-
-    min_d = float("inf")
-    closest_z = float(route_coords[0][2]) if len(route_coords[0]) > 2 and math.isfinite(float(route_coords[0][2])) else 0.0
-
-    for i in range(len(route_coords) - 1):
-        p1 = route_coords[i]
-        p2 = route_coords[i + 1]
-        z1 = float(p1[2]) if len(p1) > 2 and math.isfinite(float(p1[2])) else 0.0
-        z2 = float(p2[2]) if len(p2) > 2 and math.isfinite(float(p2[2])) else 0.0
-        d = point_to_segment_distance_meters(px, py, p1[0], p1[1], p2[0], p2[1])
-        if d < min_d:
-            min_d = d
-            closest_z = (z1 + z2) * 0.5
-    return closest_z
 
 
 def get_closest_multi_route_elevation(
@@ -284,6 +261,20 @@ def filter_corridor_assets_multi_route(
     # 2.2 Park polygons are carried as park geometry only. A previous revision
     # emitted a 9.0 m tree with a 3.8 m canopy at every park *boundary vertex*;
     # boundary vertices are not tree locations and those dimensions were invented.
+    if osm_parks and corridor_trees:
+        park_centroids = []
+        for p in osm_parks:
+            if p.polygon and len(p.polygon) >= 3:
+                p_lon = sum(pt[0] for pt in p.polygon) / len(p.polygon)
+                p_lat = sum(pt[1] for pt in p.polygon) / len(p.polygon)
+                p_rad = max(haversine_distance_2d((p_lon, p_lat), pt) for pt in p.polygon)
+                park_centroids.append((p_lon, p_lat, p_rad, p.name or p.park_type))
+        for tree_dict in corridor_trees:
+            tc = tree_dict["coordinates"]
+            for p_lon, p_lat, p_rad, p_label in park_centroids:
+                if haversine_distance_2d((tc[0], tc[1]), (p_lon, p_lat)) <= p_rad:
+                    tree_dict["park_name"] = p_label
+                    break
 
     # No procedural greenery is generated. A previous revision placed a tree every
     # 18 m at six fixed lateral offsets, with height, canopy, trunk and species
@@ -292,6 +283,73 @@ def filter_corridor_assets_multi_route(
     # every export. Only trees that actually exist in OSM are returned.
 
     return corridor_buildings, corridor_trees
+
+
+def filter_corridor_parks_multi_route(
+    routes_coords: Sequence[Any],
+    osm_parks: Optional[Sequence[OsmPark]] = None,
+    buffer_meters: float = 30.0,
+    green_sampler: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """Extract real OSM park and green-area polygons within the multi-route corridor buffer."""
+    if not routes_coords or not osm_parks:
+        return []
+
+    first_elem = routes_coords[0]
+    if isinstance(first_elem, (list, tuple)) and len(first_elem) > 0 and isinstance(first_elem[0], (int, float)):
+        route_list = [routes_coords]
+    else:
+        route_list = list(routes_coords)
+
+    cleaned_routes: List[List[Tuple[float, float, float]]] = []
+    for r in route_list:
+        if not r or len(r) < 2:
+            continue
+        valid_pts = [
+            (float(c[0]), float(c[1]), float(c[2]) if len(c) > 2 and math.isfinite(float(c[2])) else 0.0)
+            for c in r
+            if isinstance(c, (list, tuple)) and len(c) >= 2 and math.isfinite(float(c[0])) and math.isfinite(float(c[1]))
+        ]
+        if len(valid_pts) >= 2:
+            cleaned_routes.append(valid_pts)
+    if not cleaned_routes:
+        return []
+
+    buf_m = float(buffer_meters) if math.isfinite(buffer_meters) and buffer_meters >= 0 else 30.0
+    all_lines_2d = [[(p[0], p[1]) for p in r] for r in cleaned_routes]
+    corridor_parks: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    for park in osm_parks:
+        if not park.polygon or len(park.polygon) < 3:
+            continue
+        p_id = str(park.park_id)
+        if p_id in seen_ids:
+            continue
+        valid_poly = [
+            (float(p[0]), float(p[1]))
+            for p in park.polygon
+            if len(p) >= 2 and math.isfinite(float(p[0])) and math.isfinite(float(p[1]))
+        ]
+        if len(valid_poly) < 3:
+            continue
+        c_lon = sum(p[0] for p in valid_poly) / len(valid_poly)
+        c_lat = sum(p[1] for p in valid_poly) / len(valid_poly)
+        min_vertex_d = min(
+            point_to_multi_linestrings_distance_meters(c_lon, c_lat, all_lines_2d),
+            *(point_to_multi_linestrings_distance_meters(vx, vy, all_lines_2d) for vx, vy in valid_poly[::max(1, len(valid_poly) // 8)]),
+        )
+        if min_vertex_d <= buf_m + 35.0:
+            seen_ids.add(p_id)
+            base_z = get_closest_multi_route_elevation(c_lon, c_lat, cleaned_routes, green_sampler)
+            corridor_parks.append({
+                "id": p_id,
+                "coordinates": [[round(p[0], 6), round(p[1], 6)] for p in valid_poly],
+                "park_type": park.park_type,
+                "name": park.name,
+                "base_elevation_m": round(base_z, 2),
+            })
+    return corridor_parks
 
 
 def filter_buildings_in_corridor(

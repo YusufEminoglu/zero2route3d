@@ -166,3 +166,118 @@ def apply_multiprofile_categorized_renderer(layer: Any, field_name: str = "mode_
         renderer = QgsCategorizedSymbolRenderer(field_name, categories)
         layer.setRenderer(renderer)
         layer.triggerRepaint()
+
+
+def apply_native_3d_route_scene(project: Any = None, elevation_offset_m: float = 1.5) -> int:
+    """Configure native QGIS 3D Map View (qgis._3d) renderers on routes, buildings, trees, and pins.
+
+    Returns the number of project layers configured with 3D symbols.
+    """
+    configured = 0
+    try:
+        from qgis.PyQt.QtGui import QColor
+        from qgis.core import QgsProject, QgsProperty, QgsVectorLayer, QgsWkbTypes
+        from qgis._3d import (
+            QgsLine3DSymbol,
+            QgsPhongMaterialSettings,
+            QgsPoint3DSymbol,
+            QgsPolygon3DSymbol,
+            QgsVectorLayer3DRenderer,
+        )
+    except Exception:
+        return 0
+
+    proj = project or QgsProject.instance()
+    if proj is None:
+        return 0
+
+    def _phong(hex_color: str, ambient_hex: str = "#334155", shininess: float = 25.0) -> Any:
+        mat = QgsPhongMaterialSettings()
+        if hasattr(mat, "setDiffuse"):
+            mat.setDiffuse(QColor(hex_color))
+        if hasattr(mat, "setAmbient"):
+            mat.setAmbient(QColor(ambient_hex))
+        if hasattr(mat, "setShininess"):
+            mat.setShininess(shininess)
+        return mat
+
+    for layer in proj.mapLayers().values():
+        if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            continue
+        name = layer.name()
+        geom_type = int(layer.geometryType())
+
+        with contextlib.suppress(Exception):
+            # 1. 3D Route Ribbon Layer
+            if layer.customProperty("zero2route3d/route_layer", False) or "02Route 3D — Run" in name:
+                sym = QgsLine3DSymbol()
+                sym.setWidth(3.6)
+                sym.setOffset(float(elevation_offset_m))
+                sym.setExtrusionHeight(0.8)
+                sym.setRenderAsSimpleLines(False)
+                sym.setMaterialSettings(_phong("#0284c7", "#0369a1", 45.0))
+                r3d = QgsVectorLayer3DRenderer()
+                with contextlib.suppress(Exception):
+                    r3d.setLayer(layer)
+                r3d.setSymbol(sym)
+                layer.setRenderer3D(r3d)
+                if hasattr(layer, "trigger3DUpdate"):
+                    layer.trigger3DUpdate()
+                configured += 1
+
+            # 2. 3D OSM Buildings Layer
+            elif geom_type == int(QgsWkbTypes.GeometryType.PolygonGeometry) and (
+                "Buildings 3D" in name or "height_m" in layer.fields().names()
+            ):
+                sym = QgsPolygon3DSymbol()
+                sym.setExtrusionHeight(12.0)
+                if hasattr(QgsPolygon3DSymbol, "Property") and hasattr(sym, "dataDefinedProperties"):
+                    props = sym.dataDefinedProperties()
+                    props.setProperty(
+                        QgsPolygon3DSymbol.Property.ExtrusionHeight,
+                        QgsProperty.fromExpression('coalesce("height_m", "levels" * 3.2, 12.0)'),
+                    )
+                    sym.setDataDefinedProperties(props)
+                if hasattr(sym, "setEdgesEnabled"):
+                    sym.setEdgesEnabled(True)
+                sym.setMaterialSettings(_phong("#cbd5e1", "#475569", 18.0))
+                r3d = QgsVectorLayer3DRenderer()
+                with contextlib.suppress(Exception):
+                    r3d.setLayer(layer)
+                r3d.setSymbol(sym)
+                layer.setRenderer3D(r3d)
+                if hasattr(layer, "trigger3DUpdate"):
+                    layer.trigger3DUpdate()
+                configured += 1
+
+            # 3. 3D Trees & Point Pins / Avatars
+            elif geom_type == int(QgsWkbTypes.GeometryType.PointGeometry) and (
+                "OSM Trees" in name
+                or layer.customProperty("zero2route3d/route_point", False)
+                or layer.customProperty("zero2route3d/animated_avatar_layer", False)
+            ):
+                sym = QgsPoint3DSymbol()
+                shape_enum = getattr(QgsPoint3DSymbol, "Shape", QgsPoint3DSymbol)
+                if "OSM Trees" in name:
+                    if hasattr(shape_enum, "Sphere"):
+                        sym.setShape(shape_enum.Sphere)
+                    sym.setShapeProperties({"radius": 3.2})
+                    sym.setMaterialSettings(_phong("#16a34a", "#14532d", 12.0))
+                else:
+                    if hasattr(shape_enum, "Cylinder"):
+                        sym.setShape(shape_enum.Cylinder)
+                    is_a = layer.customProperty("zero2route3d/route_point", "") == "A" or "Point A" in name
+                    is_b = layer.customProperty("zero2route3d/route_point", "") == "B" or "Point B" in name
+                    col = "#059669" if is_a else ("#dc2626" if is_b else "#0ea5e9")
+                    sym.setShapeProperties({"radius": 2.8, "length": 9.0})
+                    sym.setMaterialSettings(_phong(col, col, 50.0))
+                r3d = QgsVectorLayer3DRenderer()
+                with contextlib.suppress(Exception):
+                    r3d.setLayer(layer)
+                r3d.setSymbol(sym)
+                layer.setRenderer3D(r3d)
+                if hasattr(layer, "trigger3DUpdate"):
+                    layer.trigger3DUpdate()
+                configured += 1
+
+    return configured

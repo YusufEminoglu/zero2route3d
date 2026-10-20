@@ -157,7 +157,10 @@ export const chartMethods = {
       svg.appendChild(path);
       const needle = document.createElement('div');
       needle.className = 'metric-needle';
-      track.append(svg, needle);
+      const endDot = document.createElement('div');
+      endDot.className = 'metric-end-dot';
+      endDot.style.background = safeColor;
+      track.append(svg, endDot, needle);
       track.addEventListener('click', (e) => {
         const rect = track.getBoundingClientRect();
         this.setProgress((e.clientX - rect.left) / Math.max(1, rect.width));

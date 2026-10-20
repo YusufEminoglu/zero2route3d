@@ -57,6 +57,15 @@ export const controlsMethods = {
       btnPlay.addEventListener('click', () => this.togglePlay());
     }
 
+    const btnLoop = document.getElementById('btnLoop');
+    if (btnLoop) {
+      btnLoop.addEventListener('click', () => {
+        this.loopPlayback = !this.loopPlayback;
+        btnLoop.classList.toggle('active', this.loopPlayback);
+        btnLoop.setAttribute('aria-pressed', String(this.loopPlayback));
+      });
+    }
+
     if (this.elScrubber) {
       this.elScrubber.addEventListener('input', (e) => {
         this.progress = Math.max(0.0, Math.min(1.0, parseFloat(e.target.value) / 1000.0));
@@ -135,9 +144,27 @@ export const controlsMethods = {
       btnTrees.addEventListener('click', () => {
         this.showTrees = !this.showTrees;
         this.treesGroup.visible = this.showTrees;
+        if (this.parksGroup) this.parksGroup.visible = this.showTrees;
         btnTrees.classList.toggle('active', this.showTrees);
         const b = btnTrees.querySelector('b');
         if (b) b.textContent = this.showTrees ? 'ON' : 'OFF';
+      });
+    }
+
+    // Cycle 3D Ribbon Color Mode (Profile / Slope / Speed)
+    const btnRibbon = document.getElementById('btnRibbonMode');
+    if (btnRibbon) {
+      btnRibbon.addEventListener('click', () => {
+        const modes = ['profile', 'slope', 'speed'];
+        const labels = { profile: 'Profile', slope: 'Slope %', speed: 'Speed' };
+        const next = modes[(modes.indexOf(this.ribbonColorMode || 'profile') + 1) % modes.length];
+        this.ribbonColorMode = next;
+        const lbl = document.getElementById('lblRibbonMode');
+        if (lbl) lbl.textContent = labels[next];
+        btnRibbon.classList.toggle('active', next !== 'profile');
+        if (this.routeData) {
+          this.rebuildScene();
+        }
       });
     }
 
@@ -158,12 +185,32 @@ export const controlsMethods = {
       });
     }
 
-    // Slicer button
+    // Slicer button & height slider
     const btnSlicer = document.getElementById('btnSlicer');
+    const slicerControls = document.getElementById('slicerControls');
+    const slicerHeight = document.getElementById('slicerHeight');
+    const lblSlicerHeight = document.getElementById('lblSlicerHeight');
     if (btnSlicer) {
       btnSlicer.addEventListener('click', () => {
         const active = this.slicerSystem.toggle();
         btnSlicer.classList.toggle('active', active);
+        if (slicerControls) slicerControls.hidden = !active;
+        if (active && slicerHeight) {
+          slicerHeight.min = String(this.slicerSystem.minHeight);
+          slicerHeight.max = String(this.slicerSystem.maxHeight);
+          slicerHeight.value = String(this.slicerSystem.sliceHeight.toFixed(1));
+          if (lblSlicerHeight) lblSlicerHeight.textContent = `${this.slicerSystem.sliceHeight.toFixed(1)} m`;
+        }
+      });
+    }
+    if (slicerHeight) {
+      slicerHeight.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        if (Number.isFinite(val)) {
+          this.slicerSystem.setSliceHeight(val);
+          if (lblSlicerHeight) lblSlicerHeight.textContent = `${this.slicerSystem.sliceHeight.toFixed(1)} m`;
+          this.requestRender();
+        }
       });
     }
 

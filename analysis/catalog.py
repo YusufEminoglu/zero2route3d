@@ -8,7 +8,7 @@ Toolbox; the dock's Tools tab is the only entry point.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, Type
+from typing import Any, List, Tuple, Type
 
 from .alg_3d_isochrone import ServiceArea3DAlgorithm
 from .alg_3d_map_matching import MapMatching3DAlgorithm
@@ -82,14 +82,6 @@ def tool_names() -> List[str]:
     return [cls().name() for cls in tool_classes()]
 
 
-def category_of(tool_name: str) -> str:
-    """The category key a tool is listed under, or an empty string."""
-    for key, _title, classes in CATEGORIES:
-        if any(cls().name() == tool_name for cls in classes):
-            return key
-    return ""
-
-
 def create_tool(tool_name: str) -> Any:
     """A fresh, initialised algorithm instance for ``tool_name``.
 
@@ -100,8 +92,3 @@ def create_tool(tool_name: str) -> Any:
         if cls().name() == tool_name:
             return cls().create()
     raise KeyError(f"unknown analysis tool: {tool_name!r}")
-
-
-def tools_by_category() -> Dict[str, List[Any]]:
-    """Fresh algorithm instances grouped by category key (insertion-ordered)."""
-    return {key: [cls().create() for cls in classes] for key, _title, classes in CATEGORIES}

@@ -483,6 +483,17 @@ PROFILES: Dict[str, MobilityProfile] = {
     ),
 }
 
+_BUILTIN_PROFILES: Dict[str, MobilityProfile] = {
+    k: MobilityProfile.from_dict(v.to_dict()) for k, v in PROFILES.items()
+}
+
+
+def reset_default_profiles() -> None:
+    """Restore PROFILES to the 15 built-in mobility profiles."""
+    PROFILES.clear()
+    for k, v in _BUILTIN_PROFILES.items():
+        PROFILES[k] = MobilityProfile.from_dict(v.to_dict())
+
 
 PROFILE_CATEGORIES: Dict[str, Dict[str, Any]] = {
     "pedestrian": {

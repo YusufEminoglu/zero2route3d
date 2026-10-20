@@ -5,6 +5,20 @@ All notable changes to **02Route 3D** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-20
+
+### Added
+- **Web 3D Studio HUD enhancements**: live turn-by-turn navigation cue banner (`#liveCueBanner`), 3D route ribbon vertex coloring toggle (`Profile` / `Slope` / `Speed`), dynamic terrain cross-section slicer height slider (`#slicerHeight`) computed from real scene bounds, OSM park polygon meshes (`buildParks`), playback loop toggle (`#btnLoop`), and `0.5x` / `10x` speed controls.
+- **Native QGIS 3D Scene setup (`apply_native_3d_route_scene`)**: 1-click button in Quick Mode and Advanced Lab that configures native `qgis._3d` renderers on route ribbons, 3D buildings, tree crowns, and Point A/B pins for QGIS's built-in 3D Map View.
+- **QGIS Studio Dock upgrades**: clicking a row in the Cue Sheet seeks the animation to that navigation step; the OD Matrix tab supports multi-point Origin/Destination vector layers, CSV export, and OD Desire Lines layer creation; the Profiles tab displays a 15-profile reference table with double-click editing and default reset; OSM Parks & Green Areas polygons are loaded and styled in QGIS.
+
+### Changed
+- **Standalone offline HTML bundler** now embeds the full Web 3D Studio HUD and controls.
+- **KinematicAvatarRig** now receives live route slope angle (with body pitch) and night-time state (`headlight` activation) during playback and scrubbing.
+
+### Removed
+- Removed unused helper functions (`category_of`, `tools_by_category`, `geometry_to_wgs84`, `has_real_z`, `get_closest_route_elevation`) and unused avatar properties.
+
 ## [1.1.0] - 2026-10-14
 
 ### Changed

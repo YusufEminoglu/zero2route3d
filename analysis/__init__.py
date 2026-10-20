@@ -5,13 +5,11 @@ not registered with the QGIS Processing Toolbox. ``catalog`` lists them.
 """
 from __future__ import annotations
 
-from .catalog import CATEGORIES, category_of, create_tool, tool_classes, tool_names, tools_by_category
+from .catalog import CATEGORIES, create_tool, tool_classes, tool_names
 
 __all__ = [
     "CATEGORIES",
-    "category_of",
     "create_tool",
     "tool_classes",
     "tool_names",
-    "tools_by_category",
 ]

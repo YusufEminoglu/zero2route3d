@@ -305,6 +305,13 @@ def _point_renderer(theme: dict) -> Any:
     return QgsSingleSymbolRenderer(sym)
 
 
+def _park_renderer(theme: dict) -> Any:
+    from qgis.core import QgsSingleSymbolRenderer
+
+    greens_color = theme.get("greens", "#7fb069")
+    return QgsSingleSymbolRenderer(_fill(greens_color, 0.55))
+
+
 def apply_osm_theme_style(layer: Any, theme_key: str = "atlas") -> bool:
     """Apply any of the 8 02Agent OSM Downloader visual themes to a vector layer."""
     try:
@@ -312,12 +319,17 @@ def apply_osm_theme_style(layer: Any, theme_key: str = "atlas") -> bool:
         from qgis.core import QgsWkbTypes
 
         theme = get_theme_palette(theme_key)
+        field_names = {f.name().lower() for f in layer.fields()} if hasattr(layer, "fields") else set()
+        layer_name_lower = (layer.name() if hasattr(layer, "name") else "").lower()
 
-        if geometry_type == int(QgsWkbTypes.PolygonGeometry):
-            renderer = _building_renderer(theme)
-        elif geometry_type == int(QgsWkbTypes.LineGeometry):
+        if geometry_type == int(QgsWkbTypes.GeometryType.PolygonGeometry):
+            if "park_type" in field_names or "park" in layer_name_lower or "green" in layer_name_lower:
+                renderer = _park_renderer(theme)
+            else:
+                renderer = _building_renderer(theme)
+        elif geometry_type == int(QgsWkbTypes.GeometryType.LineGeometry):
             renderer = _road_renderer(theme)
-        elif geometry_type == int(QgsWkbTypes.PointGeometry):
+        elif geometry_type == int(QgsWkbTypes.GeometryType.PointGeometry):
             renderer = _point_renderer(theme)
         else:
             return False

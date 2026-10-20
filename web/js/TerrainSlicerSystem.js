@@ -6,13 +6,13 @@ export class TerrainSlicerSystem {
     this.renderer = renderer;
     this.renderer.localClippingEnabled = true;
 
-    this.sliceHeight = 500.0;
-    this.minHeight = -50.0;
-    this.maxHeight = 800.0;
+    this.sliceHeight = 25.0;
+    this.minHeight = -15.0;
+    this.maxHeight = 120.0;
     this.isEnabled = false;
     this.clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), this.sliceHeight);
 
-    const capGeo = new THREE.PlaneGeometry(5000, 5000);
+    const capGeo = new THREE.PlaneGeometry(1, 1);
     capGeo.rotateX(Math.PI / 2);
 
     this.geologyCapMat = new THREE.ShaderMaterial({
@@ -65,10 +65,35 @@ export class TerrainSlicerSystem {
     this.buildingsGroup = buildingsGroup;
     this.treesGroup = treesGroup;
     this.skirtMesh = skirtMesh;
+
+    const box = new THREE.Box3();
+    [terrainMesh, buildingsGroup, treesGroup, skirtMesh].forEach((obj) => {
+      if (obj) box.expandByObject(obj);
+    });
+
+    if (!box.isEmpty()) {
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+      box.getCenter(center);
+      box.getSize(size);
+      this.minHeight = Math.floor(box.min.y - 4.0);
+      this.maxHeight = Math.ceil(Math.max(box.max.y + 4.0, this.minHeight + 16.0));
+      const defaultSlice = this.minHeight + (this.maxHeight - this.minHeight) * 0.45;
+      if (this.capMesh) {
+        this.capMesh.position.set(center.x, this.sliceHeight, center.z);
+        this.capMesh.scale.set(Math.max(120, size.x * 1.05), 1, Math.max(120, size.z * 1.05));
+      }
+      this.setSliceHeight(defaultSlice);
+    }
+
+    if (this.isEnabled) {
+      this.toggle(true);
+    }
   }
 
   setSliceHeight(height) {
-    this.sliceHeight = height;
+    const clamped = Math.max(this.minHeight, Math.min(this.maxHeight, Number(height) || 0));
+    this.sliceHeight = clamped;
     this.clipPlane.constant = this.sliceHeight;
     if (this.capMesh) {
       this.capMesh.position.y = this.sliceHeight;

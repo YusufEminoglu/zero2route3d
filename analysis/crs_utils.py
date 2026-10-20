@@ -18,7 +18,6 @@ from typing import Optional, Sequence, Tuple
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
-    QgsGeometry,
     QgsPointXY,
     QgsProcessingContext,
     QgsProcessingException,
@@ -60,23 +59,6 @@ def point_to_wgs84(
         raise QgsProcessingException(
             f"Could not reproject a point from {source_crs.authid()} to WGS84: {exc}"
         ) from exc
-
-
-def geometry_to_wgs84(
-    geometry: QgsGeometry,
-    source_crs: QgsCoordinateReferenceSystem,
-    context: QgsProcessingContext,
-) -> QgsGeometry:
-    """Return a copy of the geometry in WGS84."""
-    transform = transform_to_wgs84(source_crs, context)
-    if transform is None:
-        return geometry
-    clone = QgsGeometry(geometry)
-    if clone.transform(transform) != 0:
-        raise QgsProcessingException(
-            f"Could not reproject a geometry from {source_crs.authid()} to WGS84."
-        )
-    return clone
 
 
 def rect_to_wgs84_bbox(

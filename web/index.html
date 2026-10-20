@@ -67,6 +67,16 @@
     </div>
   </div>
 
+  <!-- Live Turn-by-Turn Navigation Cue Banner -->
+  <div class="hud-panel live-cue-banner" id="liveCueBanner" hidden>
+    <span class="cue-icon" id="liveCueIcon">⬆️</span>
+    <div class="cue-body">
+      <div class="cue-main" id="liveCueText">Ready to navigate</div>
+      <div class="cue-sub" id="liveCueMeta">Step 1 · 0 m</div>
+    </div>
+    <span class="cue-step-badge" id="liveCueStep">1/1</span>
+  </div>
+
   <!-- Left Mini-Radar Overview Map -->
   <div class="hud-panel minimap-radar">
     <canvas id="radarCanvas" width="130" height="130"></canvas>
@@ -124,12 +134,20 @@
     <button class="tool-btn active" id="btnTrees" title="Toggle Volumetric 3D Trees">
       <span>🌳</span> Trees: <b>ON</b>
     </button>
-    <button class="tool-btn" id="btnExaggeration" title="Cycle Terrain Vertical Exaggeration (1x/2x/3x/5x)">
+    <button class="tool-btn" id="btnExaggeration" title="Cycle Terrain Vertical Exaggeration (1x/1.5x/2x/3x)">
       <span>⛰️</span> Exag: <b id="lblExag">1.5x</b>
     </button>
-    <button class="tool-btn" id="btnSlicer" title="Toggle 3D Underground Geological Slicer Plane">
+    <button class="tool-btn" id="btnRibbonMode" title="Cycle 3D Route Ribbon Colour Mode (Profile / Slope / Speed)">
+      <span>🎨</span> Ribbon: <b id="lblRibbonMode">Profile</b>
+    </button>
+    <button class="tool-btn" id="btnSlicer" title="Toggle 3D Underground Geological &amp; Building Slicer Plane">
       <span>🔪</span> Slicer
     </button>
+    <div class="slicer-controls" id="slicerControls" hidden>
+      <label class="sun-row" for="slicerHeight">Slice Z <b id="lblSlicerHeight">25 m</b></label>
+      <input type="range" id="slicerHeight" min="-20" max="120" step="0.5" value="25"
+             aria-label="Vertical slice plane height in metres">
+    </div>
     <button class="tool-btn" id="btnVoice" title="Toggle Turn-by-Turn Voice Audio Cues">
       <span>🔊</span> Voice: <b id="lblVoice">OFF</b>
     </button>
@@ -168,6 +186,9 @@
       <button class="btn-play" id="btnPlay" title="Play/Pause (Space)" aria-label="Play" aria-pressed="false">
         <span id="playIcon" aria-hidden="true">▶</span>
       </button>
+      <button class="tool-btn active" id="btnLoop" title="Toggle Continuous Playback Loop" aria-pressed="true">
+        <span>🔁</span>
+      </button>
 
       <div class="scrubber-container">
         <input type="range" class="scrubber-slider" id="scrubber" min="0" max="1000" value="0"
@@ -175,9 +196,11 @@
       </div>
 
       <div class="speed-selector">
+        <button class="speed-opt" data-speed="0.5">0.5x</button>
         <button class="speed-opt active" data-speed="1.0">1x</button>
         <button class="speed-opt" data-speed="2.0">2x</button>
         <button class="speed-opt" data-speed="4.0">4x</button>
+        <button class="speed-opt" data-speed="10.0">10x</button>
       </div>
     </div>
   </div>

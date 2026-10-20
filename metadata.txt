@@ -3,7 +3,7 @@ name=02Route 3D - Multi-Criteria 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
-version=1.1.0
+version=1.2.0
 author=Yusuf Eminoglu
 email=yusuf.eminoglu@deu.edu.tr
 
@@ -46,6 +46,13 @@ hasProcessingProvider=no
 license=GPL-2.0-or-later
 
 changelog=
+    1.2.0 - QGIS GUI, Web 3D Studio and Native QGIS 3D Scene upgrade:
+        - Web 3D Studio: added a live turn-by-turn navigation cue HUD banner, 3D route ribbon vertex coloring modes (Profile, Slope, Speed), dynamic terrain slicer height control with real scene bounds, OSM park polygon rendering, playback loop toggle, and 0.5x/10x speed pills.
+        - Kinematic Avatar Rig: wired real-time slope pitch angle and automatic night headlight activation in the 3D render loop; removed unused legacy avatar fields.
+        - Native QGIS 3D Scene: added 1-click Setup Native QGIS 3D Scene in Quick Mode and Advanced Lab to configure QgsLine3DSymbol route ribbons, extruded 3D buildings, tree crowns, and Point A/B pins for QGIS's built-in 3D Map View.
+        - QGIS Studio Dock: interactive Cue Sheet row click seeks the animation along the route; OD Matrix tab supports multi-point vector layers, CSV export, and OD Desire Lines layer generation; Profiles tab adds a 15-profile reference table with double-click editing and reset to defaults; OSM Parks and Green Areas layer is loaded and styled in QGIS.
+        - Offline HTML bundler now embeds the complete Web 3D Studio HUD; removed dead helper functions across analysis and core modules.
+
     1.1.0 - Tools inside the dock:
         - All sixteen analysis tools now live in a new Tools tab of the 02Route 3D dock instead of the Processing Toolbox. Pick a group and a tool, fill its form, run it in the background with progress and cancel, and open the HTML or DXF it wrote.
         - The tools are pre-filled from the dock: Point A and B, the DEM, the road network, the building layer, the last route layer and the selected mobility profile.
