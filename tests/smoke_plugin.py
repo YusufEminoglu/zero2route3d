@@ -9,6 +9,7 @@ import configparser
 import os
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -816,7 +817,7 @@ def run_all(iface):
     return passed == len(results)
 
 
-def main():
+def main(hard_exit=False):
     app = QgsApplication.instance()
     owns_app = app is None
     profile = None
@@ -825,9 +826,22 @@ def main():
         app = QgsApplication([], True, profile.name, "external")
         app.initQgis()
     iface = _Iface()
+    ok = False
     try:
-        return run_all(iface)
+        ok = run_all(iface)
+        return ok
+    except Exception:
+        traceback.print_exc()
+        raise
     finally:
+        if hard_exit:
+            # The result is final here. Qt/QGIS teardown on the qgis/qgis:4.2
+            # image intermittently segfaults after every check has passed
+            # (exit 139), so the process leaves before it rather than letting
+            # an unrelated crash decide the outcome.
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0 if ok else 1)
         iface.mainWindow().close()
         if owns_app:
             app.exitQgis()
@@ -835,6 +849,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(0 if main() else 1)
+    main(hard_exit=True)
 else:
     main()
