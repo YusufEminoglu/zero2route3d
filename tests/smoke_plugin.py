@@ -557,7 +557,7 @@ def test_tool_panel_runs_route_in_background(iface):
     running_at_once = panel.is_running
     done = _wait_for(lambda: panel.last_ok is not None)
     added = [project.mapLayer(i) for i in set(project.mapLayers()) - before]
-    routes = [l for l in added if isinstance(l, QgsVectorLayer) and l.featureCount() >= 1]
+    routes = [lay for lay in added if isinstance(lay, QgsVectorLayer) and lay.featureCount() >= 1]
     aliased = bool(routes) and any(routes[0].attributeAlias(i) for i in range(routes[0].fields().count()))
     log_text = panel.log.toPlainText()
     ok = bool(panel.last_ok)
