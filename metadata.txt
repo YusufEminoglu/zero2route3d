@@ -33,6 +33,7 @@ hasProcessingProvider=no
 license=GPL-2.0-or-later
 
 changelog=
+    1.2.1 - Hub listing text rewritten; author Geophilo; university affiliation removed; documentation links use the standard geophilo.com pages (manual.html, guide/); manual HTML no longer ships in the plugin package.
     1.2.0 - QGIS GUI, Web 3D Studio and Native QGIS 3D Scene upgrade:
         - Web 3D Studio: added a live turn-by-turn navigation cue HUD banner, 3D route ribbon vertex coloring modes (Profile, Slope, Speed), dynamic terrain slicer height control with real scene bounds, OSM park polygon rendering, playback loop toggle, and 0.5x/10x speed pills.
         - Kinematic Avatar Rig: wired real-time slope pitch angle and automatic night headlight activation in the 3D render loop; removed unused legacy avatar fields.
