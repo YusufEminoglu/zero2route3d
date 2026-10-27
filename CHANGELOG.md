@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.1] - 2026-10-27
+
+- Hub listing text rewritten; author Geophilo; university affiliation removed; documentation links use the standard geophilo.com pages (manual.html, guide/); manual HTML no longer ships in the plugin package.
+
 All notable changes to **02Route 3D** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

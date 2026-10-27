@@ -3,7 +3,7 @@ name=02Route3D - 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=Routes for how different people really move: 15 profiles from wheelchair to truck, slope-aware paths, Pareto routes, isochrones, OD matrices, walkability audits and an interactive 3D route viewer.
-version=1.2.0
+version=1.2.1
 author=Geophilo
 email=yusuf.eminoglu@deu.edu.tr
 
