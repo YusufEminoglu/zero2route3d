@@ -6,7 +6,7 @@ Calculates the complete non-dominated Pareto frontier across 4 conflicting objec
 3. Microclimate Heat / LST Exposure Dose (cumulative index)
 4. Metabolic Energy Expenditure (Minetti kcal)
 
-Author: Yusuf Eminoglu
+Author: Geophilo
 """
 from __future__ import annotations
 

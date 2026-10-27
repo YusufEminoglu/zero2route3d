@@ -6,7 +6,7 @@ Implements:
 3. Modified Shepard's Inverse Distance Weighting (IDW) with smoothing nugget.
 4. Micro-elevation profile reconstruction with adaptive curvature densification.
 
-Author: Yusuf Eminoglu
+Author: Geophilo
 """
 from __future__ import annotations
 

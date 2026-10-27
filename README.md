@@ -221,7 +221,7 @@ The Three.js WebGL 3D Studio opens in the browser from QGIS (a local server push
 
 ## 🧩 Part of the PlanX ecosystem
 
-02Route 3D is part of the suite of open-source QGIS plugins for urban planning and geospatial analytics by **Yusuf Eminoğlu**:
+02Route 3D is part of the suite of open-source QGIS plugins for urban planning and geospatial analytics by **Geophilo**:
 
 | Planning & Analysis | CAD & Production | 3D & Cartography |
 | :--- | :--- | :--- |
@@ -244,8 +244,7 @@ We gratefully acknowledge their innovative work on inclusive pedestrian accessib
 
 ## Data, Credits & License
 
-- **Author:** **Yusuf Eminoğlu** (<yusuf.eminoglu@deu.edu.tr>)
-- **Affiliation:** Dokuz Eylül University, Department of City and Regional Planning
+- **Author:** **Geophilo** (<yusuf.eminoglu@deu.edu.tr>)
 - **Elevation Data:** User-supplied DEM rasters or elevations returned by the Open-Elevation service; missing samples remain NoData.
 - **License:** GNU General Public License v2.0 or later ([GPL-2.0-or-later](LICENSE)).
 - **Attribution:** Shipped under Yusuf Eminoğlu's name alone in accordance with monorepo standards.

@@ -6,7 +6,7 @@ Implements:
 3. Theil Index entropy decomposition for spatial disparities.
 4. Automated equity classification (Transit Deserts, Vulnerable, Oasis).
 
-Author: Yusuf Eminoglu
+Author: Geophilo
 """
 from __future__ import annotations
 

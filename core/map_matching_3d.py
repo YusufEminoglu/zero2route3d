@@ -6,7 +6,7 @@ Implements:
 3. Sub-pixel 3D elevation reconstruction and slope synthesis from high-res DEM.
 4. Comprehensive GPX 1.1 parser and matched track telemetry exporter.
 
-Author: Yusuf Eminoglu
+Author: Geophilo
 """
 from __future__ import annotations
 

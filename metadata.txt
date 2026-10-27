@@ -1,10 +1,10 @@
 [general]
-name=02Route 3D - Multi-Criteria 3D Mobility Studio
+name=02Route3D - 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
 version=1.2.0
-author=Yusuf Eminoglu
+author=Geophilo
 email=yusuf.eminoglu@deu.edu.tr
 
 about=
