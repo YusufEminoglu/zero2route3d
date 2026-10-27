@@ -1987,8 +1987,12 @@ class ClaimTests(unittest.TestCase):
 
     def test_docs_do_not_repeat_retracted_claims(self) -> None:
         root = Path(__file__).resolve().parent.parent
-        files = [root / "README.md", root / "metadata.txt", root / "docs" / "MANUAL.html",
+        files = [root / "README.md", root / "metadata.txt",
                  root / "docs" / "index.html", root / "core" / "solar_shadow.py"]
+        # The manual lives in the portal repository; CI runners do not have it.
+        manual = root.parents[1] / "geophilo_project" / "_manual_sources" / "zero2route3d" / "MANUAL.html"
+        if manual.is_file():
+            files.append(manual)
         found = []
         for path in files:
             text = path.read_text(encoding="utf-8").lower()

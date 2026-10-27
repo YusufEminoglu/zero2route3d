@@ -214,7 +214,7 @@ The Three.js WebGL 3D Studio opens in the browser from QGIS (a local server push
 | `core/profile_dxf.py` | AutoCAD DXF AC1009 3D Polyline and longitudinal profile exporter. |
 | `gui/dock.py` | 5-tab docked studio UI with interactive map pickers and animators. |
 | `web/` | Three.js WebGL studio. `app3d.js` keeps construction, route loading, playback and the render loop; its methods live in topic modules mixed into the class (`lighting.js`, `controls.js`, `route_layers.js`, `terrain.js`, `basemap.js`, `scene_builders.js`, `capture.js`, `charts.js`), on top of pure helpers (`geo.js`, `solar.js`, `scene_geometry.js`, `chart_math.js`, `live_sync.js`, `colors.js`). Tested with ESLint, a JSDoc type check, node:test unit tests and headless-Chromium smoke and pixel-baseline tests (`npm test`, `npm run smoke`, `npm run visual`). |
-| `docs/` | Web Documentation landing page (`index.html`) and Reference Manual (`MANUAL.html`). |
+| `docs/` | Web documentation landing page (`index.html`). The reference manual is published at [geophilo.com/zero2route3d/manual.html](https://geophilo.com/zero2route3d/manual.html). |
 | `tests/` | Pure-logic unit tests, a routing benchmark gate, the QGIS plugin smoke suite and analysis-tool suite (run in CI on QGIS 3.28, 3.34, 3.44 LTR and 4.2 / Qt6), `check_qgis_api.py` (every QGIS / Qt name used exists in the running QGIS), and the viewer's JS and browser tests. |
 
 ---
