@@ -2,41 +2,28 @@
 name=02Route3D - 3D Mobility Studio
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
-description=3D routing and urban mobility analysis for 15 user profiles (wheelchair, senior, child, bicycle, scooter, car, truck...): slope-aware shortest paths, Pareto routes, isochrones, OD matrices, accessibility and walkability audits, and an interactive 3D route viewer.
+description=Routes for how different people really move: 15 profiles from wheelchair to truck, slope-aware paths, Pareto routes, isochrones, OD matrices, walkability audits and an interactive 3D route viewer.
 version=1.2.0
 author=Geophilo
 email=yusuf.eminoglu@deu.edu.tr
 
-about=
-    02Route 3D finds and inspects routes the way different people actually move through a city. It routes over your own QGIS line network or a bounded OpenStreetMap download, scores every edge with a multi-criteria (AHP) cost built from terrain, optional environmental rasters, road hierarchy, surface, one-way rules and access tags, and shows the result in an interactive 3D (WebGL) route viewer.
-    
-    MOBILITY PROFILES (15)
-    Standard Adult, Senior, Child / Safe Walk, Stroller, Wheelchair / Barrier-Free, Runner, City Bicycle, Mountain / Gravel Bike, E-Scooter, Passenger Car, Delivery Van, Heavy Goods Truck, Emergency Responder, Scenic Walk and Safe Night Walk. Each profile has its own speed, slope, stair, surface and road-class limits, and every tool applies the same limits: a wheelchair route never crosses stairs, whichever tool computed it.
-    
-    ANALYSIS TOOLS (16) - the Tools tab of the dock
-    All sixteen tools run from the dock's Tools tab (point picker, layer and field choices, background run with progress and cancel, result layers added to the project). Points, DEM, road network, buildings and the last route are filled in from the dock. Nothing is added to the Processing Toolbox.
-    - Routing: Compute 3D Route (turn costs, time of day); Transit + Walk Route (GTFS, RAPTOR); Multi-Objective Pareto Routes (NAMOA*); Batch Route Planner; Origin-Destination Cost Matrix; Emergency Evacuation & Hazard Avoidance.
-    - Accessibility: 3D Isochrone (street-corridor service area); Accessibility & Equity Scorecard (E2SFCA, Gini); Walkability & Barrier-Free Audit; Solar & Shade Exposure (building shadows).
-    - Network and data: Routing Network Readiness Audit; MCDA Friction Surface; GPS Track Map Matching (HMM / Viterbi).
-    - Reports and export: Route Scorecard (HTML); Standalone 3D WebGL Report; AutoCAD DXF (3D polyline + profile).
-    
-    CHECKED BEFORE AND AFTER ROUTING
-    The readiness audit marks blocked segments, one-way links, disconnected parts and surface problems before you route. Every route reports how far its ends were snapped to the network, how many nodes were explored and which edges it had to avoid. Walking times follow Tobler's hiking function; energy use follows Minetti's metabolic cost model.
-    
-    OUTPUTS
-    LineStringZ layers, GPX 1.1, 3D GeoJSON, AutoCAD DXF and self-contained offline 3D HTML.
-    
-    User manual: https://geophilo.com/zero2route3d/
-    Source code and issues: https://github.com/YusufEminoglu/zero2route3d (a star on GitHub helps the project).
-    
-    Acknowledgment: the inclusive mobility profiles are inspired by Transform Transport / Systematica research (UX-Mobility: Multi-User Walkability Route Planner, https://transformtransport.org/research/inclusive-mobility/ux-mobility-multi-user-walkability-route-planner/).
+about=02Route3D finds and inspects routes the way different people actually move through a city. It routes over your own QGIS line network or a bounded OpenStreetMap download, scores every edge with a multi-criteria (AHP) cost built from terrain, optional environmental rasters, road hierarchy, surface, one-way rules and access tags, and shows the result in an interactive 3D route viewer.
+    15 MOBILITY PROFILES: Standard adult, senior, child and safe walk, stroller, wheelchair and barrier-free, runner, city bicycle, mountain and gravel bike, e-scooter, passenger car, delivery van, heavy goods truck, emergency responder, scenic walk and safe night walk. Each profile has its own speed, slope, stair, surface and road-class limits, and every tool applies the same limits: a wheelchair route never crosses stairs, whichever tool computed it.
+    ROUTING (6 tools): 3D routes with turn costs and time of day; transit plus walking from GTFS with a RAPTOR search; multi-objective Pareto routes with NAMOA*; a batch route planner; origin-destination cost matrices; and emergency evacuation with hazard avoidance.
+    ACCESSIBILITY (4 tools): 3D isochrones as street-corridor service areas, an accessibility and equity scorecard with E2SFCA and Gini, a walkability and barrier-free audit, and solar and shade exposure along routes from building shadows.
+    NETWORK AND DATA (3 tools): A routing network readiness audit that marks blocked segments, one-way links, disconnected parts and surface problems before you route; an MCDA friction surface; and GPS track map matching with a hidden Markov model and Viterbi decoding.
+    REPORTS AND EXPORT (3 tools): An HTML route scorecard, a standalone 3D WebGL report, and AutoCAD DXF export as a 3D polyline with a profile.
+    CHECKED BEFORE AND AFTER ROUTING: Every route reports how far its ends were snapped to the network, how many nodes were explored and which edges it had to avoid. Walking times follow Tobler's hiking function and energy use follows Minetti's metabolic cost model. All sixteen tools run from the dock's Tools tab with a point picker, background runs, progress and cancel; points, DEM, network, buildings and the last route are filled in for you.
+    OUTPUTS: LineStringZ layers, GPX 1.1, 3D GeoJSON, AutoCAD DXF and self-contained offline 3D HTML.
+    The inclusive mobility profiles are inspired by Systematica's UX-Mobility multi-user walkability route planner research (Transform Transport).
+    Manual: https://geophilo.com/zero2route3d/manual.html
 
 tracker=https://github.com/YusufEminoglu/zero2route3d/issues
 repository=https://github.com/YusufEminoglu/zero2route3d
 homepage=https://geophilo.com/zero2route3d/
 
 category=Analysis
-tags=network, shortest path, gtfs, public transport, transit, raptor, turn costs, shadow, network audit, topology, modal access, od matrix, routing, 3d, mobility, accessibility, walkability, inclusive mobility, pedestrian, wheelchair, bicycle, micromobility, least cost path, threejs, webgl, elevation, slope, tobler, kinematics, minetti, pareto, mcda, ahp, isochrone, service area, e2sfca, spatial equity, evacuation, solar exposure, map matching, gps, gpx, dxf, cad, urban analytics, zero2
+tags=network,shortest path,gtfs,public transport,transit,raptor,turn costs,shadow,network audit,topology,modal access,od matrix,routing,3d,mobility,accessibility,walkability,inclusive mobility,pedestrian,wheelchair,bicycle,micromobility,least cost path,threejs,webgl,elevation,slope,tobler,kinematics,minetti,pareto,mcda,ahp,isochrone,service area,e2sfca,spatial equity,evacuation,solar exposure,map matching,gps,gpx,dxf,cad,urban analytics,geophilo
 
 icon=icons/icon.png
 
